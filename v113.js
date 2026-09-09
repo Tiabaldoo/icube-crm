@@ -198,8 +198,8 @@
   }
 
   function block(title, rows, extra) {
-    return '<div class="card" style="overflow:hidden">'+
-      '<div class="pad" style="display:flex;justify-content:space-between;gap:12px;align-items:center"><div><h2 style="margin:0 0 3px;font-size:18px">'+title+'</h2><div class="muted mini">'+rows.length+' записей</div></div>'+(extra||'')+'</div>'+
+    return '<div class="card balance-block">'+
+      '<div class="balance-block-head"><div><h2>'+title+'</h2><div class="muted mini balance-block-count">'+rows.length+' записей</div></div>'+(extra||'')+'</div>'+
       (rows.length
         ? '<div class="list"><div class="row header"><div>Ребёнок</div><div>Направление</div><div>Группа</div><div>Цена</div><div>Баланс</div></div>'+rows.map(rowHtml).join('')+'</div>'
         : '<div class="empty">Нет детей в этой категории.</div>')+
