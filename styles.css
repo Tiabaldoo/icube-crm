@@ -40,3 +40,9 @@
 @media(max-width:760px){
   .child-ledger-head{padding:16px;align-items:flex-start}
 }
+
+.payment-main-row{grid-template-columns:1.35fr 1fr .8fr .8fr .55fr 1.25fr}
+@media(max-width:900px){
+  .payment-main-row{grid-template-columns:1.2fr 1fr .8fr .8fr}
+  .payment-main-row>div:nth-child(5),.payment-main-row>div:nth-child(6){grid-column:auto}
+}
