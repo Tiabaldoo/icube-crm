@@ -29,3 +29,14 @@
 @media(max-width:760px){
   .balance-block-head{padding:16px;gap:12px}
 }
+
+.child-ledger-card{overflow:hidden}
+.child-ledger-head{display:flex;justify-content:space-between;align-items:center;gap:18px;padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+.child-ledger-head h2{margin:0;font-size:20px;line-height:1.25}
+.child-ledger-count{margin-top:5px}
+.child-ledger-card .list{border-top:0}
+.child-ledger-card .row.header{border-radius:0;background:#fafbfc}
+.child-ledger-card .row:not(.header){min-height:58px}
+@media(max-width:760px){
+  .child-ledger-head{padding:16px;align-items:flex-start}
+}
