@@ -162,3 +162,81 @@
 
   render();
 })();
+
+
+// Balance attention view — debt / zero / one lesson, project filter, debt total.
+(function () {
+  state.balanceProject = state.balanceProject || 'all';
+
+  function enrollmentProject(e) {
+    const g = byId(state.groups,e.groupId);
+    return g ? g.project : null;
+  }
+
+  function matchesBalanceProject(e) {
+    if (state.balanceProject === 'all') return true;
+    return enrollmentProject(e) === state.balanceProject;
+  }
+
+  function balanceRows(predicate) {
+    return state.children.flatMap(function(c){
+      return c.enrollments
+        .filter(function(e){ return matchesBalanceProject(e) && predicate(e.balance); })
+        .map(function(e){ return {c:c,e:e,g:byId(state.groups,e.groupId)}; });
+    });
+  }
+
+  function rowHtml(x) {
+    const groupName=x.g ? x.g.name : 'Без группы';
+    return '<div class="row clickable" onclick="openChild('+x.c.id+')">'+
+      '<div><b>'+x.c.name+'</b></div>'+
+      '<div>'+x.e.direction+'</div>'+
+      '<div>'+groupName+'</div>'+
+      '<div>'+money(effectivePrice(x.e))+'</div>'+
+      '<div class="money '+(x.e.balance<0?'negative':x.e.balance>0?'positive':'')+'">'+Number(x.e.balance.toFixed(4))+'</div>'+
+    '</div>';
+  }
+
+  function block(title, rows, extra) {
+    return '<div class="card" style="overflow:hidden">'+
+      '<div class="pad" style="display:flex;justify-content:space-between;gap:12px;align-items:center"><div><h2 style="margin:0 0 3px;font-size:18px">'+title+'</h2><div class="muted mini">'+rows.length+' записей</div></div>'+(extra||'')+'</div>'+
+      (rows.length
+        ? '<div class="list"><div class="row header"><div>Ребёнок</div><div>Направление</div><div>Группа</div><div>Цена</div><div>Баланс</div></div>'+rows.map(rowHtml).join('')+'</div>'
+        : '<div class="empty">Нет детей в этой категории.</div>')+
+    '</div>';
+  }
+
+  window.setBalanceProject = function(value) {
+    state.balanceProject = value;
+    render();
+  };
+
+  window.balances = function () {
+    const debt=balanceRows(function(v){return v<0;});
+    const zero=balanceRows(function(v){return v===0;});
+    const one=balanceRows(function(v){return v===1;});
+    const debtSum=debt.reduce(function(sum,x){
+      return sum + Math.abs(x.e.balance) * effectivePrice(x.e);
+    },0);
+
+    let html=pageHead(
+      'Балансы и долги',
+      'Показываются только дети, которым требуется внимание по балансу.'
+    );
+
+    html+='<div class="toolbar"><select class="select" style="max-width:220px" onchange="setBalanceProject(this.value)">';
+    html+='<option value="all"'+(state.balanceProject==='all'?' selected':'')+'>Все проекты</option>';
+    html+='<option value="iCubeRobots"'+(state.balanceProject==='iCubeRobots'?' selected':'')+'>iCubeRobots</option>';
+    html+='<option value="Зебра"'+(state.balanceProject==='Зебра'?' selected':'')+'>Зебра</option>';
+    html+='</select></div>';
+
+    html+='<div class="grid" style="gap:16px">';
+    html+=block('Должники',debt,'<div style="text-align:right"><div class="muted mini">Общий долг</div><div class="negative" style="font-size:24px;font-weight:800">'+money(debtSum)+'</div></div>');
+    html+=block('Осталось 0',zero);
+    html+=block('Осталось 1',one);
+    html+='</div>';
+    return html;
+  };
+
+  render();
+})();
