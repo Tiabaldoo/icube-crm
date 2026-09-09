@@ -279,7 +279,7 @@
 
   function childPayments(c){
     const rows=state.payments.filter(function(p){return p.childId===c.id;}).slice().reverse();
-    return '<div class="card"><div class="pad" style="display:flex;justify-content:space-between;align-items:center"><div><h2 style="margin:0">Оплаты</h2><div class="muted mini">'+rows.length+' операций</div></div><button class="btn primary" onclick="paymentForm('+c.id+',\''+(c.enrollments[0]?.direction||'Робототехника')+'\')">+ Оплата</button></div>'+
+    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="paymentForm('+c.id+',\''+(c.enrollments[0]?.direction||'Робототехника')+'\')">+ Оплата</button></div>'+
       (rows.length?'<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div></div>'+rows.map(function(p){return '<div class="row"><div><b>'+p.date+'</b></div><div>'+p.direction+'</div><div class="money">'+money(p.amount)+'</div><div>'+p.method+'</div><div class="positive">+'+Number(p.lessons.toFixed? p.lessons.toFixed(4):p.lessons)+'</div></div>';}).join('')+'</div>':'<div class="empty">Оплат пока нет.</div>')+'</div>';
   }
 
@@ -307,13 +307,13 @@
 
   function childVisits(c){
     const rows=childVisitRows(c.id);
-    return '<div class="card"><div class="pad"><h2 style="margin:0 0 4px">Посещения</h2><div class="muted mini">'+rows.length+' посещений</div></div>'+
-      (rows.length?'<div class="list">'+rows.map(function(x){return '<div class="row clickable" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div><div>'+x.group.direction+'</div><div>'+x.group.name+'</div><div><span class="badge green">Был</span></div><div>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'')+'</div></div>';}).join('')+'</div>':'<div class="empty">Посещений пока нет.</div>')+'</div>';
+    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Посещения</h2><div class="muted mini child-ledger-count">'+rows.length+' посещений</div></div></div>'+
+      (rows.length?'<div class="list"><div class="row header" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto"><div>Дата</div><div>Направление</div><div>Группа</div><div>Статус</div><div>Тип</div></div>'+rows.map(function(x){return '<div class="row clickable" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div><div>'+x.group.direction+'</div><div>'+x.group.name+'</div><div><span class="badge green">Был</span></div><div>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'')+'</div></div>';}).join('')+'</div>':'<div class="empty">Посещений пока нет.</div>')+'</div>';
   }
 
   function childRefunds(c){
     const rows=state.refunds.filter(function(r){return r.childId===c.id;}).slice().reverse();
-    return '<div class="card"><div class="pad" style="display:flex;justify-content:space-between;align-items:center"><div><h2 style="margin:0">Возвраты</h2><div class="muted mini">'+rows.length+' операций</div></div><button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div>'+
+    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Возвраты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div>'+
       (rows.length?'<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Цена</div><div>Занятий</div></div>'+rows.map(function(r){return '<div class="row"><div><b>'+r.date+'</b></div><div>'+r.direction+'</div><div class="money negative">−'+money(r.amount)+'</div><div>'+money(r.price)+'</div><div>−'+Number(r.lessons.toFixed?r.lessons.toFixed(4):r.lessons)+'</div></div>';}).join('')+'</div>':'<div class="empty">Возвратов пока нет.</div>')+'</div>';
   }
 
