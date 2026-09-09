@@ -19,3 +19,13 @@
 
 .event-cancelled{background:var(--redbg)!important;border-left-color:#f04438!important;opacity:.82}
 .event-cancelled:hover{box-shadow:0 5px 14px rgba(240,68,56,.12)}
+
+.balance-block{overflow:hidden}
+.balance-block-head{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+.balance-block-head h2{margin:0;font-size:18px;line-height:1.25}
+.balance-block-count{margin-top:5px}
+.balance-block .list{border-top:0}
+.balance-block .row.header{border-radius:0;background:#fafbfc}
+@media(max-width:760px){
+  .balance-block-head{padding:16px;gap:12px}
+}
