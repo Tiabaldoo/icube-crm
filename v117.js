@@ -186,3 +186,83 @@
 
   render();
 })();
+
+
+// Keep payment corrections working after the related direction has moved to history.
+(function(){
+  function ledgerEnrollment(childId,direction){
+    const child=byId(state.children,childId);
+    if(!child) return null;
+    const current=(child.enrollments||[]).find(function(e){return e.direction===direction;});
+    if(current) return current;
+    const archived=(child.enrollmentHistory||[]).filter(function(e){return e.direction===direction;});
+    return archived.length ? archived[archived.length-1] : null;
+  }
+
+  function changeLedgerBalance(childId,direction,delta){
+    const e=ledgerEnrollment(childId,direction);
+    if(e) e.balance=Number(e.balance||0)+Number(delta||0);
+  }
+
+  window.savePaymentV116=function(paymentId){
+    const childId=Number(document.querySelector('#pf-child').value);
+    const direction=document.querySelector('#pf-dir').value;
+    const amount=Number(document.querySelector('#pf-amount').value);
+    const target=ledgerEnrollment(childId,direction);
+    const existing=paymentId?byId(state.payments,paymentId):null;
+
+    if(!target){
+      alert('У выбранного ребёнка нет этого направления.');
+      return;
+    }
+    if(!(amount>0)){
+      alert('Укажите сумму оплаты.');
+      return;
+    }
+
+    if(existing){
+      changeLedgerBalance(existing.childId,existing.direction,-Number(existing.lessons||0));
+    }
+
+    let price;
+    const current=byId(state.children,childId)?.enrollments?.find(function(e){return e.direction===direction;});
+    if(current) price=effectivePrice(current);
+    else if(existing && Number(existing.childId)===childId && existing.direction===direction) price=Number(existing.price||0);
+    else price=effectivePrice(target);
+
+    if(!(price>0)){
+      if(existing) changeLedgerBalance(existing.childId,existing.direction,Number(existing.lessons||0));
+      alert('Не удалось определить цену операции.');
+      return;
+    }
+
+    const record={
+      id:existing?.id || (typeof safeNextId==='function'?safeNextId(state.payments):Date.now()),
+      date:document.querySelector('#pf-date').value.split('-').reverse().join('.'),
+      childId:childId,
+      direction:direction,
+      amount:amount,
+      method:document.querySelector('#pf-method').value,
+      price:price,
+      lessons:amount/price
+    };
+
+    if(existing) Object.assign(existing,record);
+    else state.payments.push(record);
+    changeLedgerBalance(record.childId,record.direction,Number(record.lessons||0));
+
+    state.modal=null;
+    state.page='payments';
+    render();
+  };
+
+  window.confirmDeletePayment=function(id){
+    const p=byId(state.payments,id);
+    if(!p) return;
+    changeLedgerBalance(p.childId,p.direction,-Number(p.lessons||0));
+    state.payments=state.payments.filter(function(x){return x.id!==id;});
+    state.modal=null;
+    state.page='payments';
+    render();
+  };
+})();
