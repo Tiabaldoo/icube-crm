@@ -581,3 +581,170 @@
 
   render();
 })();
+
+
+// Calendar interaction fix — real week/month modes, select filter, clickable recurring lessons.
+(function () {
+  function ensureCalendarState() {
+    if (!state.calendarMode) state.calendarMode = 'month';
+    if (!state.calendarProject) state.calendarProject = 'all';
+  }
+
+  function dayNameRu(date) {
+    return ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'][date.getDay()];
+  }
+
+  function formatDate(date) {
+    return String(date.getDate()).padStart(2,'0') + '.' +
+      String(date.getMonth()+1).padStart(2,'0') + '.' + date.getFullYear();
+  }
+
+  function recurringEventsForRange(startDate, endDate) {
+    const events = [];
+    state.groups.filter(function(g){ return g.active; }).forEach(function(g){
+      for (let dt = new Date(startDate); dt <= endDate; dt.setDate(dt.getDate()+1)) {
+        if (dayNameRu(dt) !== g.day) continue;
+        const date = formatDate(dt);
+        const explicit = state.lessons.find(function(l){ return l.groupId===g.id && l.date===date; });
+        events.push({
+          date,
+          groupId:g.id,
+          time: explicit?.time || (g.startTime + '–' + g.endTime),
+          project:g.project,
+          lessonId:explicit?.id || null,
+          done:!!explicit?.done
+        });
+      }
+    });
+    return events;
+  }
+
+  window.openCalendarEvent = function (groupId, date, time) {
+    let lesson = state.lessons.find(function(l){ return l.groupId===Number(groupId) && l.date===date; });
+    if (!lesson) {
+      const g = byId(state.groups, groupId);
+      const nextId = state.lessons.length ? Math.max.apply(null,state.lessons.map(function(x){return x.id;})) + 1 : 1;
+      lesson = {
+        id:nextId,
+        date:date,
+        time:time,
+        groupId:Number(groupId),
+        teacherId:g.teacherId,
+        status:'Запланировано',
+        topic:'',
+        attendance:{},
+        extras:[],
+        photos:{},
+        started:false,
+        done:false,
+        intro:false,
+        emptyTrip:false,
+        attendanceApplied:false,
+        summary:null
+      };
+      groupChildren(g.id).forEach(function(c){ lesson.attendance[c.id] = false; });
+      state.lessons.push(lesson);
+    }
+    openLesson(lesson.id);
+  };
+
+  window.setCalendarMode = function (mode) {
+    state.calendarMode = mode;
+    render();
+  };
+
+  window.setCalendarProjectSelect = function (value) {
+    state.calendarProject = value;
+    render();
+  };
+
+  window.calendar = function () {
+    ensureCalendarState();
+
+    const today = new Date(2026,8,9);
+    let startDate, endDate, title;
+
+    if (state.calendarMode === 'week') {
+      const mondayOffset = (today.getDay() + 6) % 7;
+      startDate = new Date(today);
+      startDate.setDate(today.getDate() - mondayOffset);
+      endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 6);
+      title = 'Неделя ' + String(startDate.getDate()).padStart(2,'0') + '–' + String(endDate.getDate()).padStart(2,'0') + ' сентября 2026';
+    } else {
+      startDate = new Date(2026,8,1);
+      endDate = new Date(2026,8,30);
+      title = 'Сентябрь 2026';
+    }
+
+    const events = recurringEventsForRange(startDate,endDate).filter(function(e){
+      return state.calendarProject === 'all' || e.project === state.calendarProject;
+    });
+
+    let html = pageHead('Календарь', title + ' · активные группы автоматически попадают в календарь');
+    html += '<div class="toolbar">';
+    html += '<button class="btn ' + (state.calendarMode==='week'?'soft':'') + '" onclick="setCalendarMode(\'week\')">Неделя</button>';
+    html += '<button class="btn ' + (state.calendarMode==='month'?'soft':'') + '" onclick="setCalendarMode(\'month\')">Месяц</button>';
+    html += '<select class="select" style="max-width:220px" onchange="setCalendarProjectSelect(this.value)">';
+    html += '<option value="all"' + (state.calendarProject==='all'?' selected':'') + '>Все проекты</option>';
+    html += '<option value="iCubeRobots"' + (state.calendarProject==='iCubeRobots'?' selected':'') + '>iCubeRobots</option>';
+    html += '<option value="Зебра"' + (state.calendarProject==='Зебра'?' selected':'') + '>Зебра</option>';
+    html += '</select></div>';
+
+    html += '<div class="calendar" style="margin-bottom:8px">';
+    ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(d){
+      html += '<div class="muted mini" style="padding:0 8px 4px;font-weight:700">' + d + '</div>';
+    });
+    html += '</div>';
+
+    if (state.calendarMode === 'week') {
+      html += '<div class="calendar">';
+      for (let i=0;i<7;i++) {
+        const dt = new Date(startDate);
+        dt.setDate(startDate.getDate()+i);
+        const date = formatDate(dt);
+        const dd = String(dt.getDate()).padStart(2,'0');
+        const dayEvents = events.filter(function(e){ return e.date===date; });
+        html += '<div class="day" style="min-height:260px"><div class="date">' + dd + '.09' + (date==='09.09.2026'?' · сегодня':'') + '</div>';
+        dayEvents.forEach(function(e){
+          const g = byId(state.groups,e.groupId);
+          html += '<div class="event ' + (e.project==='Зебра'?'partner':'') + (e.done?' done':'') + '" onclick="openCalendarEvent(' + e.groupId + ',\'' + e.date + '\',\'' + e.time + '\')">';
+          html += '<div style="display:flex;justify-content:space-between;gap:6px"><b>' + e.time.split('–')[0] + '</b><span class="mini">' + (e.project==='Зебра'?'Зебра':'iCube') + '</span></div>';
+          html += '<div>' + g.name + '</div></div>';
+        });
+        html += '</div>';
+      }
+      html += '</div>';
+      return html;
+    }
+
+    const firstDay = new Date(2026,8,1).getDay();
+    const mondayIndex = (firstDay + 6) % 7;
+    const cells = [];
+    for (let i=0;i<mondayIndex;i++) cells.push(null);
+    for (let d=1;d<=30;d++) cells.push(d);
+
+    html += '<div class="calendar">';
+    cells.forEach(function(day){
+      if (day===null) {
+        html += '<div class="day" style="opacity:.35"></div>';
+        return;
+      }
+      const dd = String(day).padStart(2,'0');
+      const date = dd + '.09.2026';
+      const dayEvents = events.filter(function(e){ return e.date===date; });
+      html += '<div class="day"><div class="date">' + dd + '.09' + (date==='09.09.2026'?' · сегодня':'') + '</div>';
+      dayEvents.forEach(function(e){
+        const g = byId(state.groups,e.groupId);
+        html += '<div class="event ' + (e.project==='Зебра'?'partner':'') + (e.done?' done':'') + '" onclick="openCalendarEvent(' + e.groupId + ',\'' + e.date + '\',\'' + e.time + '\')">';
+        html += '<div style="display:flex;justify-content:space-between;gap:6px"><b>' + e.time.split('–')[0] + '</b><span class="mini">' + (e.project==='Зебра'?'Зебра':'iCube') + '</span></div>';
+        html += '<div>' + g.name + '</div></div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  };
+
+  render();
+})();
