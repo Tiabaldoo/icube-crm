@@ -159,7 +159,7 @@
       g = byId(state.groups,id);
       Object.assign(g,data);
     } else {
-      const nextId = Math.max.apply(null,state.groups.map(function(x){return x.id;})) + 1;
+      const nextId = state.groups.length ? Math.max.apply(null,state.groups.map(function(x){return Number(x.id)||0;})) + 1 : 1;
       g = Object.assign({id:nextId},data);
       state.groups.push(g);
       state.selectedGroup = nextId;
@@ -386,7 +386,7 @@
       const e = c.enrollments.find(function(x){return x.direction===direction;});
       if (e) e.groupId = groupId;
     } else {
-      const nextId = Math.max.apply(null,state.children.map(function(x){return x.id;})) + 1;
+      const nextId = state.children.length ? Math.max.apply(null,state.children.map(function(x){return Number(x.id)||0;})) + 1 : 1;
       const c = Object.assign({id:nextId,shift:'1'},common,{enrollments:[{direction:direction,groupId:groupId,individualPrice:null,balance:0}]});
       state.children.push(c);
       state.selectedChild = nextId;
