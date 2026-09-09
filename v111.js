@@ -419,6 +419,11 @@
 
 // v1.1.1 polish — compact group time row + recurring monthly calendar.
 (function () {
+  function add90(time) {
+    if (!time || time.indexOf(':') < 0) return '';
+    const p=time.split(':').map(Number), total=(p[0]*60+p[1]+90)%1440;
+    return String(Math.floor(total/60)).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
+  }
   const CAL_DAY_NAME = {
     0:'Воскресенье',1:'Понедельник',2:'Вторник',3:'Среда',
     4:'Четверг',5:'Пятница',6:'Суббота'
@@ -429,7 +434,7 @@
     const direction = g?.direction || 'Робототехника';
     const day = g?.day || 'Четверг';
     const start = g?.startTime || '13:00';
-    const end = g?.endTime || addMinutes(start,90);
+    const end = g?.endTime || add90(start);
 
     let html = '<h3>' + (g ? 'Редактировать группу' : 'Новая группа') + '</h3>';
     html += '<div class="form-grid">';
@@ -486,7 +491,7 @@
   window.refreshGroupEndTime = function () {
     const start = document.querySelector('#gf-start');
     const end = document.querySelector('#gf-end');
-    if (start && end && start.value) end.value = addMinutes(start.value, 90);
+    if (start && end && start.value) end.value = add90(start.value);
   };
 
   function recurringEventsForSeptember() {
