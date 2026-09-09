@@ -748,3 +748,170 @@
 
   render();
 })();
+
+
+// Ordering, group project filter, and dashboard/calendar synchronization.
+(function () {
+  const DAY_ORDER = {
+    'Понедельник':0,'Вторник':1,'Среда':2,'Четверг':3,
+    'Пятница':4,'Суббота':5,'Воскресенье':6
+  };
+
+  function timeStart(value) {
+    return String(value || '99:99').split('–')[0];
+  }
+
+  function sortGroups(list) {
+    return list.slice().sort(function(a,b){
+      const dayDiff = (DAY_ORDER[a.day] ?? 99) - (DAY_ORDER[b.day] ?? 99);
+      if (dayDiff) return dayDiff;
+      return String(a.startTime || '').localeCompare(String(b.startTime || ''));
+    });
+  }
+
+  function dayNameRuLocal(date) {
+    return ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'][date.getDay()];
+  }
+
+  function dateRu(date) {
+    return String(date.getDate()).padStart(2,'0') + '.' +
+      String(date.getMonth()+1).padStart(2,'0') + '.' + date.getFullYear();
+  }
+
+  function scheduledForDate(date) {
+    const dateStr = typeof date === 'string' ? date : dateRu(date);
+    const dt = typeof date === 'string'
+      ? new Date(Number(date.slice(6,10)), Number(date.slice(3,5))-1, Number(date.slice(0,2)))
+      : date;
+    const weekday = dayNameRuLocal(dt);
+
+    return state.groups
+      .filter(function(g){ return g.active && g.day === weekday; })
+      .map(function(g){
+        const explicit = state.lessons.find(function(l){ return l.groupId===g.id && l.date===dateStr; });
+        return {
+          group:g,
+          date:dateStr,
+          time:explicit?.time || (g.startTime + '–' + g.endTime),
+          lesson:explicit || null
+        };
+      })
+      .sort(function(a,b){ return timeStart(a.time).localeCompare(timeStart(b.time)); });
+  }
+
+  // Groups: project filter + chronological weekly ordering.
+  window.setGroupsProject = function(value) {
+    state.groupsProject = value;
+    render();
+  };
+
+  window.groups = function () {
+    if (!state.groupsProject) state.groupsProject = 'all';
+    const filtered = sortGroups(state.groups).filter(function(g){
+      return state.groupsProject === 'all' || g.project === state.groupsProject;
+    });
+
+    let html = pageHead(
+      'Группы',
+      'Группы отсортированы по дню недели и времени',
+      '<button class="btn primary" onclick="groupForm(null)">+ Новая группа</button>'
+    );
+    html += '<div class="toolbar"><select class="select" style="max-width:220px" onchange="setGroupsProject(this.value)">';
+    html += '<option value="all"' + (state.groupsProject==='all'?' selected':'') + '>Все проекты</option>';
+    html += '<option value="iCubeRobots"' + (state.groupsProject==='iCubeRobots'?' selected':'') + '>iCubeRobots</option>';
+    html += '<option value="Зебра"' + (state.groupsProject==='Зебра'?' selected':'') + '>Зебра</option>';
+    html += '</select></div>';
+
+    html += '<div class="grid cols-3">';
+    html += filtered.map(function(g){
+      const kids = groupChildren(g.id);
+      return '<div class="card pad clickable group-card" onclick="openGroup(' + g.id + ')">' +
+        '<div style="display:flex;justify-content:space-between;gap:8px"><span class="badge ' + (g.project==='Зебра'?'purple':'blue') + '">' + g.project + '</span><span class="badge ' + (g.active?'green':'gray') + '">' + (g.active?'Активна':'Неактивна') + '</span></div>' +
+        '<h3 style="margin:14px 0 5px">' + g.name + '</h3>' +
+        '<div class="muted">' + g.direction + '</div>' +
+        '<div class="info-list" style="margin-top:12px">' +
+          '<div class="info-line"><span>Время</span><b>' + g.startTime + '–' + g.endTime + '</b></div>' +
+          '<div class="info-line"><span>Площадка</span><b>' + byId(state.sites,g.siteId).name + '</b></div>' +
+          '<div class="info-line"><span>Преподаватель</span><b>' + byId(state.teachers,g.teacherId).name + '</b></div>' +
+          '<div class="info-line"><span>Детей</span><b>' + kids.length + '</b></div>' +
+          '<div class="info-line"><span>Цена</span><b>' + (g.price?money(g.price):'Наследуется') + '</b></div>' +
+        '</div><div class="group-card-hint">Открыть группу →</div></div>';
+    }).join('');
+    html += '</div>';
+    return html;
+  };
+
+  // Wrap the latest calendar renderer and guarantee events inside each day are chronological.
+  const calendarWithModes = window.calendar;
+  window.calendar = function () {
+    const html = calendarWithModes();
+    // Current renderer builds each day from recurring events. We keep its UI, while
+    // scheduledForDate provides the shared ordering logic used by dashboard.
+    return html;
+  };
+
+  // Dashboard uses the same active-group schedule as the calendar.
+  window.dashboard = function () {
+    const active=state.children.filter(function(x){return x.status==='Активный';}).length;
+    const leads=state.children.filter(function(x){return x.status==='Лид';}).length;
+    const low=state.children.filter(function(c){return c.enrollments.some(function(e){return e.balance===1;});}).length;
+    const zero=state.children.filter(function(c){return c.enrollments.some(function(e){return e.balance===0;});}).length;
+    const debt=state.children.filter(function(c){return c.enrollments.some(function(e){return e.balance<0;});}).length;
+    const revenue=state.payments.reduce(function(a,b){return a+b.amount;},0);
+
+    const todayDate = new Date(2026,8,9);
+    const today = scheduledForDate(todayDate);
+
+    const upcoming = [];
+    for (let offset=0; offset<14 && upcoming.length<3; offset++) {
+      const d = new Date(todayDate);
+      d.setDate(todayDate.getDate()+offset);
+      scheduledForDate(d).forEach(function(item){
+        if (upcoming.length<3) upcoming.push(item);
+      });
+    }
+
+    let html = pageHead('Главная','Среда, 9 сентября · обзор клуба');
+    html += '<div class="grid cols-4"><div class="card metric"><div class="label">Активные дети</div><div class="value">'+active+'</div><div class="sub">+2 за последние 30 дней</div></div><div class="card metric"><div class="label">Лиды</div><div class="value">'+leads+'</div><div class="sub">1 был на пробном</div></div><div class="card metric"><div class="label">Активные группы</div><div class="value">'+state.groups.filter(function(g){return g.active;}).length+'</div><div class="sub">2 направления</div></div><div class="card metric"><div class="label">Оплаты в сентябре</div><div class="value">'+money(revenue)+'</div><div class="sub">тестовые данные</div></div></div>';
+
+    html += '<div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Требует внимания</h2><span class="muted mini">по балансам направлений</span></div><div class="attention"><button class="warn" onclick="navTo(\'balances\')"><span>Осталось 1 занятие</span><b>'+low+'</b></button><button class="zero" onclick="navTo(\'balances\')"><span>Осталось 0</span><b>'+zero+'</b></button><button class="debt" onclick="navTo(\'balances\')"><span>Должники</span><b>'+debt+'</b></button></div></div>';
+
+    html += '<div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo(\'calendar\')">Календарь</button></div><div class="list">';
+    html += upcoming.map(function(item){
+      const g=item.group, site=byId(state.sites,g.siteId);
+      return '<div class="kpi-line clickable" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')"><div><b>'+timeStart(item.time)+' · '+g.direction+'</b><div class="muted mini">'+g.name+' · '+site.name+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+g.project+'</span></div>';
+    }).join('');
+    html += '</div></div></div>';
+
+    html += '<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Сегодня</h2><span class="muted">'+today.length+' занятий</span></div>';
+    if (!today.length) {
+      html += '<div class="empty">Сегодня занятий нет.</div>';
+    } else {
+      html += '<div class="grid cols-2">';
+      html += today.map(function(item){
+        const g=item.group, site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
+        return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+item.time+'</div><b style="font-size:16px">'+g.name+'</b><div class="muted">'+site.name+' · '+teacher.name+'</div><button class="btn soft" style="margin-top:12px" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')">Открыть занятие</button></div>';
+      }).join('');
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  };
+
+  // Replace calendar once more so events within every day are explicitly sorted by start time.
+  const previousCalendar = window.calendar;
+  window.calendar = function () {
+    const oldSort = Array.prototype.sort;
+    // No prototype mutation: latest calendar already consumes group iteration order;
+    // sort groups temporarily in local state copy and restore immediately.
+    const original = state.groups;
+    state.groups = sortGroups(original);
+    try {
+      return previousCalendar();
+    } finally {
+      state.groups = original;
+    }
+  };
+
+  render();
+})();
