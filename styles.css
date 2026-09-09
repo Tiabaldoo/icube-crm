@@ -16,3 +16,6 @@
 .group-card:hover .group-card-hint{opacity:1;transform:translateX(0)}
 .event{transition:transform .12s ease,box-shadow .12s ease}
 .event:hover{transform:translateY(-1px);box-shadow:0 5px 14px rgba(37,99,235,.12)}
+
+.event-cancelled{background:var(--redbg)!important;border-left-color:#f04438!important;opacity:.82}
+.event-cancelled:hover{box-shadow:0 5px 14px rgba(240,68,56,.12)}
