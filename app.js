@@ -1,12 +1,12 @@
 const state = {
  role:'director', page:'dashboard', selectedChild:1, selectedGroup:1, selectedLesson:1,
  children:[
-  {id:1,name:'Агафонов Евгений',birth:'2015-04-12',school:'СОШ № 1',grade:'5А',shift:'1',parent:'Агафонова Марина',phone:'+7 914 555-18-04',status:'Активный',note:'Любит конструирование, быстро работает в паре.',enrollments:[{direction:'Робототехника',groupId:1,price:1025,balance:1},{direction:'Программирование',groupId:3,price:900,balance:3}]},
-  {id:2,name:'Петров Максим',birth:'2016-09-03',school:'Гимназия № 2',grade:'4Б',shift:'1',parent:'Петрова Ольга',phone:'+7 924 210-44-31',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:1,price:1025,balance:0}]},
-  {id:3,name:'Сидоров Артём',birth:'2015-11-21',school:'СОШ № 6',grade:'5В',shift:'2',parent:'Сидорова Анна',phone:'+7 914 781-33-20',status:'Активный',note:'Иногда приходит на соседнюю группу.',enrollments:[{direction:'Робототехника',groupId:1,price:1025,balance:-1}]},
-  {id:4,name:'Козлов Максим',birth:'2014-02-17',school:'Лицей',grade:'6А',shift:'1',parent:'Козлова Ирина',phone:'+7 962 100-77-55',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:2,price:950,balance:4}]},
-  {id:5,name:'Иванов Алексей',birth:'2015-06-08',school:'СОШ № 3',grade:'5Б',shift:'2',parent:'Иванова Светлана',phone:'+7 914 610-20-28',status:'Пауза',note:'Пауза до октября.',enrollments:[{direction:'Робототехника',groupId:2,price:1025,balance:2}]},
-  {id:6,name:'Волкова София',birth:'2017-01-19',school:'СОШ № 1',grade:'3А',shift:'1',parent:'Волкова Екатерина',phone:'+7 914 443-19-91',status:'Лид',note:'Была на пробном.',enrollments:[{direction:'Робототехника',groupId:4,price:1025,balance:0}]}
+  {id:1,name:'Агафонов Евгений',birth:'2015-04-12',school:'СОШ № 1',grade:'5А',shift:'1',parent:'Агафонова Марина',phone:'+7 914 555-18-04',status:'Активный',note:'Любит конструирование, быстро работает в паре.',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:1},{direction:'Программирование',groupId:3,individualPrice:null,balance:3}]},
+  {id:2,name:'Петров Максим',birth:'2016-09-03',school:'Гимназия № 2',grade:'4Б',shift:'1',parent:'Петрова Ольга',phone:'+7 924 210-44-31',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:0}]},
+  {id:3,name:'Сидоров Артём',birth:'2015-11-21',school:'СОШ № 6',grade:'5В',shift:'2',parent:'Сидорова Анна',phone:'+7 914 781-33-20',status:'Активный',note:'Иногда приходит на соседнюю группу.',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:-1}]},
+  {id:4,name:'Козлов Максим',birth:'2014-02-17',school:'Лицей',grade:'6А',shift:'1',parent:'Козлова Ирина',phone:'+7 962 100-77-55',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:2,individualPrice:null,balance:4}]},
+  {id:5,name:'Иванов Алексей',birth:'2015-06-08',school:'СОШ № 3',grade:'5Б',shift:'2',parent:'Иванова Светлана',phone:'+7 914 610-20-28',status:'Пауза',note:'Пауза до октября.',enrollments:[{direction:'Робототехника',groupId:2,individualPrice:null,balance:2}]},
+  {id:6,name:'Волкова София',birth:'2017-01-19',school:'СОШ № 1',grade:'3А',shift:'1',parent:'Волкова Екатерина',phone:'+7 914 443-19-91',status:'Лид',note:'Была на пробном.',enrollments:[{direction:'Робототехника',groupId:4,individualPrice:null,balance:0}]}
  ],
  groups:[
   {id:1,name:'Роботы · Чт 14:00',direction:'Робототехника',siteId:1,teacherId:1,day:'Четверг',time:'14:00–15:30',project:'iCubeRobots',price:null,active:true},
@@ -45,7 +45,7 @@ const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
 const groupChildren=id=>state.children.filter(c=>c.enrollments.some(e=>e.groupId===id));
-const effectivePrice=e=>e?.price ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
+const effectivePrice=e=>e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 function openChild(id){state.selectedChild=id;state.page='child';render()}
 function openGroup(id){state.selectedGroup=id;state.page='group';render()}
