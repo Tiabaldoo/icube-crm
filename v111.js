@@ -415,3 +415,164 @@
 
   render();
 })();
+
+
+// v1.1.1 polish — compact group time row + recurring monthly calendar.
+(function () {
+  const CAL_DAY_NAME = {
+    0:'Воскресенье',1:'Понедельник',2:'Вторник',3:'Среда',
+    4:'Четверг',5:'Пятница',6:'Суббота'
+  };
+
+  window.groupForm = function (id) {
+    const g = id ? byId(state.groups, id) : null;
+    const direction = g?.direction || 'Робототехника';
+    const day = g?.day || 'Четверг';
+    const start = g?.startTime || '13:00';
+    const end = g?.endTime || addMinutes(start,90);
+
+    let html = '<h3>' + (g ? 'Редактировать группу' : 'Новая группа') + '</h3>';
+    html += '<div class="form-grid">';
+
+    html += '<div class="field"><label>Направление</label><select class="select" id="gf-dir">';
+    ['Робототехника','Программирование'].forEach(function(d){
+      html += '<option' + (d===direction?' selected':'') + '>' + d + '</option>';
+    });
+    html += '</select></div>';
+
+    html += '<div class="field"><label>Площадка</label><select class="select" id="gf-site">';
+    state.sites.forEach(function(site){
+      html += '<option value="' + site.id + '"' + (g?.siteId===site.id?' selected':'') + '>' + site.name + '</option>';
+    });
+    html += '</select></div>';
+
+    html += '<div class="field"><label>День недели</label><select class="select" id="gf-day">';
+    ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'].forEach(function(d){
+      html += '<option' + (d===day?' selected':'') + '>' + d + '</option>';
+    });
+    html += '</select></div>';
+
+    html += '<div class="field"><label>Преподаватель</label><select class="select" id="gf-teacher">';
+    state.teachers.forEach(function(t){
+      html += '<option value="' + t.id + '"' + (g?.teacherId===t.id?' selected':'') + '>' + t.name + '</option>';
+    });
+    html += '</select></div>';
+
+    html += '<div class="field span-2"><label>Время занятия</label>';
+    html += '<div style="display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center">';
+    html += '<input class="input" id="gf-start" type="time" step="1800" value="' + start + '" onchange="refreshGroupEndTime()">';
+    html += '<span class="muted" style="font-size:18px">→</span>';
+    html += '<input class="input" id="gf-end" type="time" value="' + end + '">';
+    html += '</div></div>';
+
+    html += '<div class="field"><label>Проект / владелец</label><select class="select" id="gf-project">';
+    ['iCubeRobots','Зебра'].forEach(function(p){
+      html += '<option' + (p===(g?.project||'iCubeRobots')?' selected':'') + '>' + p + '</option>';
+    });
+    html += '</select></div>';
+
+    html += '<div class="field"><label>Специальная цена, ₽</label><input class="input" id="gf-price" type="number" step="0.01" value="' + (g?.price ?? '') + '" placeholder="Пусто = цена направления"></div>';
+
+    html += '<div class="field"><label>Активность</label><select class="select" id="gf-active">';
+    html += '<option value="true"' + (g?.active!==false?' selected':'') + '>Активна</option>';
+    html += '<option value="false"' + (g?.active===false?' selected':'') + '>Неактивна</option>';
+    html += '</select></div>';
+
+    html += '</div>';
+    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveGroupV111(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
+    modal(html);
+  };
+
+  window.refreshGroupEndTime = function () {
+    const start = document.querySelector('#gf-start');
+    const end = document.querySelector('#gf-end');
+    if (start && end && start.value) end.value = addMinutes(start.value, 90);
+  };
+
+  function recurringEventsForSeptember() {
+    const events = [];
+    state.groups.filter(function(g){ return g.active; }).forEach(function(g){
+      for (let d=1; d<=30; d++) {
+        const dt = new Date(2026,8,d);
+        if (CAL_DAY_NAME[dt.getDay()] !== g.day) continue;
+        const dd = String(d).padStart(2,'0');
+        const date = dd + '.09.2026';
+        const explicit = state.lessons.find(function(l){ return l.groupId===g.id && l.date===date; });
+        events.push({
+          date: date,
+          groupId: g.id,
+          time: explicit?.time || (g.startTime + '–' + g.endTime),
+          status: explicit?.status || 'По расписанию',
+          lessonId: explicit?.id || null,
+          done: !!explicit?.done,
+          project: g.project
+        });
+      }
+    });
+    return events;
+  }
+
+  window.setCalendarProject = function (project) {
+    state.calendarProject = project;
+    render();
+  };
+
+  window.calendar = function () {
+    if (!state.calendarProject) state.calendarProject = 'all';
+    const events = recurringEventsForSeptember().filter(function(e){
+      return state.calendarProject==='all' || e.project===state.calendarProject;
+    });
+
+    const firstDay = new Date(2026,8,1).getDay();
+    const mondayIndex = (firstDay + 6) % 7;
+    const cells = [];
+    for (let i=0;i<mondayIndex;i++) cells.push(null);
+    for (let d=1;d<=30;d++) cells.push(d);
+
+    const projectButton = function(value,label){
+      return '<button class="btn ' + (state.calendarProject===value?'soft':'') + '" onclick="setCalendarProject(\'' + value + '\')">' + label + '</button>';
+    };
+
+    let html = pageHead('Календарь','Сентябрь 2026 · активные группы автоматически попадают в календарь');
+    html += '<div class="toolbar">';
+    html += '<button class="btn">Неделя</button><button class="btn soft">Месяц</button>';
+    html += '<span style="width:1px;background:var(--line);margin:0 2px"></span>';
+    html += projectButton('all','Все проекты');
+    html += projectButton('iCubeRobots','iCubeRobots');
+    html += projectButton('Зебра','Зебра');
+    html += '</div>';
+
+    html += '<div class="calendar" style="margin-bottom:8px">';
+    ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(d){
+      html += '<div class="muted mini" style="padding:0 8px 4px;font-weight:700">' + d + '</div>';
+    });
+    html += '</div>';
+
+    html += '<div class="calendar">';
+    cells.forEach(function(day){
+      if (day===null) {
+        html += '<div class="day" style="opacity:.35"></div>';
+        return;
+      }
+      const dd = String(day).padStart(2,'0');
+      const date = dd + '.09.2026';
+      const dayEvents = events.filter(function(e){ return e.date===date; });
+      html += '<div class="day"><div class="date">' + dd + '.09' + (day===9?' · сегодня':'') + '</div>';
+      dayEvents.forEach(function(e){
+        const g = byId(state.groups,e.groupId);
+        const cls = e.project==='Зебра' ? 'partner' : '';
+        const done = e.done ? ' done' : '';
+        const click = e.lessonId ? ' onclick="openLesson(' + e.lessonId + ')"' : '';
+        html += '<div class="event ' + cls + done + '"' + click + '>';
+        html += '<div style="display:flex;justify-content:space-between;gap:6px"><b>' + e.time.split('–')[0] + '</b><span class="mini">' + (e.project==='Зебра'?'Зебра':'iCube') + '</span></div>';
+        html += '<div>' + g.name + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+    });
+    html += '</div>';
+    return html;
+  };
+
+  render();
+})();
