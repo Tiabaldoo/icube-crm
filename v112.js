@@ -7,6 +7,7 @@
   state.deletedOccurrences = state.deletedOccurrences || [];
   state.calendarMode = state.calendarMode || 'month';
   state.calendarProject = state.calendarProject || 'all';
+  state.calendarTeacher = state.calendarTeacher || 'all';
   state.teacherCalendarMode = state.teacherCalendarMode || 'week';
   state.teacherCalendarProject = state.teacherCalendarProject || 'all';
 
@@ -66,17 +67,20 @@
     const events = [];
     const start = new Date(startDate), end = new Date(endDate);
 
-    state.groups.filter(function(g){ return g.active && (!teacherId || g.teacherId===teacherId); }).forEach(function(g){
+    state.groups.filter(function(g){ return g.active; }).forEach(function(g){
       for (let d=new Date(start); d<=end; d.setDate(d.getDate()+1)) {
         if (DAY_NAMES[d.getDay()] !== g.day) continue;
         const scheduledDate = formatRuDate(d);
         const key = occurrenceKey(g.id,scheduledDate);
         if (isDeleted(key)) continue;
         const l = explicitForKey(key);
+        const effectiveTeacherId = l ? l.teacherId : g.teacherId;
+        if (teacherId && effectiveTeacherId!==teacherId) continue;
+
         if (l) {
           if (l.date === scheduledDate) {
             events.push({
-              key:key, groupId:g.id, project:g.project,
+              key:key, groupId:g.id, project:g.project, teacherId:effectiveTeacherId,
               scheduledDate:scheduledDate, scheduledTime:l.scheduledTime,
               date:l.date,time:l.time,lesson:l,
               cancelled:!!l.cancelled,moved:!!l.moved,done:!!l.done
@@ -85,7 +89,7 @@
         } else {
           const scheduledTime = g.startTime+'–'+g.endTime;
           events.push({
-            key:key,groupId:g.id,project:g.project,
+            key:key,groupId:g.id,project:g.project,teacherId:effectiveTeacherId,
             scheduledDate:scheduledDate,scheduledTime:scheduledTime,
             date:scheduledDate,time:scheduledTime,lesson:null,
             cancelled:false,moved:false,done:false
@@ -103,7 +107,7 @@
       const g=byId(state.groups,l.groupId);
       if (!g) return;
       events.push({
-        key:l.occurrenceKey,groupId:l.groupId,project:g.project,
+        key:l.occurrenceKey,groupId:l.groupId,project:g.project,teacherId:l.teacherId,
         scheduledDate:l.scheduledDate,scheduledTime:l.scheduledTime,
         date:l.date,time:l.time,lesson:l,cancelled:!!l.cancelled,moved:true,done:!!l.done
       });
@@ -156,7 +160,9 @@
     const range=currentRange(mode);
     const teacherId=opts.teacher?TEACHER_ID:null;
     const events=sharedEvents(range.start,range.end,teacherId).filter(function(e){
-      return project==='all' || e.project===project;
+      const projectOk = project==='all' || e.project===project;
+      const teacherOk = opts.teacher || state.calendarTeacher==='all' || Number(state.calendarTeacher)===Number(e.teacherId);
+      return projectOk && teacherOk;
     });
 
     let html=opts.teacher
@@ -170,7 +176,16 @@
     html+='<select class="select" style="max-width:220px" onchange="'+projectFn+'(this.value)">';
     html+='<option value="all"'+(project==='all'?' selected':'')+'>Все проекты</option>';
     html+='<option value="iCubeRobots"'+(project==='iCubeRobots'?' selected':'')+'>iCubeRobots</option>';
-    html+='<option value="Зебра"'+(project==='Зебра'?' selected':'')+'>Зебра</option></select></div>';
+    html+='<option value="Зебра"'+(project==='Зебра'?' selected':'')+'>Зебра</option></select>';
+    if (!opts.teacher) {
+      html+='<select class="select" style="max-width:240px" onchange="setCalendarTeacherV12(this.value)">';
+      html+='<option value="all"'+(state.calendarTeacher==='all'?' selected':'')+'>Все преподаватели</option>';
+      state.teachers.filter(function(t){return t.active!==false || Number(state.calendarTeacher)===t.id;}).forEach(function(t){
+        html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===t.id?' selected':'')+'>'+t.name+'</option>';
+      });
+      html+='</select>';
+    }
+    html+='</div>';
 
     html+='<div class="calendar" style="margin-bottom:8px">';
     ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(function(x){ html+='<div class="muted mini" style="padding:0 8px 4px;font-weight:700">'+x+'</div>'; });
@@ -204,6 +219,7 @@
 
   window.setCalendarModeV12=function(v){state.calendarMode=v;render();};
   window.setCalendarProjectV12=function(v){state.calendarProject=v;render();};
+  window.setCalendarTeacherV12=function(v){state.calendarTeacher=v;render();};
   window.setTeacherCalendarMode=function(v){state.teacherCalendarMode=v;render();};
   window.setTeacherCalendarProject=function(v){state.teacherCalendarProject=v;render();};
   window.calendar=function(){return calendarHtml({teacher:false});};
@@ -217,6 +233,11 @@
     html+='<div class="field span-2"><label>Дата</label><input class="input" id="le-date" type="date" value="'+inputDate(l.date)+'"></div>';
     html+='<div class="field"><label>Начало</label><input class="input" id="le-start" type="time" value="'+start+'"></div>';
     html+='<div class="field"><label>Окончание</label><input class="input" id="le-end" type="time" value="'+end+'"></div>';
+    html+='<div class="field span-2"><label>Фактический преподаватель</label><select class="select" id="le-teacher">';
+    state.teachers.filter(function(t){return t.active!==false || t.id===l.teacherId;}).forEach(function(t){
+      html+='<option value="'+t.id+'"'+(t.id===l.teacherId?' selected':'')+'>'+t.name+'</option>';
+    });
+    html+='</select><div class="muted mini" style="margin-top:5px">Замена действует только для этого занятия и не меняет основного преподавателя группы.</div></div>';
     html+='<div class="field span-2"><label>Статус</label><select class="select" id="le-cancel"><option value="active"'+(!l.cancelled?' selected':'')+'>Занятие состоится</option><option value="cancelled"'+(l.cancelled?' selected':'')+'>Отменено</option></select></div>';
     html+='</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveLessonEdit('+id+',\''+role+'\')">Сохранить</button></div>';
     modal(html);
@@ -227,6 +248,7 @@
     const l=byId(state.lessons,id); if(!l)return;
     l.date=fromInputDate(document.querySelector('#le-date').value);
     l.time=document.querySelector('#le-start').value+'–'+document.querySelector('#le-end').value;
+    l.teacherId=Number(document.querySelector('#le-teacher').value);
     l.cancelled=document.querySelector('#le-cancel').value==='cancelled';
     l.moved=l.date!==l.scheduledDate || l.time!==l.scheduledTime;
     if(l.cancelled) l.status='Отменено';
