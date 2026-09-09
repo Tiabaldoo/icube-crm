@@ -240,3 +240,110 @@
 
   render();
 })();
+
+
+// Child card tabs — overview / payments / visits / refunds.
+(function(){
+  state.childTab = state.childTab || 'overview';
+
+  window.setChildTab = function(tab){
+    state.childTab = tab;
+    render();
+  };
+
+  function childTabs(){
+    const items=[['overview','Обзор'],['payments','Оплаты'],['visits','Посещения'],['refunds','Возвраты']];
+    return '<div class="tabs">'+items.map(function(x){
+      return '<button class="'+(state.childTab===x[0]?'active':'')+'" onclick="setChildTab(\''+x[0]+'\')">'+x[1]+'</button>';
+    }).join('')+'</div>';
+  }
+
+  function childOverview(c){
+    let directionsHtml=c.enrollments.map(function(e){
+      const g=byId(state.groups,e.groupId);
+      return '<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>'+e.direction+'</b><div class="muted">'+(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+e.balance+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="enrollmentForm('+c.id+',\''+e.direction+'\')">Изменить</button></div></div>';
+    }).join('');
+
+    const payments=state.payments.filter(function(p){return p.childId===c.id;}).slice().reverse().slice(0,3);
+    const visits=childVisitRows(c.id).slice(0,3);
+
+    return '<div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge '+statusBadge(c.status)+'">'+c.status+'</span><button class="btn soft" onclick="enrollmentForm('+c.id+',null)">+ Добавить направление</button></div></div>'+directionsHtml+'</div>'+
+      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>'+c.birth+'</b></div><div class="info-line"><span>Смена</span><b>'+c.shift+'</b></div><div class="info-line"><span>Родитель</span><b>'+c.parent+'</b></div><div class="info-line"><span>Телефон</span><b>'+c.phone+'</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">'+(c.note||'—')+'</span></div></div></div></div>'+
+      '<div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Последние оплаты</h2><button class="btn" onclick="setChildTab(\'payments\')">Все</button></div>'+(payments.length?payments.map(paymentRowMini).join(''):'<div class="empty">Оплат пока нет</div>')+'</div>'+
+      '<div class="card pad"><div class="section-title"><h2>История посещений</h2><button class="btn" onclick="setChildTab(\'visits\')">Все</button></div>'+(visits.length?visits.map(visitRowMini).join(''):'<div class="empty">Посещений пока нет</div>')+'</div></div>';
+  }
+
+  function paymentRowMini(p){
+    return '<div class="kpi-line"><div><b>'+p.direction+'</b><div class="muted mini">'+p.date+' · '+p.method+'</div></div><div class="money positive">+'+Number(p.lessons.toFixed? p.lessons.toFixed(4):p.lessons)+' · '+money(p.amount)+'</div></div>';
+  }
+
+  function childPayments(c){
+    const rows=state.payments.filter(function(p){return p.childId===c.id;}).slice().reverse();
+    return '<div class="card"><div class="pad" style="display:flex;justify-content:space-between;align-items:center"><div><h2 style="margin:0">Оплаты</h2><div class="muted mini">'+rows.length+' операций</div></div><button class="btn primary" onclick="paymentForm('+c.id+',\''+(c.enrollments[0]?.direction||'Робототехника')+'\')">+ Оплата</button></div>'+
+      (rows.length?'<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div></div>'+rows.map(function(p){return '<div class="row"><div><b>'+p.date+'</b></div><div>'+p.direction+'</div><div class="money">'+money(p.amount)+'</div><div>'+p.method+'</div><div class="positive">+'+Number(p.lessons.toFixed? p.lessons.toFixed(4):p.lessons)+'</div></div>';}).join('')+'</div>':'<div class="empty">Оплат пока нет.</div>')+'</div>';
+  }
+
+  function childVisitRows(childId){
+    const rows=[];
+    state.lessons.forEach(function(l){
+      if(l.cancelled) return;
+      const own=!!(l.attendance&&l.attendance[childId]);
+      const extra=(l.extras||[]).find(function(e){return e.childId===childId;});
+      if(!own&&!extra) return;
+      const g=byId(state.groups,l.groupId);
+      if(!g) return;
+      rows.push({lesson:l,group:g,extra:extra||null});
+    });
+    return rows.sort(function(a,b){return parseRuDateForChild(b.lesson.date)-parseRuDateForChild(a.lesson.date);});
+  }
+
+  function parseRuDateForChild(s){
+    const p=String(s).split('.').map(Number); return new Date(p[2],p[1]-1,p[0]);
+  }
+
+  function visitRowMini(x){
+    return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+' · '+x.group.direction+'</b><div class="muted mini">'+(x.lesson.topic||x.group.name)+'</div></div><div style="display:flex;gap:6px"><span class="badge green">Был</span>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div>';
+  }
+
+  function childVisits(c){
+    const rows=childVisitRows(c.id);
+    return '<div class="card"><div class="pad"><h2 style="margin:0 0 4px">Посещения</h2><div class="muted mini">'+rows.length+' посещений</div></div>'+
+      (rows.length?'<div class="list">'+rows.map(function(x){return '<div class="row clickable" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div><div>'+x.group.direction+'</div><div>'+x.group.name+'</div><div><span class="badge green">Был</span></div><div>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'')+'</div></div>';}).join('')+'</div>':'<div class="empty">Посещений пока нет.</div>')+'</div>';
+  }
+
+  function childRefunds(c){
+    const rows=state.refunds.filter(function(r){return r.childId===c.id;}).slice().reverse();
+    return '<div class="card"><div class="pad" style="display:flex;justify-content:space-between;align-items:center"><div><h2 style="margin:0">Возвраты</h2><div class="muted mini">'+rows.length+' операций</div></div><button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div>'+
+      (rows.length?'<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Цена</div><div>Занятий</div></div>'+rows.map(function(r){return '<div class="row"><div><b>'+r.date+'</b></div><div>'+r.direction+'</div><div class="money negative">−'+money(r.amount)+'</div><div>'+money(r.price)+'</div><div>−'+Number(r.lessons.toFixed?r.lessons.toFixed(4):r.lessons)+'</div></div>';}).join('')+'</div>':'<div class="empty">Возвратов пока нет.</div>')+'</div>';
+  }
+
+  window.refundFormForChild=function(childId){
+    modal('<h3>Новый возврат</h3><div class="form-grid"><div class="field"><label>Дата</label><input class="input" id="rf-date" type="date" value="2026-09-09"></div><div class="field"><label>Направление</label><select class="select" id="rf-dir">'+byId(state.children,childId).enrollments.map(function(e){return '<option>'+e.direction+'</option>';}).join('')+'</select></div><div class="field span-2"><label>Сумма, ₽</label><input class="input" id="rf-amount" type="number" step="0.01" value="1025"></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveRefundForChild('+childId+')">Сохранить</button></div>');
+  };
+
+  window.saveRefundForChild=function(childId){
+    const c=byId(state.children,childId),direction=document.querySelector('#rf-dir').value,e=c.enrollments.find(function(x){return x.direction===direction;}),amount=Number(document.querySelector('#rf-amount').value);
+    if(!e||!amount)return;
+    const price=effectivePrice(e),lessons=amount/price;
+    e.balance-=lessons;
+    state.refunds.push({id:Date.now(),date:document.querySelector('#rf-date').value.split('-').reverse().join('.'),childId:childId,direction:direction,amount:amount,price:price,lessons:lessons});
+    state.modal=null;state.childTab='refunds';render();
+  };
+
+  window.child=function(){
+    const c=byId(state.children,state.selectedChild); if(!c)return children();
+    let body='';
+    if(state.childTab==='payments')body=childPayments(c);
+    else if(state.childTab==='visits')body=childVisits(c);
+    else if(state.childTab==='refunds')body=childRefunds(c);
+    else body=childOverview(c);
+    return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'children\')">← Дети</button>'+
+      pageHead(c.name,c.school+' · '+c.grade+' · '+c.parent,'<button class="btn" onclick="childForm('+c.id+')">Редактировать</button>')+
+      childTabs()+body;
+  };
+
+  const oldOpenChild=window.openChild;
+  window.openChild=function(id){ state.selectedChild=id; state.childTab='overview'; state.page='child'; render(); };
+
+  render();
+})();
