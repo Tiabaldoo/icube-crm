@@ -269,6 +269,7 @@
   window.lesson=function(){
     const l=byId(state.lessons,state.selectedLesson); if(!l)return calendar();
     const g=byId(state.groups,l.groupId),t=byId(state.teachers,l.teacherId),kids=groupChildren(g.id);
+    const presentCount=Number(Object.values(l.attendance||{}).filter(Boolean).length)+Number((l.extras||[]).length);
     const stateBadges='<span class="badge '+(l.cancelled?'red':l.moved?'amber':l.done?'green':'blue')+'">'+(l.cancelled?'Отменено':l.moved&&!l.done?'Перенесено':l.done?'Проведено':'Запланировано')+'</span>';
     return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+
       pageHead(l.date+' · '+g.direction,l.time+' · '+byId(state.sites,g.siteId).name,
