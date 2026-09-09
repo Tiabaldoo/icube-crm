@@ -9,15 +9,14 @@
   state.refunds = [];
   state.sites = [];
 
-  // One teacher is intentionally kept so Teacher mode remains testable.
-  state.teachers = [
-    {id:1,name:'Иванов Сергей',phone:'',active:true,directions:['Робототехника','Программирование']}
-  ];
+  // Teachers are also empty: create your own records for testing.
+  state.teachers = [];
 
   state.selectedChild = null;
   state.selectedGroup = null;
   state.selectedLesson = null;
-  state.salaryTeacher = '1';
+  state.salaryTeacher = '';
+  state.prototypeTeacherId = null;
 
   // Remove remaining static demo copy/counters from the dashboard.
   const cleanBaseDashboard = window.dashboard;
