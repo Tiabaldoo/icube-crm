@@ -133,15 +133,15 @@ function attend(id,v){byId(state.lessons,state.selectedLesson).attendance[id]=v;
 function togglePhoto(id){let l=byId(state.lessons,state.selectedLesson);l.photos[id]=!l.photos[id];render()}
 function showExtraResults(q){
  const box=document.querySelector('#extraResults');if(!q){box.innerHTML='';return}let l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId);
- let res=state.children.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())&&!groupChildren(g.id).some(k=>k.id===c.id)&&c.enrollments.some(e=>e.direction===g.direction));
+ let res=state.children.filter(c=>c.name.toLowerCase().includes(q.toLowerCase())&&!groupChildren(g.id).some(k=>k.id===c.id));
  box.innerHTML=res.slice(0,4).map(c=>`<button class="btn" style="width:100%;margin-top:6px;justify-content:flex-start" onclick="addExtra(${c.id})">${c.name}</button>`).join('');
 }
-function addExtra(id){let l=byId(state.lessons,state.selectedLesson);if(!l.extras.some(e=>e.childId===id))l.extras.push({childId:id,trial:false});render()}
+function addExtra(id){let l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId),c=byId(state.children,id);if(!l.extras.some(e=>e.childId===id))l.extras.push({childId:id,trial:!c.enrollments.some(e=>e.direction===g.direction)});render()}
 function finishLesson(){
  let l=byId(state.lessons,state.selectedLesson), presentIds=Object.entries(l.attendance).filter(([,v])=>v).map(([id])=>Number(id)).concat(l.extras.map(e=>e.childId)), missing=presentIds.filter(id=>!l.photos[id]).length;
  if(missing){modal(`<h3>Не у всех есть фотографии</h3><div class="notice">У ${missing} детей отсутствуют фотографии. Всё равно завершить занятие?</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn primary" onclick="confirmFinish()">Завершить всё равно</button></div>`)}else confirmFinish();
 }
-function confirmFinish(){let l=byId(state.lessons,state.selectedLesson);l.done=true;l.status='Проведено';state.modal=null;render()}
+function confirmFinish(){let l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId);if(!l.attendanceApplied){Object.entries(l.attendance).filter(x=>x[1]).forEach(x=>{let c=byId(state.children,Number(x[0])),e=c&&c.enrollments.find(y=>y.direction===g.direction);if(e)e.balance-=1});l.extras.filter(x=>!x.trial).forEach(x=>{let c=byId(state.children,x.childId),e=c&&c.enrollments.find(y=>y.direction===g.direction);if(e)e.balance-=1});l.attendanceApplied=true}l.summary={present:Object.values(l.attendance).filter(Boolean).length+l.extras.length,trials:l.extras.filter(x=>x.trial).length,missing:Object.entries(l.attendance).filter(x=>x[1]&&!l.photos[x[0]]).length+l.extras.filter(x=>!l.photos[x.childId]).length};l.done=true;l.status='Проведено';state.modal=null;render()}
 function payments(){
  return pageHead('Оплаты','Каждая оплата относится к одному ребёнку и одному направлению; цена фиксируется на момент операции','<button class="btn primary" onclick="paymentForm()">+ Оплата</button>')+`<div class="card list"><div class="row header"><div>Ребёнок</div><div>Направление</div><div>Сумма</div><div>Дата</div><div>Занятий</div></div>${state.payments.slice().reverse().map(p=>`<div class="row"><div><b>${byId(state.children,p.childId).name}</b><div class="muted mini">${p.method}</div></div><div>${p.direction}</div><div class="money">${money(p.amount)}</div><div>${p.date}</div><div><span class="badge green">+${Number(p.lessons).toFixed(p.lessons%1?2:0)}</span></div></div>`).join('')}</div>`;
 }
