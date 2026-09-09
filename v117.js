@@ -188,7 +188,8 @@
     if(!child) return html;
 
     // Remove the separate "+ Добавить направление" action from the header.
-    html=html.replace(/<button class="btn soft" onclick="enrollmentForm\('+child\.id+',null\)">\+ Добавить направление<\/button>/g,'');
+    const addDirection='<button class="btn soft" onclick="enrollmentForm('+child.id+',null)">+ Добавить направление</button>';
+    html=html.replace(addDirection,'');
 
     (child.enrollments||[]).forEach(function(e){
       const edit='<button class="btn" onclick="enrollmentForm('+child.id+',\''+e.direction+'\')">Изменить</button>';
