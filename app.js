@@ -25,10 +25,10 @@ const state = {
   {id:3,name:'Ким Андрей',phone:'+7 914 200-01-09',active:false,directions:['Программирование']}
  ],
  lessons:[
-  {id:1,date:'09.09.2026',time:'14:00–15:30',groupId:1,teacherId:1,status:'Запланировано',topic:'',attendance:{1:true,2:true,3:false},extras:[],photos:{},started:false,done:false,intro:false,emptyTrip:false},
-  {id:2,date:'09.09.2026',time:'18:00–19:30',groupId:4,teacherId:2,status:'Запланировано',topic:'',attendance:{6:true},extras:[],photos:{},started:false,done:false,intro:false,emptyTrip:false},
-  {id:3,date:'10.09.2026',time:'14:00–15:30',groupId:1,teacherId:1,status:'Запланировано',topic:'',attendance:{1:false,2:false,3:false},extras:[],photos:{},started:false,done:false,intro:false,emptyTrip:false},
-  {id:4,date:'05.09.2026',time:'10:00–11:30',groupId:2,teacherId:2,status:'Проведено',topic:'Редукторы и передаточное отношение',attendance:{4:true,5:true},extras:[{childId:3,trial:false}],photos:{4:true,5:true,3:true},started:true,done:true,intro:false,emptyTrip:false}
+  {id:1,date:'09.09.2026',time:'14:00–15:30',groupId:1,teacherId:1,status:'Запланировано',topic:'',attendance:{1:true,2:true,3:false},extras:[],photos:{},started:false,done:false,intro:false,emptyTrip:false,attendanceApplied:false,summary:null},
+  {id:2,date:'09.09.2026',time:'18:00–19:30',groupId:4,teacherId:2,status:'Запланировано',topic:'',attendance:{6:true},extras:[],photos:{},started:false,done:false,intro:false,emptyTrip:false,attendanceApplied:false,summary:null},
+  {id:3,date:'10.09.2026',time:'14:00–15:30',groupId:1,teacherId:1,status:'Запланировано',topic:'',attendance:{1:false,2:false,3:false},extras:[],photos:{},started:false,done:false,intro:false,emptyTrip:false,attendanceApplied:false,summary:null},
+  {id:4,date:'05.09.2026',time:'10:00–11:30',groupId:2,teacherId:2,status:'Проведено',topic:'Редукторы и передаточное отношение',attendance:{4:true,5:true},extras:[{childId:3,trial:false}],photos:{4:true,5:true,3:true},started:true,done:true,intro:false,emptyTrip:false,attendanceApplied:false,summary:null}
  ],
  payments:[
   {id:1,date:'01.09.2026',childId:1,direction:'Робототехника',amount:4100,method:'На счёт iCube',price:1025,lessons:4},
@@ -80,8 +80,8 @@ function childForm(id=null){
 }
 function saveChild(id){
  const name=document.querySelector('#cf-name').value.trim()||'Новый ребёнок', groupId=Number(document.querySelector('#cf-group').value)||1;
- if(id){let c=byId(state.children,id);Object.assign(c,{name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value});}
- else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,shift:'1',parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,price:byId(state.groups,groupId).price,balance:0}]});state.selectedChild=nid;}
+ if(id){let c=byId(state.children,id);Object.assign(c,{name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value});let g=byId(state.groups,groupId);let e=c.enrollments.find(x=>x.direction===g.direction);if(e)e.groupId=groupId;}
+ else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,shift:'1',parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,individualPrice:null,balance:0}]});state.selectedChild=nid;}
  state.modal=null;state.page='child';render();
 }
 function child(){
