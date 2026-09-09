@@ -1,7 +1,12 @@
 
 // iCube CRM v1.2 prototype layer: concrete lesson overrides shared by director + teacher.
 (function () {
-  const TEACHER_ID = 1;
+  function currentPrototypeTeacherId(){
+    if(state.prototypeTeacherId!=null && byId(state.teachers,state.prototypeTeacherId)) return Number(state.prototypeTeacherId);
+    const t=state.teachers.find(function(x){return x.active!==false;}) || state.teachers[0];
+    return t ? t.id : null;
+  }
+  window.setPrototypeTeacher=function(id){state.prototypeTeacherId=id===''?null:Number(id);state.page='teacherToday';render();};
   const DAY_NAMES = ['Воскресенье','Понедельник','Вторник','Среда','Четверг','Пятница','Суббота'];
 
   state.deletedOccurrences = state.deletedOccurrences || [];
@@ -140,7 +145,7 @@
 
   window.openUnifiedCalendarEvent = function(key, role) {
     const range={start:new Date(2026,8,1),end:new Date(2026,8,30)};
-    const event=sharedEvents(range.start,range.end,role==='teacher'?TEACHER_ID:null).find(function(e){return e.key===key;}) ||
+    const event=sharedEvents(range.start,range.end,role==='teacher'?currentPrototypeTeacherId():null).find(function(e){return e.key===key;}) ||
       (function(){
         const l=explicitForKey(key);
         if (!l) return null;
@@ -158,7 +163,7 @@
     const mode=opts.teacher?state.teacherCalendarMode:state.calendarMode;
     const project=opts.teacher?state.teacherCalendarProject:state.calendarProject;
     const range=currentRange(mode);
-    const teacherId=opts.teacher?TEACHER_ID:null;
+    const teacherId=opts.teacher?currentPrototypeTeacherId():null;
     const events=sharedEvents(range.start,range.end,teacherId).filter(function(e){
       const projectOk = project==='all' || e.project===project;
       const teacherOk = opts.teacher || state.calendarTeacher==='all' || Number(state.calendarTeacher)===Number(e.teacherId);
@@ -312,7 +317,7 @@
 
   window.teacherToday=function(){
     const today=parseRuDate('09.09.2026');
-    const events=sharedEvents(today,today,TEACHER_ID).sort(function(a,b){return timeStart(a.time).localeCompare(timeStart(b.time));});
+    const events=sharedEvents(today,today,currentPrototypeTeacherId()).sort(function(a,b){return timeStart(a.time).localeCompare(timeStart(b.time));});
     return '<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">Среда, 9 сентября · '+events.length+' занятий</div>'+
       (events.length?events.map(teacherEventCard).join(''):'<div class="teacher-card"><div class="empty">Сегодня занятий нет.</div></div>');
   };
@@ -338,7 +343,13 @@
   };
 
   window.teacherShell=function(content){
-    return '<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>Иванов Сергей</b></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value===\'director\'?\'dashboard\':\'teacherToday\';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div><div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn '+(state.page==='teacherToday'?'soft':'')+'" onclick="state.page=\'teacherToday\';render()">Сегодня</button><button class="btn '+(state.page==='teacherCalendar'?'soft':'')+'" onclick="state.page=\'teacherCalendar\';render()">Календарь</button></div></div><div class="teacher-content">'+content+'</div></div>';
+    const currentId=currentPrototypeTeacherId();
+    const current=byId(state.teachers,currentId);
+    let teacherOptions='<option value="">Выберите преподавателя</option>';
+    state.teachers.filter(function(t){return t.active!==false;}).forEach(function(t){
+      teacherOptions+='<option value="'+t.id+'"'+(t.id===currentId?' selected':'')+'>'+t.name+'</option>';
+    });
+    return '<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><select class="select" style="margin-top:5px;min-width:220px" onchange="setPrototypeTeacher(this.value)">'+teacherOptions+'</select><div class="mini" style="color:#98a2b3;margin-top:3px">Выбор преподавателя только для режима прототипа</div></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value===\'director\'?\'dashboard\':\'teacherToday\';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div><div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn '+(state.page==='teacherToday'?'soft':'')+'" onclick="state.page=\'teacherToday\';render()">Сегодня</button><button class="btn '+(state.page==='teacherCalendar'?'soft':'')+'" onclick="state.page=\'teacherCalendar\';render()">Календарь</button></div></div><div class="teacher-content">'+(current?content:'<div class="teacher-card"><div class="empty">Создайте преподавателя в директорском разделе «Преподаватели», затем выберите его здесь для проверки интерфейса.</div></div>')+'</div></div>';
   };
 
   // Dashboard now consumes the same shared event source.
