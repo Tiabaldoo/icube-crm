@@ -1,0 +1,130 @@
+/* Mobile/UI stabilization layer */
+html,body{max-width:100%;overflow-x:hidden}
+img,svg,canvas{max-width:100%}
+
+@media(max-width:760px){
+  body{font-size:14px}
+  .main,.content,.teacher-shell,.teacher-content{min-width:0;max-width:100%;overflow-x:hidden}
+  .content{padding-left:12px!important;padding-right:12px!important;padding-bottom:24px!important}
+
+  /* Prevent iOS Safari zooming inputs and jumping the layout when modals open. */
+  input,select,textarea{font-size:16px!important}
+
+  /* Dialogs always fit inside the viewport and only scroll vertically. */
+  .modal-backdrop{
+    padding:12px!important;
+    overflow:hidden!important;
+    align-items:center!important;
+  }
+  .modal{
+    width:calc(100vw - 24px)!important;
+    max-width:620px!important;
+    max-height:calc(100dvh - 24px)!important;
+    overflow-y:auto!important;
+    overflow-x:hidden!important;
+    padding:16px!important;
+    border-radius:16px!important;
+    overscroll-behavior:contain;
+  }
+  .modal *{max-width:100%}
+  .modal .form-grid{grid-template-columns:minmax(0,1fr)!important;gap:13px!important}
+  .modal .span-2{grid-column:auto!important}
+  .modal .field,.modal .field>*{min-width:0!important}
+  .modal .input,.modal .select,.modal .textarea{width:100%!important;min-width:0!important}
+  .modal .field>div[style*="grid-template-columns"]{grid-template-columns:minmax(0,1fr) auto minmax(0,1fr)!important;width:100%!important;min-width:0!important}
+  .modal-actions{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;position:sticky;bottom:-16px;background:#fff;padding:12px 0 2px;margin-top:16px!important}
+  .modal-actions .btn{width:100%!important;min-width:0!important;white-space:normal!important}
+
+  /* General card/list alignment. */
+  .card,.teacher-card{min-width:0}
+  .section-title{align-items:flex-start!important}
+  .section-title>*{min-width:0}
+  .section-title h2{line-height:1.2}
+  .badge{max-width:100%;white-space:normal;text-align:center}
+  .kpi-line{gap:10px;align-items:flex-start!important}
+  .kpi-line>div{min-width:0;flex:1}
+  .kpi-line>b,.kpi-line>span{min-width:0}
+
+  /* Generic data rows: keep related values grouped instead of scattering them. */
+  .row:not(.header){
+    display:flex!important;
+    flex-wrap:wrap!important;
+    align-items:center!important;
+    gap:7px 12px!important;
+    padding:13px 14px!important;
+  }
+  .row:not(.header)>*{
+    display:block!important;
+    min-width:0!important;
+    flex:1 1 42%!important;
+    overflow-wrap:anywhere;
+  }
+  .row:not(.header)>*:first-child{flex:1 1 58%!important}
+  .row:not(.header)>*:last-child{flex:0 0 auto!important;margin-left:auto;text-align:right}
+  .row:not(.header)>div:empty{display:none!important}
+
+  /* Payment rows use two clean columns and actions below. */
+  .payment-main-row{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:8px 14px!important}
+  .payment-main-row>*{display:block!important;min-width:0!important}
+  .payment-main-row>*:last-child{grid-column:1/-1!important;margin-left:0!important;display:flex!important;justify-content:flex-end!important;gap:8px!important;flex-wrap:wrap}
+
+  /* Child-card ledgers. */
+  .child-ledger-head{align-items:flex-start!important}
+  .child-ledger-card .row:not(.header){border-top:1px solid var(--line)}
+
+  /* Avoid tiny orphan punctuation/metadata lines. */
+  .muted.mini{overflow-wrap:anywhere}
+
+  /* Teacher attendance cards keep checkbox, name and photo aligned. */
+  .student-check{
+    grid-template-columns:auto minmax(0,1fr) auto!important;
+    align-items:center!important;
+    gap:10px!important;
+    padding:11px!important;
+  }
+  .student-check>div{min-width:0!important}
+  .student-check .photo{grid-column:auto!important;width:auto!important;max-width:120px!important;white-space:nowrap}
+  .student-check label.mini{line-height:1.3}
+  .teacher-card{padding:14px!important}
+  .teacher-content{padding:14px 12px calc(20px + env(safe-area-inset-bottom))!important}
+  .teacher-top{padding-top:calc(14px + env(safe-area-inset-top))!important}
+  .teacher-sticky{padding-bottom:calc(6px + env(safe-area-inset-bottom))!important}
+
+  /* Top bar stays compact and stable. */
+  .topbar{padding-left:12px!important;padding-right:12px!important}
+  .mobile-top-left{min-width:0;flex:1}
+  .crumb{min-width:0;max-width:150px!important}
+  .top-actions{flex:0 0 auto}
+
+  /* Forms/toolbars should not create horizontal scrolling. */
+  .toolbar,.page-head,.split,.grid,.form-grid{max-width:100%}
+  .toolbar>*{min-width:0!important}
+  .toolbar .search{flex:1 1 100%!important}
+  .toolbar .select{flex:1 1 150px!important}
+  .toolbar .btn{white-space:normal}
+
+  /* Tabs remain swipeable without widening the whole page. */
+  .tabs{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
+  .tabs::-webkit-scrollbar{display:none}
+
+  /* Partner and statistics number alignment. */
+  .partner-line,.calc-line,.info-line{align-items:flex-start!important}
+  .partner-line span,.calc-line span,.info-line span{min-width:0}
+  .partner-line b,.calc-line b,.info-line b{flex:0 0 auto;text-align:right;max-width:52%;overflow-wrap:anywhere}
+
+  /* Group/site/teacher cards. */
+  .group-card h3,.card h3{overflow-wrap:anywhere}
+  .group-card .info-line b{max-width:58%}
+
+  /* Long primary buttons shouldn't push outside the screen. */
+  .btn{max-width:100%}
+  .btn.primary{white-space:normal;text-align:center}
+}
+
+@media(max-width:390px){
+  .modal-actions{grid-template-columns:1fr!important}
+  .student-check{grid-template-columns:auto minmax(0,1fr)!important}
+  .student-check .photo{grid-column:2!important;justify-self:start}
+  .role-switch{max-width:112px!important}
+  .crumb{max-width:96px!important}
+}
