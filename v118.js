@@ -394,3 +394,191 @@
 
   render();
 })();
+
+
+// v1.1.9 fixes: stay on child after new payment + retroactive attendance accounting.
+(function(){
+  function currentEnrollmentForDirection(child,direction){
+    return (child?.enrollments||[]).find(function(e){return e.direction===direction;}) || null;
+  }
+
+  function currentEnrollmentAny(child,direction){
+    return currentEnrollmentForDirection(child,direction) || (child?.enrollments||[])[0] || null;
+  }
+
+  function lessonPriceForChild(childId,lesson,group){
+    lesson.visitPriceSnapshot=lesson.visitPriceSnapshot||{};
+    if(Number(lesson.visitPriceSnapshot[childId])>0) return Number(lesson.visitPriceSnapshot[childId]);
+
+    const child=byId(state.children,childId);
+    const active=currentEnrollmentForDirection(child,group.direction);
+    if(active) return Number(effectivePrice(active)||0);
+
+    const history=(child?.enrollmentHistory||[]).filter(function(e){
+      return e.direction===group.direction && Number(e.price)>0;
+    });
+    if(history.length) return Number(history[history.length-1].price);
+
+    return group.direction==='Программирование'
+      ? Number(state.settings.codePrice||0)
+      : Number(state.settings.robotPrice||0);
+  }
+
+  function applyMoneyDeltaToCurrent(childId,amountRub,preferredDirection){
+    const child=byId(state.children,childId);
+    const current=currentEnrollmentAny(child,preferredDirection);
+    if(!current) return false;
+    const currentPrice=Number(effectivePrice(current)||0);
+    if(!(currentPrice>0)) return false;
+    current.balance=Number(current.balance||0)+Number(amountRub||0)/currentPrice;
+    return true;
+  }
+
+  // Called from the child card so creating a payment returns to the same child.
+  window.newChildPayment=function(childId,direction){
+    state.childPaymentAddReturn={childId:Number(childId)};
+    paymentForm(childId,direction);
+  };
+
+  // Extend payment save: additions from a child card return to that child's Payments tab.
+  const savePaymentBeforeV119=window.savePaymentV116;
+  window.savePaymentV116=function(paymentId){
+    const addReturn=!paymentId ? state.childPaymentAddReturn : null;
+    const editReturn=paymentId ? state.childPaymentEditReturn : null;
+
+    // Replicate v118 money-first save to control navigation reliably.
+    const childId=Number(document.querySelector('#pf-child').value);
+    const direction=document.querySelector('#pf-dir').value;
+    const amount=Number(document.querySelector('#pf-amount').value);
+    const existing=paymentId?byId(state.payments,paymentId):null;
+    const child=byId(state.children,childId);
+    const current=currentEnrollmentForDirection(child,direction);
+
+    if(!(amount>0)){alert('Укажите сумму оплаты.');return;}
+    if(!current && !(existing && Number(existing.childId)===childId && existing.direction===direction)){
+      alert('Для новой оплаты выберите текущее направление ребёнка.');
+      return;
+    }
+
+    if(existing){
+      applyMoneyDeltaToCurrent(existing.childId,-Number(existing.amount||0),existing.direction);
+    }
+
+    const operationPrice=current ? Number(effectivePrice(current)||0) : Number(existing?.price||0);
+    if(!(operationPrice>0)){
+      if(existing) applyMoneyDeltaToCurrent(existing.childId,Number(existing.amount||0),existing.direction);
+      alert('Не удалось определить цену операции.');
+      return;
+    }
+
+    const record={
+      id:existing?.id || (typeof safeNextId==='function'?safeNextId(state.payments):Date.now()),
+      date:document.querySelector('#pf-date').value.split('-').reverse().join('.'),
+      childId:childId,
+      direction:direction,
+      amount:amount,
+      method:document.querySelector('#pf-method').value,
+      price:operationPrice,
+      lessons:amount/operationPrice
+    };
+
+    if(existing) Object.assign(existing,record);
+    else state.payments.push(record);
+    applyMoneyDeltaToCurrent(childId,amount,direction);
+
+    state.modal=null;
+    state.childPaymentAddReturn=null;
+    state.childPaymentEditReturn=null;
+
+    if((addReturn && Number(addReturn.childId)===childId) || (editReturn && existing)){
+      state.selectedChild=addReturn ? Number(addReturn.childId) : Number(editReturn.childId);
+      state.childTab='payments';
+      state.page='child';
+    }else{
+      state.page='payments';
+    }
+    render();
+  };
+
+  // If a completed lesson is edited retroactively, apply/rollback its money immediately.
+  const previousAttend=window.attend || attend;
+  window.attend=function(id,value){
+    const lesson=byId(state.lessons,state.selectedLesson);
+    if(!lesson) return;
+    lesson.attendance=lesson.attendance||{};
+    const old=!!lesson.attendance[id];
+    if(old===!!value){render();return;}
+
+    const group=byId(state.groups,lesson.groupId);
+    const child=byId(state.children,id);
+
+    if(lesson.done && lesson.attendanceApplied && group && child){
+      const price=lessonPriceForChild(id,lesson,group);
+      if(value){
+        lesson.visitPriceSnapshot=lesson.visitPriceSnapshot||{};
+        lesson.visitPriceSnapshot[id]=price;
+        // Visiting consumes this historical lesson's ruble value from today's carried balance.
+        applyMoneyDeltaToCurrent(id,-price,group.direction);
+      }else{
+        applyMoneyDeltaToCurrent(id,price,group.direction);
+      }
+    }
+
+    lesson.attendance[id]=!!value;
+    if(lesson.summary){
+      lesson.summary.present=Object.values(lesson.attendance||{}).filter(Boolean).length+(lesson.extras||[]).length;
+      lesson.summary.trials=(lesson.extras||[]).filter(function(e){return !!e.trial;}).length;
+    }
+    render();
+  };
+
+  // Adding a child to an already completed lesson also immediately charges the visit.
+  const previousAddExtra=window.addExtra || addExtra;
+  window.addExtra=function(id){
+    const lesson=byId(state.lessons,state.selectedLesson);
+    const group=lesson?byId(state.groups,lesson.groupId):null;
+    const child=byId(state.children,id);
+    if(!lesson||!group||!child) return;
+    if((lesson.extras||[]).some(function(e){return Number(e.childId)===Number(id);})) return;
+
+    const hasDirection=!!currentEnrollmentForDirection(child,group.direction) ||
+      (child.enrollmentHistory||[]).some(function(e){return e.direction===group.direction;});
+    const extra={childId:id,trial:!hasDirection};
+    lesson.extras=lesson.extras||[];
+    lesson.extras.push(extra);
+
+    if(lesson.done && lesson.attendanceApplied && !extra.trial){
+      const price=lessonPriceForChild(id,lesson,group);
+      lesson.visitPriceSnapshot=lesson.visitPriceSnapshot||{};
+      lesson.visitPriceSnapshot[id]=price;
+      applyMoneyDeltaToCurrent(id,-price,group.direction);
+    }
+
+    if(lesson.summary){
+      lesson.summary.present=Object.values(lesson.attendance||{}).filter(Boolean).length+(lesson.extras||[]).length;
+      lesson.summary.trials=(lesson.extras||[]).filter(function(e){return !!e.trial;}).length;
+    }
+    render();
+  };
+
+  // Patch child UI payment buttons to use child-aware navigation.
+  const childBeforeV119=window.child;
+  window.child=function(){
+    let html=childBeforeV119();
+    const c=byId(state.children,state.selectedChild);
+    if(!c) return html;
+    (c.enrollments||[]).forEach(function(e){
+      const oldBtn='<button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button>';
+      const newBtn='<button class="btn soft" onclick="newChildPayment('+c.id+',\''+e.direction+'\')">+ Оплата</button>';
+      html=html.replaceAll(oldBtn,newBtn);
+    });
+
+    const mainDir=(c.enrollments||[])[0]?.direction||'Робототехника';
+    const oldTop='<button class="btn primary" onclick="paymentForm('+c.id+',\''+mainDir+'\')">+ Оплата</button>';
+    const newTop='<button class="btn primary" onclick="newChildPayment('+c.id+',\''+mainDir+'\')">+ Оплата</button>';
+    html=html.replace(oldTop,newTop);
+    return html;
+  };
+
+  render();
+})();
