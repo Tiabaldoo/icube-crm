@@ -110,22 +110,37 @@
   function leftEvents(from,to,project,direction){
     const out=[];
     (state.children||[]).forEach(function(c){
-      // "Ушёл" — это текущее состояние ребёнка. Если его вернули в Лид/Активный,
-      // он сразу перестаёт считаться ушедшим даже если раньше был на паузе.
+      // Only the CURRENT inactive status matters.
       if(c.status!=='Пауза' && c.status!=='Закончил') return;
 
-      // Берём последнее присвоение текущего неактивного статуса.
-      const history=(c.statusHistory||[]).slice().reverse();
-      const h=history.find(function(x){
-        return x.to===c.status && (x.to==='Пауза' || x.to==='Закончил');
-      });
-      if(!h) return;
+      // Primary source: the latest status-change fields saved on the child itself.
+      let date=c.statusChangedAt||null;
+      let eventProject=c.statusChangedProject||null;
+      let eventDirection=c.statusChangedDirection||null;
 
-      const d=isoDate(h.date);
+      // Backward-compatible fallback for children changed before these fields existed.
+      if(!date){
+        const history=(c.statusHistory||[]).slice().reverse();
+        const h=history.find(function(x){
+          return x.to===c.status && (x.to==='Пауза' || x.to==='Закончил');
+        });
+        if(h){
+          date=h.date;
+          eventProject=h.project||null;
+          eventDirection=h.direction||null;
+        }
+      }
+      if(!date) return;
+
+      const d=isoDate(date);
       if(!inRangeDate(d,from,to)) return;
-      if(project!=='all' && h.project!==project) return;
-      if(direction!=='all' && h.direction!==direction) return;
-      out.push({childId:c.id,event:h});
+      if(project!=='all' && eventProject!==project) return;
+      if(direction!=='all' && eventDirection!==direction) return;
+
+      out.push({
+        childId:c.id,
+        event:{to:c.status,date:date,project:eventProject,direction:eventDirection}
+      });
     });
     return out;
   }
