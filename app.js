@@ -44,7 +44,7 @@ const byId=(arr,id)=>arr.find(x=>x.id===Number(id));
 const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
-const groupChildren=id=>state.children.filter(c=>c.enrollments.some(e=>e.groupId===id));
+const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>e.groupId===id));
 const effectivePrice=e=>e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 function openChild(id){state.selectedChild=id;state.page='child';render()}
