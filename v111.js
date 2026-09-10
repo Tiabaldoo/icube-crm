@@ -382,9 +382,32 @@
 
     if (id) {
       const c = byId(state.children,id);
+      const oldStatus = c.status;
+      const oldEnrollment = (c.enrollments||[]).find(function(x){return x.direction===direction;}) || (c.enrollments||[])[0] || null;
+      const oldGroup = oldEnrollment && oldEnrollment.groupId!=null ? byId(state.groups,oldEnrollment.groupId) : null;
+
       Object.assign(c,common);
+
       const e = c.enrollments.find(function(x){return x.direction===direction;});
       if (e) e.groupId = groupId;
+
+      if (oldStatus !== common.status) {
+        const now = new Date();
+        const localDate = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+
+        c.statusHistory = c.statusHistory || [];
+        c.statusHistory.push({
+          from: oldStatus,
+          to: common.status,
+          date: localDate,
+          project: oldGroup?.project || null,
+          direction: oldEnrollment?.direction || direction || null
+        });
+
+        c.statusChangedAt = localDate;
+        c.statusChangedProject = oldGroup?.project || null;
+        c.statusChangedDirection = oldEnrollment?.direction || direction || null;
+      }
     } else {
       const nextId = state.children.length ? Math.max.apply(null,state.children.map(function(x){return Number(x.id)||0;})) + 1 : 1;
       const c = Object.assign({id:nextId,shift:'1'},common,{enrollments:[{direction:direction,groupId:groupId,individualPrice:null,balance:0}]});
