@@ -104,3 +104,47 @@
   .teacher-top-inner{display:block}
   .teacher-top-inner>div+div{margin-top:10px}
 }
+
+
+/* Calendar redesign v1.1.18 */
+.calendar-toolbar{display:flex;justify-content:space-between;gap:16px;align-items:flex-end;flex-wrap:wrap;margin:14px 0 16px}
+.calendar-toolbar-nav,.calendar-toolbar-filters,.calendar-mode-switch{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.calendar-toolbar-filters .select{min-width:180px;max-width:220px}
+.calendar-period-title{font-size:16px;font-weight:800;color:#101828;margin-left:8px;white-space:nowrap}
+.calendar-arrow{width:42px;padding-left:0;padding-right:0;justify-content:center}
+.calendar-weekdays{margin-bottom:8px}
+.calendar-weekdays>div{font-size:12px;font-weight:700;color:#667085;padding:0 8px}
+.calendar-grid .day{min-width:0;min-height:128px}
+.calendar-grid .calendar-week-day{min-height:220px}
+.calendar-empty{background:transparent;border-style:dashed;opacity:.45;box-shadow:none}
+.calendar-today{border-color:#7aa7f8!important;box-shadow:inset 0 0 0 1px #7aa7f8!important;background:#fff!important}
+.today-label{display:inline-block;margin-left:6px;font-size:10px;font-weight:700;color:#2563eb;background:#eff6ff;border-radius:999px;padding:2px 6px;vertical-align:1px}
+.calendar-event-top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.calendar-event-top span{font-size:11px;color:#667085;white-space:nowrap}
+.calendar-event-name{overflow:hidden;text-overflow:ellipsis}
+.calendar-event-status{margin-top:5px}
+.calendar-mobile{display:none}
+.calendar-page-head h1{margin:2px 0 4px}
+
+@media(max-width:760px){
+  .calendar-desktop{display:none}
+  .calendar-mobile{display:block}
+  .calendar-toolbar{display:block;margin:12px 0 14px}
+  .calendar-toolbar-nav{display:grid;grid-template-columns:auto auto auto 1fr;gap:7px}
+  .calendar-toolbar-nav .btn{min-height:40px}
+  .calendar-period-title{grid-column:1/-1;margin:2px 0 0;text-align:left;font-size:17px}
+  .calendar-toolbar-filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+  .calendar-mode-switch{display:grid;grid-template-columns:1fr 1fr;gap:8px;grid-column:1/-1}
+  .calendar-mode-switch .btn{width:100%}
+  .calendar-toolbar-filters .select{min-width:0;max-width:none;width:100%}
+  .calendar-toolbar-filters .select:only-of-type{grid-column:1/-1}
+  .calendar-agenda-day{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px;margin-bottom:10px;box-shadow:0 1px 2px rgba(16,24,40,.03)}
+  .calendar-agenda-day.calendar-today{border-color:#7aa7f8!important;box-shadow:inset 0 0 0 1px #7aa7f8!important}
+  .calendar-agenda-date{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:7px;color:#344054}
+  .calendar-agenda-date span{font-size:11px;font-weight:700;color:#2563eb;background:#eff6ff;border-radius:999px;padding:3px 7px}
+  .calendar-agenda-day .event{margin-top:7px;font-size:13px}
+  .calendar-no-events{font-size:13px;color:#98a2b3;padding:7px 2px 2px}
+  .calendar-mobile-empty{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px;text-align:center;color:#667085}
+  .calendar-page-head h1{font-size:24px}
+  .teacher-content{max-width:none;width:100%;box-sizing:border-box}
+}
