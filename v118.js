@@ -357,8 +357,18 @@
     return html+'</div></div>';
   }
 
+  function childRefundsV118(c){
+    const rows=(state.refunds||[]).filter(function(r){return Number(r.childId)===Number(c.id);}).slice().reverse();
+    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Возвраты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div>';
+    if(!rows.length) return html+'<div class="empty">Возвратов пока нет.</div></div>';
+    html+='<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Цена</div><div>Занятий</div></div>';
+    html+=rows.map(function(r){
+      return '<div class="row"><div><b>'+r.date+'</b></div><div>'+r.direction+'</div><div class="money negative">−'+money(r.amount)+'</div><div>'+money(r.price)+'</div><div>−'+fmt(r.lessons,4)+'</div></div>';
+    }).join('');
+    return html+'</div></div>';
+  }
+
   // Final child card override.
-  const previousChild=window.child;
   window.child=function(){
     const c=byId(state.children,state.selectedChild);
     if(!c) return children();
@@ -366,17 +376,8 @@
     let body='';
     if(state.childTab==='payments') body=childPaymentsV118(c);
     else if(state.childTab==='visits') body=childVisitsV118(c);
-    else if(state.childTab==='refunds'){
-      // Keep the existing refunds tab implementation.
-      const old=previousChild();
-      const tabsEnd=old.indexOf('</div>',old.indexOf('<div class="tabs">'))+6;
-      body=old.slice(tabsEnd);
-      return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'children\')">← Дети</button>'+
-        pageHead(c.name,c.school+' · '+c.grade+' · '+c.parent,
-          '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="childForm('+c.id+')">Редактировать</button><button class="btn danger" onclick="deleteChildPrompt('+c.id+')">Удалить ребёнка</button></div>')+
-        '<div class="tabs"><button onclick="setChildTab(\'overview\')">Обзор</button><button onclick="setChildTab(\'payments\')">Оплаты</button><button onclick="setChildTab(\'visits\')">Посещения</button><button class="active" onclick="setChildTab(\'refunds\')">Возвраты</button></div>'+
-        body;
-    } else body=childOverviewV118(c);
+    else if(state.childTab==='refunds') body=childRefundsV118(c);
+    else body=childOverviewV118(c);
 
     const tabs='<div class="tabs">'+
       '<button class="'+(state.childTab==='overview'?'active':'')+'" onclick="setChildTab(\'overview\')">Обзор</button>'+
