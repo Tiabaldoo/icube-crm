@@ -75,3 +75,32 @@
 @media(max-width:760px){
   .partner-final{align-items:flex-start;flex-direction:column}
 }
+
+
+/* Calendar polish v1.1.18 */
+.calendar{grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.day{min-height:132px;border-radius:14px;padding:10px;background:#fff;box-shadow:0 1px 2px rgba(16,24,40,.03)}
+.day .date{font-size:12px;font-weight:700;color:#667085;margin-bottom:8px}
+.event{padding:8px 9px;margin-top:7px;border-radius:9px;line-height:1.3;overflow:hidden;word-break:break-word}
+.event>div:nth-child(2){margin-top:3px;font-weight:600}
+.teacher-content{max-width:900px}
+.teacher-top-inner{max-width:900px}
+
+@media(max-width:1100px){
+  .calendar{grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+  .day{min-height:122px;padding:8px}
+}
+
+@media(max-width:760px){
+  .calendar{display:block}
+  .calendar>.muted.mini{display:none}
+  .day{min-height:auto;margin-bottom:10px;padding:10px 11px;border-radius:13px}
+  .day:empty{display:none}
+  .day .date{font-size:13px;margin-bottom:6px}
+  .event{font-size:13px;padding:9px 10px;margin-top:6px}
+  .event .mini{font-size:11px}
+  .teacher-content{padding:14px 12px 24px}
+  .teacher-top{padding:14px 12px 18px}
+  .teacher-top-inner{display:block}
+  .teacher-top-inner>div+div{margin-top:10px}
+}
