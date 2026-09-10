@@ -110,17 +110,31 @@
   function leftEvents(from,to,project,direction){
     const out=[];
     (state.children||[]).forEach(function(c){
-      (c.statusHistory||[]).forEach(function(h){
-        if(h.from!=='Активный' && h.from!=='Лид') return;
-        if(h.to!=='Пауза' && h.to!=='Закончил') return;
-        const d=isoDate(h.date);
-        if(!inRangeDate(d,from,to)) return;
-        if(project!=='all' && h.project!==project) return;
-        if(direction!=='all' && h.direction!==direction) return;
-        out.push({childId:c.id,event:h});
+      // "Ушёл" — это текущее состояние ребёнка. Если его вернули в Лид/Активный,
+      // он сразу перестаёт считаться ушедшим даже если раньше был на паузе.
+      if(c.status!=='Пауза' && c.status!=='Закончил') return;
+
+      // Берём последнее присвоение текущего неактивного статуса.
+      const history=(c.statusHistory||[]).slice().reverse();
+      const h=history.find(function(x){
+        return x.to===c.status && (x.to==='Пауза' || x.to==='Закончил');
       });
+      if(!h) return;
+
+      const d=isoDate(h.date);
+      if(!inRangeDate(d,from,to)) return;
+      if(project!=='all' && h.project!==project) return;
+      if(direction!=='all' && h.direction!==direction) return;
+      out.push({childId:c.id,event:h});
     });
     return out;
+  }
+
+  function leftPercent(from,to,project,direction){
+    const left=leftEvents(from,to,project,direction);
+    const active=scopeChildIds(project,direction).size;
+    const base=active+left.length;
+    return {count:left.length,percent:pct(left.length,base)};
   }
   function denominatorForPeople(from,to,project,direction){
     const ids=new Set();
@@ -185,7 +199,7 @@
     }
     const den=denominatorForPeople(from,to,project,direction);
     if(metric==='new') return pct(newChildren(from,to,project,direction).length,den);
-    return pct(leftEvents(from,to,project,direction).length,den);
+    return leftPercent(from,to,project,direction).percent;
   }
   function chartSvg(points){
     const W=820,H=240,L=46,R=18,T=22,B=42;
@@ -255,7 +269,8 @@
     const newIds=newChildren(from,to,project,direction);
     const left=leftEvents(from,to,project,direction);
     const peopleDen=denominatorForPeople(from,to,project,direction);
-    const newPct=pct(newIds.length,peopleDen), leftPct=pct(left.length,peopleDen);
+    const leftRate=leftPercent(from,to,project,direction);
+    const newPct=pct(newIds.length,peopleDen), leftPct=leftRate.percent;
 
     let html=pageHead('Статистика','Посещаемость, движение детей, заполненность групп и динамика по реальным данным CRM.');
     html+='<div class="toolbar" style="align-items:end;flex-wrap:wrap">';
@@ -307,7 +322,7 @@
     html+='</div>';
     html+='<div style="color:#2563eb">'+chartSvg(points)+'</div></div>';
 
-    html+='<div class="muted mini" style="margin-top:10px">В посещаемость и пропуски входят только проведённые занятия и только постоянные ученики по расписанию. Ознакомительные и отменённые занятия не учитываются. «Новые дети» определяются по первому обычному посещению в выбранном проекте/направлении. «Ушли» считаются по переходу из «Активный» или «Лид» в «Пауза» или «Закончил». Дети на паузе и закончившие не входят в текущую посещаемость, пропуски и заполненность групп.</div>';
+    html+='<div class="muted mini" style="margin-top:10px">В посещаемость и пропуски входят только проведённые занятия и только постоянные ученики по расписанию. Ознакомительные и отменённые занятия не учитываются. «Новые дети» определяются по первому обычному посещению в выбранном проекте/направлении. «Ушли» — это дети, которым в выбранный период присвоили текущий статус «Пауза» или «Закончил». Если ребёнка вернуть в «Лид» или «Активный», он сразу перестаёт считаться ушедшим. Дети на паузе и закончившие не входят в текущую посещаемость, пропуски и заполненность групп.</div>';
     return html;
   };
 
