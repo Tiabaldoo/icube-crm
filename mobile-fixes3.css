@@ -1,0 +1,115 @@
+/* Targeted mobile cleanup v1.1.21 */
+*,*::before,*::after{box-sizing:border-box}
+
+@media(max-width:760px){
+  /* Native iOS controls must never overflow their container. */
+  input,select,textarea,button{max-width:100%}
+  .input,.select,.textarea{width:100%;min-width:0}
+  input[type="date"],input[type="time"]{min-width:0;width:100%;-webkit-min-logical-width:0}
+
+  /* Modal fields: keep all content inside the dialog. */
+  .modal{padding:16px!important}
+  .modal .field{min-width:0!important;width:100%!important}
+  .modal .field>div[style*="grid-template-columns"]{
+    grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr)!important;
+    gap:6px!important;
+    width:100%!important;
+    min-width:0!important;
+  }
+  .modal .field>div[style*="grid-template-columns"]>.input{
+    width:100%!important;min-width:0!important;padding-left:8px!important;padding-right:8px!important;
+  }
+  .modal .field>div[style*="grid-template-columns"]>span{
+    width:24px!important;min-width:24px!important;display:flex!important;align-items:center!important;justify-content:center!important;
+    position:static!important;transform:none!important;margin:0!important;
+  }
+
+  /* Add-child dialog: keep candidate information tidy, don't squash the badge. */
+  .modal .student-check{
+    display:grid!important;
+    grid-template-columns:42px minmax(0,1fr)!important;
+    gap:8px 10px!important;
+    align-items:start!important;
+  }
+  .modal .student-check>input,.modal .student-check>span:first-child{grid-column:1!important;grid-row:1!important;margin-top:4px!important}
+  .modal .student-check>div{grid-column:2!important;grid-row:1!important;display:block!important;min-width:0!important}
+  .modal .student-check>div>b{display:block!important;margin-bottom:3px!important}
+  .modal .student-check .badge{display:inline-flex!important;width:auto!important;max-width:100%!important;white-space:nowrap!important;margin:7px 0 0!important}
+  .modal .student-check .photo{grid-column:2!important;grid-row:2!important;justify-self:start!important;margin:4px 0 0!important}
+
+  /* Teachers: name, phone, direction, status vertically; edit remains in the corner. */
+  .page-teachers .card.list .row:not(.header){
+    display:grid!important;
+    grid-template-columns:minmax(0,1fr) auto!important;
+    grid-template-rows:auto auto auto auto!important;
+    gap:6px 12px!important;
+    align-items:center!important;
+    padding:15px!important;
+  }
+  .page-teachers .card.list .row:not(.header)>*{margin:0!important;min-width:0!important;flex:none!important;text-align:left!important}
+  .page-teachers .card.list .row:not(.header)>:nth-child(1){grid-column:1/-1;grid-row:1}
+  .page-teachers .card.list .row:not(.header)>:nth-child(2){grid-column:1/-1;grid-row:2;color:var(--muted)}
+  .page-teachers .card.list .row:not(.header)>:nth-child(3){grid-column:1/-1;grid-row:3;color:var(--muted);overflow-wrap:anywhere}
+  .page-teachers .card.list .row:not(.header)>:nth-child(4){grid-column:1;grid-row:4;justify-self:start}
+  .page-teachers .card.list .row:not(.header)>:nth-child(5){grid-column:2;grid-row:4;justify-self:end;text-align:right!important;white-space:nowrap}
+
+  /* Balances: one clear vertical record instead of scattered columns. */
+  .page-balances .row:not(.header){display:grid!important;grid-template-columns:1fr!important;gap:5px!important;padding:14px 15px!important;align-items:start!important}
+  .page-balances .row:not(.header)>*{grid-column:1!important;margin:0!important;min-width:0!important;flex:none!important;text-align:left!important;line-height:1.35!important}
+  .page-balances .row:not(.header)>:first-child{margin-bottom:3px!important}
+  .page-balances .row:not(.header)>:not(:first-child){color:var(--muted)}
+  .page-balances .row:not(.header)>:last-child{justify-self:start!important;margin-left:0!important;font-weight:700;color:inherit}
+
+  /* Teacher attendance: strict vertical layout so controls never collide. */
+  .teacher-content .student-check{
+    display:grid!important;
+    grid-template-columns:42px minmax(0,1fr)!important;
+    grid-template-rows:auto auto!important;
+    gap:8px 10px!important;
+    align-items:start!important;
+    padding:12px!important;
+  }
+  .teacher-content .student-check>input,.teacher-content .student-check>span:first-child{
+    grid-column:1!important;grid-row:1!important;align-self:start!important;margin:4px 0 0!important;
+  }
+  .teacher-content .student-check>div{
+    grid-column:2!important;grid-row:1!important;display:flex!important;flex-direction:column!important;
+    align-items:flex-start!important;gap:5px!important;min-width:0!important;width:100%!important;
+  }
+  .teacher-content .student-check>div>b{display:block!important;width:100%!important;line-height:1.25!important}
+  .teacher-content .student-check>div>.badge{display:inline-flex!important;width:auto!important;white-space:nowrap!important;margin:2px 0!important}
+  .teacher-content .student-check>div>label{display:flex!important;align-items:center!important;gap:7px!important;margin:2px 0!important;line-height:1.3!important}
+  .teacher-content .student-check .photo{
+    grid-column:2!important;grid-row:2!important;justify-self:start!important;width:auto!important;max-width:160px!important;
+    margin:2px 0 0!important;position:static!important;transform:none!important;
+  }
+  .teacher-content .attendance{display:grid!important;gap:9px!important}
+
+  /* Statistics filters: dates and selectors in a single stable column. */
+  .page-stats .toolbar:has(#stats-from){display:grid!important;grid-template-columns:1fr!important;gap:10px!important;align-items:stretch!important}
+  .page-stats .toolbar:has(#stats-from)>.field{width:100%!important;min-width:0!important;max-width:none!important}
+  .page-stats .toolbar:has(#stats-from) .input,.page-stats .toolbar:has(#stats-from) .select{width:100%!important;min-width:0!important;max-width:none!important}
+  .page-stats .toolbar:has(#stats-from)>.btn{justify-self:start!important;width:auto!important}
+
+  /* Statistics group efficiency: give every number an explicit label. */
+  .page-stats .child-ledger-card .row:not(.header){
+    display:grid!important;grid-template-columns:1fr 1fr!important;gap:12px 18px!important;padding:14px 15px!important;align-items:start!important;
+  }
+  .page-stats .child-ledger-card .row:not(.header)>*{margin:0!important;min-width:0!important;flex:none!important;text-align:left!important;color:inherit!important}
+  .page-stats .child-ledger-card .row:not(.header)>:first-child{grid-column:1/-1!important;margin-bottom:2px!important}
+  .page-stats .child-ledger-card .row:not(.header)>:nth-child(n+2){display:flex!important;flex-direction:column!important;gap:2px!important;font-size:16px!important;font-weight:700!important}
+  .page-stats .child-ledger-card .row:not(.header)>:nth-child(n+2)::before{font-size:11px!important;font-weight:600!important;color:var(--muted)!important;line-height:1.2}
+  .page-stats .child-ledger-card .row:not(.header)>:nth-child(2)::before{content:'Детей'}
+  .page-stats .child-ledger-card .row:not(.header)>:nth-child(3)::before{content:'Заполненность'}
+  .page-stats .child-ledger-card .row:not(.header)>:nth-child(4)::before{content:'Посещаемость'}
+  .page-stats .child-ledger-card .row:not(.header)>:nth-child(5)::before{content:'Пропуски'}
+
+  /* Statistics metric tabs stay readable and scroll horizontally only inside themselves. */
+  .page-stats .tabs{display:flex!important;gap:4px!important;overflow-x:auto!important;padding-bottom:2px!important}
+  .page-stats .tabs button{white-space:nowrap!important;flex:0 0 auto!important}
+}
+
+@media(max-width:390px){
+  .page-stats .child-ledger-card .row:not(.header){grid-template-columns:1fr 1fr!important;gap:10px 12px!important}
+  .teacher-content .student-check{grid-template-columns:38px minmax(0,1fr)!important}
+}
