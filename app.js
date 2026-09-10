@@ -80,8 +80,28 @@ function childForm(id=null){
 }
 function saveChild(id){
  const name=document.querySelector('#cf-name').value.trim()||'Новый ребёнок', groupId=Number(document.querySelector('#cf-group').value)||1;
- if(id){let c=byId(state.children,id);Object.assign(c,{name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value});let g=byId(state.groups,groupId);let e=c.enrollments.find(x=>x.direction===g.direction);if(e)e.groupId=groupId;}
- else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,shift:'1',parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,individualPrice:null,balance:0}]});state.selectedChild=nid;}
+ if(id){
+   let c=byId(state.children,id);
+   const oldStatus=c.status;
+   const oldEnrollment=(c.enrollments||[])[0]||null;
+   const oldGroup=oldEnrollment&&oldEnrollment.groupId!=null?byId(state.groups,oldEnrollment.groupId):null;
+   const newStatus=document.querySelector('#cf-status').value;
+   Object.assign(c,{name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:newStatus,note:document.querySelector('#cf-note').value});
+   let g=byId(state.groups,groupId);let e=c.enrollments.find(x=>x.direction===g.direction);if(e)e.groupId=groupId;
+   if(oldStatus!==newStatus){
+     const now=new Date();
+     const localDate=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+     c.statusHistory=c.statusHistory||[];
+     c.statusHistory.push({
+       from:oldStatus,
+       to:newStatus,
+       date:localDate,
+       project:oldGroup?.project||null,
+       direction:oldEnrollment?.direction||null
+     });
+   }
+ }
+ else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,shift:'1',parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,individualPrice:null,balance:0}],statusHistory:[],createdAt:new Date().toISOString()});state.selectedChild=nid;}
  state.modal=null;state.page='child';render();
 }
 function child(){
