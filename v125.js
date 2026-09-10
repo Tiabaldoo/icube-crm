@@ -235,32 +235,7 @@
     state.statsMetric=metric; render();
   };
 
-  // Keep a simple real status history from now on so "Ушли" is based on CRM events.
-  if(typeof window.saveChild==='function'){
-    const saveChildBeforeStats=window.saveChild;
-    window.saveChild=function(id){
-      const before=id?byId(state.children,id):null;
-      const oldStatus=before?.status;
-      const snapshot=before ? {
-        project:(function(){
-          const e=(before.enrollments||[])[0],g=e&&e.groupId!=null?byId(state.groups,e.groupId):null;
-          return g?.project||null;
-        })(),
-        direction:(before.enrollments||[])[0]?.direction||null
-      } : null;
-      const result=saveChildBeforeStats(id);
-      const child=byId(state.children,id||state.selectedChild);
-      if(child && !child.createdAt) child.createdAt=new Date().toISOString();
-      if(child && id && oldStatus && oldStatus!==child.status){
-        child.statusHistory=child.statusHistory||[];
-        child.statusHistory.push({
-          from:oldStatus,to:child.status,date:isoToday(),
-          project:snapshot?.project||null,direction:snapshot?.direction||null
-        });
-      }
-      return result;
-    };
-  }
+  // Status history is recorded directly by the base child save flow in app.js.
 
   window.stats=function(){
     const from=state.statsDateFrom,to=state.statsDateTo,project=state.statsProject,direction=state.statsDirection;
