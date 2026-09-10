@@ -214,6 +214,7 @@
     html+='<div class="section-title"><div><h2 style="font-size:22px">'+state.partnerProject+'</h2><div class="muted">'+fmtDate(state.partnerDateFrom)+' — '+fmtDate(state.partnerDateTo)+'</div></div><span class="badge purple">Партнёр</span></div>';
     html+='<div class="partner-lines">';
     html+='<div class="partner-line"><span>Оплаты</span><b>'+money(c.payments)+'</b></div>';
+    html+='<div class="partner-line"><span>Получено партнёром наличными</span><b>'+money(c.cash)+'</b></div>';
     html+='<div class="partner-line"><span>Возвраты</span><b>'+money(c.refunds)+'</b></div>';
     html+='<div class="partner-line"><span>Доход после возвратов</span><b>'+money(c.income)+'</b></div>';
     html+='<div class="partner-line"><span>Налог '+c.taxRate+'%</span><b>− '+money(c.tax)+'</b></div>';
@@ -222,8 +223,6 @@
     html+='<div class="partner-line"><span>Партнёру '+c.partnerRate+'%</span><b>'+money(c.partnerShare)+'</b></div>';
     html+='<div class="partner-line"><span>iCube '+c.icubeRate+'%</span><b>'+money(c.icubeShare)+'</b></div>';
     html+='</div>';
-
-    html+='<div class="partner-cash-box"><label>Получено партнёром наличными</label><div class="input" style="display:flex;align-items:center;font-weight:700;background:var(--surface-2,#f8fafc)">'+money(c.cash)+'</div></div>';
 
     const positive=c.transfer>=0;
     html+='<div class="partner-final '+(positive?'partner-final-pay':'partner-final-return')+'"><span>'+(positive?'К переводу партнёру':'Партнёр должен вернуть iCube')+'</span><b>'+money(Math.abs(c.transfer))+'</b></div>';
