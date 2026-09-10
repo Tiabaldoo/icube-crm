@@ -99,6 +99,11 @@ function saveChild(id){
        project:oldGroup?.project||null,
        direction:oldEnrollment?.direction||null
      });
+     // Store the latest status change directly on the child as the source of truth
+     // for current "Ушли" statistics.
+     c.statusChangedAt=localDate;
+     c.statusChangedProject=oldGroup?.project||null;
+     c.statusChangedDirection=oldEnrollment?.direction||null;
    }
  }
  else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,shift:'1',parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,individualPrice:null,balance:0}],statusHistory:[],createdAt:new Date().toISOString()});state.selectedChild=nid;}
