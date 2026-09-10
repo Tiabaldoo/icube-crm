@@ -179,11 +179,13 @@
   }
 
   function balanceRows(predicate) {
-    return state.children.flatMap(function(c){
-      return c.enrollments
-        .filter(function(e){ return matchesBalanceProject(e) && predicate(e.balance); })
-        .map(function(e){ return {c:c,e:e,g:byId(state.groups,e.groupId)}; });
-    });
+    return state.children
+      .filter(function(c){ return c.status!=='Закончил'; })
+      .flatMap(function(c){
+        return c.enrollments
+          .filter(function(e){ return matchesBalanceProject(e) && predicate(e.balance); })
+          .map(function(e){ return {c:c,e:e,g:byId(state.groups,e.groupId)}; });
+      });
   }
 
   function rowHtml(x) {
