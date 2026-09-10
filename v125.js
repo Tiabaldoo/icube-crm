@@ -50,6 +50,8 @@
   }
   function lessonExpectedIds(l){
     return Object.keys(l.attendance||{}).map(Number).filter(function(id){
+      const child=byId(state.children,id);
+      if(!child || (child.status!=='Активный' && child.status!=='Лид')) return false;
       return !(l.trialChildren && l.trialChildren[id]);
     });
   }
@@ -75,11 +77,8 @@
   function scopeChildIds(project,direction){
     const ids=new Set();
     (state.children||[]).forEach(function(c){
+      if(c.status!=='Активный' && c.status!=='Лид') return;
       (c.enrollments||[]).forEach(function(e){
-        const g=e.groupId!=null?byId(state.groups,e.groupId):null;
-        if(groupMatches(g,project,direction)) ids.add(Number(c.id));
-      });
-      (c.enrollmentHistory||[]).forEach(function(e){
         const g=e.groupId!=null?byId(state.groups,e.groupId):null;
         if(groupMatches(g,project,direction)) ids.add(Number(c.id));
       });
@@ -112,7 +111,8 @@
     const out=[];
     (state.children||[]).forEach(function(c){
       (c.statusHistory||[]).forEach(function(h){
-        if(h.to!=='Закончил') return;
+        if(h.from!=='Активный' && h.from!=='Лид') return;
+        if(h.to!=='Пауза' && h.to!=='Закончил') return;
         const d=isoDate(h.date);
         if(!inRangeDate(d,from,to)) return;
         if(project!=='all' && h.project!==project) return;
@@ -307,7 +307,7 @@
     html+='</div>';
     html+='<div style="color:#2563eb">'+chartSvg(points)+'</div></div>';
 
-    html+='<div class="muted mini" style="margin-top:10px">В посещаемость и пропуски входят только проведённые занятия и только постоянные ученики по расписанию. Ознакомительные и отменённые занятия не учитываются. «Новые дети» определяются по первому обычному посещению в выбранном проекте/направлении. Статус «Ушли» считается по сохранённой истории изменения статуса на «Закончил».</div>';
+    html+='<div class="muted mini" style="margin-top:10px">В посещаемость и пропуски входят только проведённые занятия и только постоянные ученики по расписанию. Ознакомительные и отменённые занятия не учитываются. «Новые дети» определяются по первому обычному посещению в выбранном проекте/направлении. «Ушли» считаются по переходу из «Активный» или «Лид» в «Пауза» или «Закончил». Дети на паузе и закончившие не входят в текущую посещаемость, пропуски и заполненность групп.</div>';
     return html;
   };
 
