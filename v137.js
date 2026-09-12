@@ -25,10 +25,12 @@
     return !!ex?.trial;
   }
 
+  function extraPresent(ex){ return !!ex && ex.present!==false; }
+
   function recalcSummary(lesson){
     if(!lesson?.summary) return;
     const presentMain=Object.entries(lesson.attendance||{}).filter(function(x){return !!x[1];});
-    const extras=lesson.extras||[];
+    const extras=(lesson.extras||[]).filter(extraPresent);
     const mainTrials=presentMain.filter(function(x){return isMainTrial(lesson,Number(x[0]));}).length;
     const extraTrials=extras.filter(function(e){return !!e.trial;}).length;
     const missingPhotos=presentMain.filter(function(x){return !lesson.photos?.[x[0]];}).length+
@@ -56,7 +58,7 @@
     });
 
     (lesson.extras||[]).forEach(function(ex){
-      if(ex.trial) return;
+      if(!extraPresent(ex) || ex.trial) return;
       const child=byId(state.children,ex.childId);
       if(child&&!hasDirection(child,group.direction)) bad.push({child:child,isExtra:true});
     });
@@ -101,7 +103,7 @@
       if(ctx.lesson&&ctx.group&&child&&!hasDirection(child,ctx.group.direction)&&ctx.lesson.done){
         ctx.lesson.extras=ctx.lesson.extras||[];
         if(!ctx.lesson.extras.some(function(e){return Number(e.childId)===Number(id);})){
-          ctx.lesson.extras.push({childId:Number(id),trial:true});
+          ctx.lesson.extras.push({childId:Number(id),trial:true,present:true});
         }
         recalcSummary(ctx.lesson);
         render();
@@ -172,6 +174,8 @@
     render();
   };
 
+  // Director warning is only for an actually PRESENT, non-trial (= paid) visit.
+  // No direction + introductory visit is a valid scenario and must not create a warning.
   function directionIssues(){
     const map=new Map();
     (state.lessons||[]).forEach(function(lesson){
@@ -179,8 +183,13 @@
       const group=byId(state.groups,lesson.groupId);
       if(!group) return;
       const ids=[];
-      Object.entries(lesson.attendance||{}).forEach(function(row){if(row[1]) ids.push(Number(row[0]));});
-      (lesson.extras||[]).forEach(function(ex){ids.push(Number(ex.childId));});
+      Object.entries(lesson.attendance||{}).forEach(function(row){
+        const childId=Number(row[0]);
+        if(row[1] && !isMainTrial(lesson,childId)) ids.push(childId);
+      });
+      (lesson.extras||[]).forEach(function(ex){
+        if(extraPresent(ex) && !ex.trial) ids.push(Number(ex.childId));
+      });
       ids.forEach(function(childId){
         const child=byId(state.children,childId);
         if(!child||hasDirection(child,group.direction)) return;
@@ -207,7 +216,7 @@
     }).join('');
 
     const block='<div class="card pad" style="margin-bottom:16px;border-color:#fedf89;background:#fffdf5">'+
-      '<div class="section-title"><div><h2>Нужно добавить направление</h2><div class="muted mini">Дети были на занятиях направления, которого пока нет в их карточке</div></div><span class="badge amber">'+issues.length+'</span></div>'+rows+'</div>';
+      '<div class="section-title"><div><h2>Нужно добавить направление</h2><div class="muted mini">Дети были на платных посещениях направления, которого пока нет в их карточке</div></div><span class="badge amber">'+issues.length+'</span></div>'+rows+'</div>';
 
     const headEnd=base.indexOf('</div>')+6;
     return headEnd>5?base.slice(0,headEnd)+block+base.slice(headEnd):block+base;
@@ -222,7 +231,7 @@
     const issues=directionIssues().filter(function(x){return Number(x.child.id)===Number(selected.id);});
     if(!issues.length) return html;
     const dirs=Array.from(new Set(issues.map(function(x){return x.group.direction;})));
-    const banner='<div class="notice" style="margin-bottom:16px"><b>Нужно добавить направление</b><div class="mini" style="margin-top:4px">Ребёнок уже был на занятии: '+dirs.map(esc).join(', ')+', но этого направления нет в карточке. Используйте «+ Добавить направление» в блоке направлений.</div></div>';
+    const banner='<div class="notice" style="margin-bottom:16px"><b>Нужно добавить направление</b><div class="mini" style="margin-top:4px">Ребёнок уже был на обычном платном занятии: '+dirs.map(esc).join(', ')+', но этого направления нет в карточке. Используйте «+ Добавить направление» в блоке направлений.</div></div>';
     const tabsPos=html.indexOf('<div class="tabs">');
     return tabsPos>=0?html.slice(0,tabsPos)+banner+html.slice(tabsPos):banner+html;
   };
