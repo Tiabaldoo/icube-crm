@@ -95,8 +95,8 @@
       .group-card.crm-direction-robot:hover{border-color:#93c5fd!important}
       .group-card.crm-direction-program:hover{border-color:#fdba74!important}
 
-      /* Direction badges inside group cards follow the same palette. */
-      .group-card.crm-direction-program .badge.purple{
+      /* Only the direction badge becomes orange. Partner/project badges keep their own color. */
+      .group-card.crm-direction-program .badge.purple:first-child{
         background:#ffedd5!important;
         color:#c2410c!important;
       }
