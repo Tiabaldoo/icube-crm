@@ -7,8 +7,8 @@
 
   function extraPresent(ex){return !ex || ex.present!==false;}
 
-  // A trial preview is direction-specific: previous robotics attendance must not
-  // suppress the first programming trial, and vice versa.
+  // "Новый" only means the child has no previous completed visit in this
+  // direction. Whether today's visit is introductory is decided separately.
   function hasPreviousVisitInDirection(childId,currentLesson,direction){
     const currentDate=parseRuDate(currentLesson?.date);
     return (state.lessons||[]).some(function(l){
@@ -32,8 +32,8 @@
     }else{
       html+='<div class="attendance">';
       kids.forEach(function(c){
-        const trial=!hasPreviousVisitInDirection(c.id,lesson,group.direction);
-        html+='<div class="kpi-line teacher-prestart-child"><b>'+c.name+'</b>'+(trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div>';
+        const isNew=!hasPreviousVisitInDirection(c.id,lesson,group.direction);
+        html+='<div class="kpi-line teacher-prestart-child"><b>'+c.name+'</b>'+(isNew?'<span class="badge amber">Новый</span>':'')+'</div>';
       });
       html+='</div>';
     }
