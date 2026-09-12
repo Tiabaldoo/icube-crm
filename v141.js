@@ -125,16 +125,18 @@
     };
   }
 
-  // Add a visible status badge next to each direction's edit action.
+  // Show per-direction status badges only when the child has multiple directions.
+  // With one direction the global child status already communicates enough and the extra badge is visual noise.
   const childBefore=window.child;
   if(typeof childBefore==='function'){
     window.child=function(){
       let html=childBefore();
       const child=byId(state.children,state.selectedChild);
       if(!child) return html;
+      const showDirectionStatuses=(child.enrollments||[]).length>1;
       (child.enrollments||[]).forEach(function(e){
         const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+e.direction+'\')">Изменить направление / цену</button>';
-        if(!html.includes(button)) return;
+        if(!html.includes(button) || !showDirectionStatuses) return;
         const badge='<span class="badge '+badgeClass(enrollmentStatus(e))+'" style="margin-right:8px">'+enrollmentStatus(e)+'</span>';
         html=html.replace(button,badge+button);
       });
