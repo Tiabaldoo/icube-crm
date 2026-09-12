@@ -4,9 +4,29 @@
     return Array.from(new Set((ids||[]).map(Number).filter(function(id){return !!byId(state.children,id);} )));
   }
 
+  function enrollmentActive(e){
+    if(typeof window.isEnrollmentActiveV141==='function') return !!window.isEnrollmentActiveV141(e);
+    return (e?.status||'Активный')==='Активный';
+  }
+
+  function childActive(c){
+    if(typeof window.childGloballyActiveV141==='function') return !!window.childGloballyActiveV141(c);
+    return !!c && (c.status==='Активный'||c.status==='Лид');
+  }
+
+  // Important: the frozen roster must respect the status of this exact direction.
+  // Do not rely on the old groupChildren() here because it only knows groupId + global child status.
   function currentRoster(lesson){
     const group=lesson?byId(state.groups,lesson.groupId):null;
-    return group?groupChildren(group.id):[];
+    if(!group) return [];
+    return (state.children||[]).filter(function(child){
+      if(!childActive(child)) return false;
+      return (child.enrollments||[]).some(function(e){
+        return e.direction===group.direction &&
+          Number(e.groupId)===Number(group.id) &&
+          enrollmentActive(e);
+      });
+    });
   }
 
   function ensureHistoricalSnapshot(lesson){
@@ -29,7 +49,7 @@
     lesson.groupRosterFrozenAtV146=new Date().toISOString();
 
     // Before start, an occurrence may have been materialized earlier. Rebuild the
-    // main attendance map from the actual group composition at the moment of start.
+    // main attendance map from the actual ACTIVE group composition at the moment of start.
     const previous=lesson.attendance||{};
     const next={};
     ids.forEach(function(id){next[id]=!!previous[id];});
