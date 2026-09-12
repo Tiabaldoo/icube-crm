@@ -29,7 +29,7 @@
 
       const main=!!(l.attendance&&l.attendance[childId]);
       const extra=(l.extras||[]).some(function(e){
-        return Number(e.childId)===Number(childId);
+        return Number(e.childId)===Number(childId) && e.present!==false;
       });
       return main||extra;
     });
@@ -48,7 +48,7 @@
   }
 
   // Existing child added from another group: first visit is trial only if
-  // there was no earlier completed visit in THIS direction.
+  // there was no earlier completed PRESENT visit in THIS direction.
   const addExtraBeforeV133=window.addExtra;
   window.addExtra=function(id){
     const lesson=byId(state.lessons,state.selectedLesson);
