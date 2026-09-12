@@ -95,6 +95,12 @@
       .group-card.crm-direction-robot:hover{border-color:#93c5fd!important}
       .group-card.crm-direction-program:hover{border-color:#fdba74!important}
 
+      /* Direction badges inside group cards follow the same palette. */
+      .group-card.crm-direction-program .badge.purple{
+        background:#ffedd5!important;
+        color:#c2410c!important;
+      }
+
       /* Own iCube lessons: both background and left stripe show direction. */
       .event.crm-direction-robot:not(.partner):not(.event-cancelled),
       [onclick*="openUnifiedCalendarEvent"].crm-direction-robot:not(.partner):not(.event-cancelled){
