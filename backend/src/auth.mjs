@@ -13,7 +13,7 @@ export const permissions = Object.freeze({
     'lessons:update-assigned',
     'lessons:cancel',
   ]),
-  partner: new Set(['partner-settlements:read']),
+  partner: new Set(['partner-settlements:read', 'projects:read']),
   parent: new Set(['own-children:read', 'own-payments:read', 'own-attendance:read']),
   child: new Set(['own-profile:read', 'own-attendance:read']),
 });

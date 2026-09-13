@@ -24,11 +24,16 @@ export function createApiRouter(pool) {
   const creatableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons', 'payments', 'refunds']);
   const patchableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons']);
   for (const resource of readResources) {
-    const readPermission = resource === 'lessons' ? 'lessons:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : '*';
+    const readPermission = resource === 'lessons' ? 'lessons:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : resource === 'projects' ? 'projects:read' : '*';
     router.get(`/${resource}`, requirePermission(readPermission), notImplemented(resource));
     router.get(`/${resource}/:id`, requirePermission(readPermission), notImplemented(`${resource}/:id`));
     if (creatableResources.has(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
     if (patchableResources.has(resource)) router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
+  }
+  router.delete('/children/:id', requirePermission('*'), notImplemented('DELETE children/:id'));
+  for(const resource of ['price-versions','salary-rate-versions','partner-agreement-versions']){
+    router.get(`/${resource}`, requirePermission('*'), notImplemented(resource));
+    router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
   }
   router.post('/children/:id/enrollments', requirePermission('*'), notImplemented('child enrollment'));
   router.patch('/enrollments/:id', requirePermission('*'), notImplemented('enrollment'));

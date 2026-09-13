@@ -19,11 +19,12 @@ Permission преподавателя не даёт доступ к любому
 
 | Область | Основные маршруты |
 | --- | --- |
-| Дети | `GET/POST /children`, `GET/PATCH /children/:id` |
+| Дети | `GET/POST /children`, `GET/PATCH/DELETE /children/:id` |
 | Направления ребёнка | `POST /children/:id/enrollments`, `PATCH /enrollments/:id` |
 | Перенос | `POST /balance-transfers` |
 | Группы | `GET/POST /groups`, `GET/PATCH /groups/:id`, `POST /groups/:id/memberships` |
 | Справочники | `/directions`, `/sites`, `/teachers`, `/projects` |
+| Версии настроек | `GET/POST /price-versions`, `GET/POST /salary-rate-versions`, `GET/POST /partner-agreement-versions` |
 | Календарь | `GET /lessons?from=&to=&teacherId=&projectId=` |
 | Занятие | `GET /lessons/:id`, директорский `PATCH /lessons/:id`, teacher `PATCH /lessons/:id/teacher-details`, `POST /lessons/:id/start`, `POST /lessons/:id/cancel` |
 | Посещение | `PUT /lessons/:id/attendance/:childId` |
@@ -40,6 +41,8 @@ Permission преподавателя не даёт доступ к любому
 | Уведомления | `GET /notifications`, `POST /notifications/:id/read` |
 
 Проведённые оплаты и возвраты не имеют обычного `PATCH`. «Редактирование оплаты» в UI выполняется сервером как reversal исходной операции и создание исправленной операции в одной транзакции, без `UPDATE` исторической записи.
+
+`DELETE /children/:id` доступен только директору и удаляет ошибочно созданную карточку лишь при отсутствии оплат, возвратов и посещений. При наличии истории сервер возвращает conflict/validation error. Версии цен, ставок зарплаты и партнёрских условий также не имеют обычного `PATCH`: изменение транзакционно закрывает прежнюю версию и создаёт новую с новым `valid_from`.
 
 ## Командные операции
 
@@ -65,3 +68,5 @@ Content-Type: application/json
 Quick child создаётся транзакционно с `needs_director_review=true`, `created_from_lesson_id` и текущим `created_by_user_id`. Guardian и связь `child_guardians` создаются только если преподаватель указал контакт; имя guardian не обязательно. Изменения статусов записываются одновременно с основной сущностью в `child_status_history` или `enrollment_status_history`.
 
 Добавление и удаление существующего extra child использует отдельный permission `lessons:extras`. Service-layer повторно проверяет доступ преподавателя к конкретному занятию; permission не открывает остальные занятия.
+
+Партнёр получает `projects:read`, но `GET /projects` и `GET /projects/:id` по-прежнему фильтруются через `partner_users → partners → projects`. Teacher, parent и child доступа к справочнику проектов не имеют.

@@ -2982,7 +2982,7 @@ render();
   window.deleteChildPayment=function(childId,paymentId){
     const p=byId(state.payments,paymentId);
     if(!p) return;
-    modal('<h3>Удалить оплату?</h3><div class="notice">Оплата <b>'+money(p.amount)+'</b> от '+p.date+' будет удалена. Денежный баланс ребёнка будет уменьшен на эту сумму с пересчётом по его текущей цене.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="confirmDeleteChildPayment('+childId+','+paymentId+')">Удалить</button></div>');
+    modal('<h3>Удалить оплату?</h3><div class="notice">Оплата <b>'+money(p.amount)+'</b> от '+p.date+' будет удалена. Из баланса будет убрано исторически начисленное количество занятий.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="confirmDeleteChildPayment('+childId+','+paymentId+')">Удалить</button></div>');
   };
 
   window.confirmDeleteChildPayment=function(childId,paymentId){
@@ -3220,6 +3220,16 @@ render();
     return true;
   }
 
+  function applyHistoricalUnitsOrMoney(childId,direction,lessonsDelta,amountRub){
+    const child=byId(state.children,childId);
+    const sameDirection=currentEnrollmentForDirection(child,direction);
+    if(sameDirection && Number.isFinite(Number(lessonsDelta))){
+      sameDirection.balance=Number(sameDirection.balance||0)+Number(lessonsDelta);
+      return true;
+    }
+    return applyMoneyDeltaToCurrent(childId,amountRub,direction);
+  }
+
   // Called from the child card so creating a payment returns to the same child.
   window.newChildPayment=function(childId,direction){
     state.childPaymentAddReturn={childId:Number(childId)};
@@ -3246,13 +3256,19 @@ render();
       return;
     }
 
-    if(existing){
-      applyMoneyDeltaToCurrent(existing.childId,-Number(existing.amount||0),existing.direction);
-    }
+    if(existing) applyHistoricalUnitsOrMoney(
+      existing.childId,
+      existing.direction,
+      -Number(existing.lessons),
+      -Number(existing.amount||0)
+    );
 
-    const operationPrice=current ? Number(effectivePrice(current)||0) : Number(existing?.price||0);
+    const sameTarget=!!existing&&Number(existing.childId)===childId&&existing.direction===direction;
+    const operationPrice=sameTarget
+      ? Number(existing.price||existing.priceSnapshot||0)
+      : current ? Number(effectivePrice(current)||0) : Number(existing?.price||existing?.priceSnapshot||0);
     if(!(operationPrice>0)){
-      if(existing) applyMoneyDeltaToCurrent(existing.childId,Number(existing.amount||0),existing.direction);
+      if(existing) applyHistoricalUnitsOrMoney(existing.childId,existing.direction,Number(existing.lessons),Number(existing.amount||0));
       alert('Не удалось определить цену операции.');
       return;
     }
@@ -3267,10 +3283,11 @@ render();
       price:operationPrice,
       lessons:amount/operationPrice
     };
+    if(existing && Object.prototype.hasOwnProperty.call(existing,'priceSnapshot')) record.priceSnapshot=operationPrice;
 
     if(existing) Object.assign(existing,record);
     else state.payments.push(record);
-    applyMoneyDeltaToCurrent(childId,amount,direction);
+    applyHistoricalUnitsOrMoney(childId,direction,record.lessons,amount);
 
     state.modal=null;
     state.childPaymentAddReturn=null;
@@ -3283,6 +3300,28 @@ render();
     }else{
       state.page='payments';
     }
+    render();
+  };
+
+  window.confirmDeletePayment=function(id){
+    const p=byId(state.payments,id);
+    if(!p) return;
+    applyHistoricalUnitsOrMoney(p.childId,p.direction,-Number(p.lessons),-Number(p.amount||0));
+    state.payments=state.payments.filter(function(x){return Number(x.id)!==Number(id);});
+    state.modal=null;
+    state.page='payments';
+    render();
+  };
+
+  window.confirmDeleteChildPayment=function(childId,paymentId){
+    const p=byId(state.payments,paymentId);
+    if(!p) return;
+    applyHistoricalUnitsOrMoney(p.childId,p.direction,-Number(p.lessons),-Number(p.amount||0));
+    state.payments=state.payments.filter(function(x){return Number(x.id)!==Number(paymentId);});
+    state.modal=null;
+    state.selectedChild=Number(childId);
+    state.childTab='payments';
+    state.page='child';
     render();
   };
 
@@ -3726,8 +3765,13 @@ render();
     return group.direction==='Программирование'?Number(state.settings.codePrice||0):Number(state.settings.robotPrice||0);
   }
 
-  function moneyDelta(childId,rubles,preferredDirection){
+  function moneyDelta(childId,rubles,preferredDirection,lessonsDelta){
     const child=byId(state.children,childId);
+    const sameDirection=(child?.enrollments||[]).find(function(e){return e.direction===preferredDirection;});
+    if(sameDirection && Number.isFinite(Number(lessonsDelta))){
+      sameDirection.balance=Number(sameDirection.balance||0)+Number(lessonsDelta);
+      return true;
+    }
     const e=currentEnrollment(child,preferredDirection);
     if(!e) return false;
     const price=Number(effectivePrice(e)||0);
@@ -3804,7 +3848,7 @@ render();
       const price=historicalPrice(id,lesson,group);
       lesson.visitPriceSnapshot=lesson.visitPriceSnapshot||{};
       lesson.visitPriceSnapshot[id]=price;
-      moneyDelta(id,-price,group.direction);
+      moneyDelta(id,-price,group.direction,-1);
     }
     updateSummary(lesson);
     render();
@@ -3858,8 +3902,8 @@ render();
       const price=historicalPrice(childId,lesson,group);
       lesson.visitPriceSnapshot=lesson.visitPriceSnapshot||{};
       if(!lesson.visitPriceSnapshot[childId]) lesson.visitPriceSnapshot[childId]=price;
-      if(!old&&checked) moneyDelta(childId,price,group.direction); // paid -> trial: refund
-      if(old&&!checked) moneyDelta(childId,-price,group.direction); // trial -> paid: charge
+      if(!old&&checked) moneyDelta(childId,price,group.direction,1); // paid -> trial: refund
+      if(old&&!checked) moneyDelta(childId,-price,group.direction,-1); // trial -> paid: charge
     }
     updateSummary(lesson);
   }
@@ -3903,9 +3947,9 @@ render();
       lesson.visitPriceSnapshot=lesson.visitPriceSnapshot||{};
       if(value){
         lesson.visitPriceSnapshot[id]=price;
-        moneyDelta(id,-price,group.direction);
+        moneyDelta(id,-price,group.direction,-1);
       }else{
-        moneyDelta(id,price,group.direction);
+        moneyDelta(id,price,group.direction,1);
       }
     }
     lesson.attendance[id]=!!value;
@@ -3966,7 +4010,7 @@ render();
     const trial=extra?!!extra.trial:isMainTrial(lesson,childId);
     if(lesson.attendanceApplied&&!trial){
       const price=historicalPrice(childId,lesson,group);
-      if(price>0) moneyDelta(childId,price,group.direction);
+      if(price>0) moneyDelta(childId,price,group.direction,1);
     }
     if(extra) lesson.extras=(lesson.extras||[]).filter(function(e){return Number(e.childId)!==Number(childId);});
     else if(lesson.attendance) lesson.attendance[childId]=false;
@@ -4483,18 +4527,34 @@ render();
     return g ? {project:g.project||null,groupId:g.id} : {project:null,groupId:null};
   }
 
-  function resolvePendingPayments(childId,direction){
-    (state.payments||[]).forEach(function(p){
-      if(Number(p.childId)!==Number(childId)) return;
-      if(direction && p.direction!==direction) return;
-      if(p.project!=null && p.project!=='') return;
-      const owner=projectForEnrollment(p.childId,p.direction);
-      if(owner.project){
-        p.project=owner.project;
-        p.groupId=owner.groupId;
-      }
+  function resolvePendingOperationSnapshots(childId,direction){
+    [state.payments||[],state.refunds||[]].forEach(function(records){
+      records.forEach(function(record){
+        if(Number(record.childId)!==Number(childId)) return;
+        if(direction && record.direction!==direction) return;
+        const hasProject=record.project!=null&&record.project!=='';
+        const hasGroup=record.groupId!=null&&record.groupId!=='';
+        if(hasProject&&hasGroup) return;
+
+        if(hasGroup&&!hasProject){
+          const historicalGroup=byId(state.groups,Number(record.groupId));
+          if(historicalGroup?.project) record.project=historicalGroup.project;
+          return;
+        }
+
+        const owner=projectForEnrollment(record.childId,record.direction);
+        if(hasProject&&!hasGroup){
+          if(owner.groupId!=null&&owner.project===record.project) record.groupId=owner.groupId;
+          return;
+        }
+        if(owner.project){
+          record.project=owner.project;
+          record.groupId=owner.groupId;
+        }
+      });
     });
   }
+  window.resolvePendingOperationSnapshotsV124=resolvePendingOperationSnapshots;
 
   // Payment form: human-friendly method names.
   const paymentFormBeforeV124=window.paymentForm;
@@ -4535,9 +4595,10 @@ render();
 
     rec.method=normalizeMethod(rec.method);
 
-    if(immutable && immutable.project!=='__unset__'){
-      rec.project=immutable.project;
-      rec.groupId=immutable.groupId==='__unset__' ? null : immutable.groupId;
+    if(immutable){
+      rec.project=immutable.project==='__unset__'?null:immutable.project;
+      rec.groupId=immutable.groupId==='__unset__'?null:immutable.groupId;
+      resolvePendingOperationSnapshots(rec.childId,rec.direction);
     }else{
       const owner=projectForEnrollment(rec.childId,rec.direction);
       if(owner.project){
@@ -4558,7 +4619,7 @@ render();
     window.saveManagedDirection=function(childId,oldDirection){
       const newDirection=document.querySelector('#md-dir')?.value || oldDirection;
       const result=saveManagedDirectionBeforeV124(childId,oldDirection);
-      resolvePendingPayments(childId,newDirection);
+      resolvePendingOperationSnapshots(childId,newDirection);
       render();
       return result;
     };
@@ -4570,7 +4631,19 @@ render();
       const result=saveChildBeforeV124(id);
       const childId=id || state.selectedChild;
       const child=byId(state.children,childId);
-      (child?.enrollments||[]).forEach(function(e){resolvePendingPayments(childId,e.direction);});
+      (child?.enrollments||[]).forEach(function(e){resolvePendingOperationSnapshots(childId,e.direction);});
+      render();
+      return result;
+    };
+  }
+
+  if(typeof window.saveChildV111==='function'){
+    const saveChildV111BeforeV124=window.saveChildV111;
+    window.saveChildV111=function(id){
+      const result=saveChildV111BeforeV124(id);
+      const childId=id||state.selectedChild;
+      const child=byId(state.children,childId);
+      (child?.enrollments||[]).forEach(function(e){resolvePendingOperationSnapshots(childId,e.direction);});
       render();
       return result;
     };
@@ -4805,6 +4878,22 @@ render();
   function leftEvents(from,to,project,direction){
     const out=[];
     (state.children||[]).forEach(function(c){
+      if(direction!=='all'){
+        const enrollment=(c.enrollments||[]).find(function(e){return e.direction===direction;});
+        if(!enrollment || (enrollment.status!=='Пауза'&&enrollment.status!=='Закончил')) return;
+        const historyEvent=(enrollment.statusHistory||[]).slice().reverse().find(function(x){
+          return x.to===enrollment.status&&(x.to==='Пауза'||x.to==='Закончил');
+        })||null;
+        const date=enrollment.statusChangedAt||historyEvent?.date||null;
+        if(!date) return;
+        const groupId=historyEvent?.groupId??enrollment.groupId??null;
+        const historicalGroup=groupId!=null?byId(state.groups,Number(groupId)):null;
+        const eventProject=historyEvent?.project||historicalGroup?.project||null;
+        if(!inRangeDate(isoDate(date),from,to)) return;
+        if(project!=='all'&&eventProject!==project) return;
+        out.push({childId:c.id,event:{to:enrollment.status,date:date,project:eventProject,direction:direction,groupId:groupId}});
+        return;
+      }
       // Only the CURRENT inactive status matters.
       if(c.status!=='Пауза' && c.status!=='Закончил') return;
 
@@ -5362,6 +5451,14 @@ render();
 
   const saveGroupBeforeV127=window.saveGroupV111;
   window.saveGroupV111=function(id){
+    const existing=id?byId(state.groups,Number(id)):null;
+    const direction=document.querySelector('#gf-dir')?.value;
+    const project=document.querySelector('#gf-project')?.value;
+    if(existing&&(state.lessons||[]).some(function(lesson){return Number(lesson.groupId)===Number(existing.id);})&&
+      ((direction&&direction!==existing.direction)||(project&&project!==existing.project))){
+      alert('Нельзя изменить направление или проект группы, по которой уже есть занятия.');
+      return;
+    }
     const start=document.querySelector('#gf-start-date')?.value||'';
     const active=document.querySelector('#gf-active')?.value==='true';
     const end=document.querySelector('#gf-end-date')?.value||'';
@@ -7041,12 +7138,20 @@ render();
   if(typeof confirmAddBefore==='function'){
     window.confirmAddChildren=function(){
       const g=byId(state.groups,state.addChildrenGroupId);
+      const assigned=[];
       document.querySelectorAll('.ac-check:checked').forEach(function(input){
         const c=byId(state.children,Number(input.value));
         const e=(c?.enrollments||[]).find(function(x){return x.direction===g?.direction;});
         if(!e || !isEnrollmentActive(e)) input.checked=false;
+        else assigned.push({childId:c.id,direction:e.direction});
       });
-      return confirmAddBefore();
+      const result=confirmAddBefore();
+      assigned.forEach(function(item){
+        if(typeof window.resolvePendingOperationSnapshotsV124==='function'){
+          window.resolvePendingOperationSnapshotsV124(item.childId,item.direction);
+        }
+      });
+      return result;
     };
   }
 
@@ -7081,7 +7186,8 @@ render();
         if(previous!==target.status){
           target.statusChangedAt=isoToday();
           target.statusHistory=target.statusHistory||[];
-          target.statusHistory.push({from:previous,to:target.status,date:target.statusChangedAt});
+          const group=target.groupId!=null?byId(state.groups,target.groupId):null;
+          target.statusHistory.push({from:previous,to:target.status,date:target.statusChangedAt,direction:target.direction,groupId:target.groupId??null,project:group?.project||null});
         }
       }
       render();
@@ -7270,17 +7376,14 @@ render();
     if(previousStatus!==e.status){
       e.statusChangedAt=isoToday();
       e.statusHistory=e.statusHistory||[];
-      e.statusHistory.push({from:previousStatus,to:e.status,date:e.statusChangedAt});
+      const statusGroup=groupId!=null?byId(state.groups,groupId):null;
+      e.statusHistory.push({from:previousStatus,to:e.status,date:e.statusChangedAt,direction:e.direction,groupId:groupId,project:statusGroup?.project||null});
     }
 
-    // Bind only unresolved historical payments when a previously groupless direction receives a group.
+    // Bind only unresolved historical operations when a previously groupless direction receives a group.
     const g=groupId!=null?byId(state.groups,groupId):null;
-    if(g){
-      (state.payments||[]).forEach(function(p){
-        if(Number(p.childId)===Number(child.id)&&p.direction===oldDirection&&(p.project==null||p.project==='')){
-          p.project=g.project||null; p.groupId=g.id;
-        }
-      });
+    if(g&&typeof window.resolvePendingOperationSnapshotsV124==='function'){
+      window.resolvePendingOperationSnapshotsV124(child.id,oldDirection);
     }
 
     state.modal=null;

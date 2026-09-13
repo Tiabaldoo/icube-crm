@@ -35,6 +35,10 @@ test('модель ролей содержит текущие и будущие 
   assert.ok(!permissions.teacher.has('payments:write'));
   assert.ok(!permissions.teacher.has('groups:write'));
   assert.ok(permissions.partner.has('partner-settlements:read'));
+  assert.ok(permissions.partner.has('projects:read'));
+  assert.ok(!permissions.teacher.has('projects:read'));
+  assert.ok(!permissions.parent.has('projects:read'));
+  assert.ok(!permissions.child.has('projects:read'));
   assert.ok(permissions.parent.has('own-children:read'));
   assert.ok(permissions.child.has('own-profile:read'));
 });

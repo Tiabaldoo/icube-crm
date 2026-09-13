@@ -32,6 +32,14 @@ test('initial migration содержит все критические сущн�
   assert.match(sql, /project_id_snapshot BIGINT UNSIGNED NOT NULL/);
   assert.match(sql, /CONSTRAINT fk_lessons_direction_snapshot FOREIGN KEY \(direction_id_snapshot\) REFERENCES directions\(id\)/);
   assert.match(sql, /CONSTRAINT fk_lessons_project_snapshot FOREIGN KEY \(project_id_snapshot\) REFERENCES projects\(id\)/);
+  assert.match(sql, /site_id_snapshot BIGINT UNSIGNED NOT NULL/);
+  assert.match(sql, /KEY idx_lessons_site_start \(site_id_snapshot, starts_at\)/);
+  assert.match(sql, /CONSTRAINT fk_lessons_site_snapshot FOREIGN KEY \(site_id_snapshot\) REFERENCES sites\(id\)/);
+  assert.doesNotMatch(sql, /UNIQUE KEY uq_salary_accruals_lesson_teacher/);
+  assert.match(sql, /supersedes_accrual_id BIGINT UNSIGNED NULL/);
+  assert.match(sql, /UNIQUE KEY uq_salary_accruals_supersedes \(supersedes_accrual_id\)/);
+  assert.match(sql, /KEY idx_salary_accruals_current \(lesson_id, reversed_at\)/);
+  assert.match(sql, /CONSTRAINT fk_salary_accruals_supersedes FOREIGN KEY \(supersedes_accrual_id\) REFERENCES salary_accruals\(id\)/);
 
   const preciseLessonColumns = [
     'balance_lessons', 'charged_lessons', 'lessons_credit', 'lessons_debit',

@@ -297,6 +297,7 @@ CREATE TABLE lessons (
   group_id BIGINT UNSIGNED NOT NULL,
   direction_id_snapshot BIGINT UNSIGNED NOT NULL,
   project_id_snapshot BIGINT UNSIGNED NOT NULL,
+  site_id_snapshot BIGINT UNSIGNED NOT NULL,
   scheduled_starts_at DATETIME(6) NOT NULL,
   starts_at DATETIME(6) NOT NULL,
   ends_at DATETIME(6) NOT NULL,
@@ -317,6 +318,7 @@ CREATE TABLE lessons (
   UNIQUE KEY uq_lessons_occurrence (group_id, scheduled_starts_at),
   KEY idx_lessons_project_start (project_id_snapshot, starts_at),
   KEY idx_lessons_direction_start (direction_id_snapshot, starts_at),
+  KEY idx_lessons_site_start (site_id_snapshot, starts_at),
   KEY idx_lessons_actual_teacher_start (actual_teacher_id, starts_at),
   KEY idx_lessons_status_start (status, starts_at),
   CONSTRAINT chk_lessons_status CHECK (status IN ('scheduled','in_progress','completed','cancelled')),
@@ -324,6 +326,7 @@ CREATE TABLE lessons (
   CONSTRAINT fk_lessons_group FOREIGN KEY (group_id) REFERENCES study_groups(id),
   CONSTRAINT fk_lessons_direction_snapshot FOREIGN KEY (direction_id_snapshot) REFERENCES directions(id),
   CONSTRAINT fk_lessons_project_snapshot FOREIGN KEY (project_id_snapshot) REFERENCES projects(id),
+  CONSTRAINT fk_lessons_site_snapshot FOREIGN KEY (site_id_snapshot) REFERENCES sites(id),
   CONSTRAINT fk_lessons_planned_teacher FOREIGN KEY (planned_teacher_id) REFERENCES teachers(id),
   CONSTRAINT fk_lessons_actual_teacher FOREIGN KEY (actual_teacher_id) REFERENCES teachers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -610,14 +613,18 @@ CREATE TABLE salary_accruals (
   total_amount DECIMAL(13,2) NOT NULL,
   accrued_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   reversed_at DATETIME(6) NULL,
+  supersedes_accrual_id BIGINT UNSIGNED NULL,
   PRIMARY KEY (id),
-  UNIQUE KEY uq_salary_accruals_lesson_teacher (lesson_id, teacher_id),
+  UNIQUE KEY uq_salary_accruals_supersedes (supersedes_accrual_id),
+  KEY idx_salary_accruals_lesson_teacher (lesson_id, teacher_id),
+  KEY idx_salary_accruals_current (lesson_id, reversed_at),
   KEY idx_salary_accruals_teacher_date (teacher_id, accrued_at),
   CONSTRAINT chk_salary_accruals_type CHECK (accrual_type IN ('regular','intro','empty_trip')),
   CONSTRAINT chk_salary_accruals_amounts CHECK (fixed_amount >= 0 AND children_amount >= 0 AND total_amount >= 0),
   CONSTRAINT fk_salary_accruals_lesson FOREIGN KEY (lesson_id) REFERENCES lessons(id),
   CONSTRAINT fk_salary_accruals_teacher FOREIGN KEY (teacher_id) REFERENCES teachers(id),
-  CONSTRAINT fk_salary_accruals_rate FOREIGN KEY (rate_version_id) REFERENCES salary_rate_versions(id)
+  CONSTRAINT fk_salary_accruals_rate FOREIGN KEY (rate_version_id) REFERENCES salary_rate_versions(id),
+  CONSTRAINT fk_salary_accruals_supersedes FOREIGN KEY (supersedes_accrual_id) REFERENCES salary_accruals(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE partner_agreement_versions (
