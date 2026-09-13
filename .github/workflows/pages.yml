@@ -1,8 +1,6 @@
-name: Deploy iCube CRM to GitHub Pages
+name: Deploy legacy prototype preview
 
 on:
-  push:
-    branches: ["main"]
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,20 @@
+{
+  "name": "icube-crm",
+  "version": "0.2.0",
+  "private": true,
+  "description": "CRM iCube: frontend prototype, protected business rules and future MySQL API foundation",
+  "scripts": {
+    "test": "node --test",
+    "check": "node scripts/check-syntax.mjs",
+    "migrate": "node database/migrate.mjs",
+    "start:api": "node backend/src/server.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "mysql2": "^3.14.4"
+  }
+}
