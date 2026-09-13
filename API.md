@@ -1,17 +1,19 @@
 # API `/api/v1`
 
-Backend — единственный компонент с доступом к MySQL. Ответы имеют вид `{ "data": ... }`, ошибки — `{ "error": { "code", "message", "details" } }`. Денежные суммы передаются строками с двумя знаками, даты — ISO 8601, идентификаторы — строками, чтобы избежать потери точности в JavaScript.
+Backend — единственный компонент с доступом к MySQL. Ответы имеют вид `{ "data": ... }`, ошибки — `{ "error": { "code", "message", "details" } }`. Денежные суммы и другие точные DECIMAL, включая дробные количества занятий, передаются строками; даты — ISO 8601, идентификаторы — строками. UI преобразует значения только для отображения. Backend-математика денег и точных количеств не использует обычный бинарный JavaScript `Number`.
 
 ## Авторизация и роли
 
 - `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
 - `director`: полный доступ к рабочим сущностям и настройкам.
-- `teacher`: чтение назначенных групп/детей/занятий, старт и ведение занятия, посещаемость и фотографии.
-- `partner`: только разрешённые партнёрские проекты и расчёты.
+- `teacher`: чтение назначенных групп/детей/занятий; отдельные permissions на старт, посещаемость, завершение, фотографии, quick child, изменение даты/времени и фактического преподавателя, отмену занятия.
+- `partner`: только проекты и расчёты, связанные с аккаунтом через `partner_users`.
 - `parent`: в будущем чтение связанных детей, посещений и оплат.
 - `child`: в будущем собственный профиль и разрешённые игровые/учебные данные.
 
 Роль не принимается из формы или произвольного заголовка. Сервер получает user id из проверенного access token и загружает актуальные роли из БД/кеша с учётом `token_version`.
+
+Permission преподавателя не даёт доступ к любому занятию. Service-layer для каждого teacher-маршрута проверяет, что авторизованный преподаватель назначен на конкретное занятие или иначе связан с ним по разрешённому правилу. Нельзя доверять `teacherId` или роли из браузера. Аналогично роль `partner` недостаточна: сервер фильтрует данные через `partner_users → partners → projects` и отклоняет подстановку чужого `projectId`.
 
 ## Ресурсы
 
@@ -23,9 +25,11 @@ Backend — единственный компонент с доступом к M
 | Группы | `GET/POST /groups`, `GET/PATCH /groups/:id`, `POST /groups/:id/memberships` |
 | Справочники | `/directions`, `/sites`, `/teachers`, `/projects` |
 | Календарь | `GET /lessons?from=&to=&teacherId=&projectId=` |
-| Занятие | `GET/PATCH /lessons/:id`, `POST /lessons/:id/start`, `POST /lessons/:id/cancel` |
+| Занятие | `GET /lessons/:id`, директорский `PATCH /lessons/:id`, teacher `PATCH /lessons/:id/teacher-details`, `POST /lessons/:id/start`, `POST /lessons/:id/cancel` |
 | Посещение | `PUT /lessons/:id/attendance/:childId` |
 | Завершение | `POST /lessons/:id/finish` |
+| Quick child | `POST /lessons/:id/quick-child` — ФИО обязательно, контакт родителя необязателен |
+| Фотографии | `POST /lessons/:id/photos`, `DELETE /lessons/:id/photos/:photoId` |
 | Оплаты | `GET/POST /payments`, `GET /payments/:id`, `POST /payments/:id/reverse` |
 | Возвраты | `GET/POST /refunds`, `POST /refunds/:id/reverse` |
 | Балансы | `GET /balances`, `GET /children/:id/ledger` |
@@ -54,3 +58,5 @@ Content-Type: application/json
 ## Валидация и безопасность
 
 Все входные DTO используют allowlist полей. SQL только параметризованный. Ограничиваются размер JSON, число записей на страницу и размер фотографий. Пароли хешируются Argon2id или bcrypt с актуальными параметрами; refresh token хранится только как хеш и передаётся в `HttpOnly Secure SameSite` cookie. Access token короткоживущий. Изменения финансов и ролей пишутся в `audit_log`.
+
+Quick child создаётся транзакционно с `needs_director_review=true`, `created_from_lesson_id` и текущим `created_by_user_id`. Guardian и связь `child_guardians` создаются только если преподаватель указал контакт; имя guardian не обязательно. Изменения статусов записываются одновременно с основной сущностью в `child_status_history` или `enrollment_status_history`.

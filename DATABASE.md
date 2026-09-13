@@ -7,11 +7,14 @@
 ```mermaid
 erDiagram
   USERS }o--o{ ROLES : user_roles
+  USERS }o--o{ PARTNERS : partner_users
   USERS ||--o| TEACHERS : login
   USERS ||--o| GUARDIANS : login
   USERS ||--o| CHILDREN : child_user_accounts
   CHILDREN ||--o{ CHILD_ENROLLMENTS : has
+  CHILDREN ||--o{ CHILD_STATUS_HISTORY : changes
   DIRECTIONS ||--o{ CHILD_ENROLLMENTS : defines
+  CHILD_ENROLLMENTS ||--o{ ENROLLMENT_STATUS_HISTORY : changes
   CHILD_ENROLLMENTS ||--o{ GROUP_MEMBERSHIPS : history
   STUDY_GROUPS ||--o{ GROUP_MEMBERSHIPS : contains
   STUDY_GROUPS ||--o{ LESSONS : schedules
@@ -27,9 +30,11 @@ erDiagram
 
 ## Группы таблиц
 
-`users`, `roles`, `user_roles`, `auth_sessions` поддерживают несколько ролей пользователя. `teacher`, `partner`, `parent`, `child` не зашиты в колонку пользователя. Профили родителей и детей уже могут быть связаны с user, но регистрация и кабинеты на этом этапе не реализуются.
+`users`, `roles`, `user_roles`, `auth_sessions` поддерживают несколько ролей пользователя. `teacher`, `partner`, `parent`, `child` не зашиты в колонку пользователя. `partner_users` связывает аккаунты с конкретными партнёрами и допускает несколько аккаунтов партнёра и несколько связей пользователя. Роль `partner` сама по себе не разрешает видеть все партнёрские данные: запросы фильтруются по `partner_users → partners → projects`. Профили родителей и детей уже могут быть связаны с user, но регистрация и кабинеты на этом этапе не реализуются.
 
-`children`, `guardians`, `child_guardians`, `child_enrollments`, `group_memberships` отделяют карточку ребёнка от направлений и истории групп. Уникальность `child_enrollments(child_id, direction_id)` гарантирует независимый баланс каждого направления.
+`children`, `guardians`, `child_guardians`, `child_enrollments`, `group_memberships` отделяют карточку ребёнка от направлений и истории групп. Уникальность `child_enrollments(child_id, direction_id)` гарантирует независимый баланс каждого направления. Быстро созданный преподавателем ребёнок помечается `needs_director_review`, хранит `created_from_lesson_id` и `created_by_user_id`. Guardian создаётся только при наличии контакта; его имя может отсутствовать.
+
+`child_status_history` и `enrollment_status_history` сохраняют старый и новый статус, время, автора и снимки проекта, направления и группы. Эти записи позволяют восстановить состояние на дату и корректно построить изменяемый текущий показатель «Ушли», не выводя его только из сегодняшнего статуса.
 
 `directions`, `sites`, `teachers`, `teacher_directions`, `projects`, `study_groups` — справочники и регулярное расписание.
 
@@ -37,7 +42,9 @@ erDiagram
 
 `lessons`, `lesson_roster_members`, `attendances`, `lesson_photos` разделяют плановое занятие, замороженный состав и фактическое присутствие. `actual_teacher_id` используется для зарплаты.
 
-`payments`, `refunds`, `balance_transfers`, `balance_entries`, `balance_lots`, `balance_lot_consumptions` образуют финансовый журнал. `balance_entries` имеет уникальную ссылку на attendance, что защищает от двойного списания. Лоты сохраняют рублёвую стоимость остатка при разных исторических ценах.
+`payments`, `refunds`, `balance_transfers`, `balance_entries`, `balance_lots`, `balance_lot_consumptions` образуют финансовый журнал. `balance_entries` имеет уникальную ссылку на attendance, что защищает от двойного списания. Лоты сохраняют рублёвую стоимость остатка при разных исторических ценах. Денежные колонки используют `DECIMAL(...,2)`, количества занятий — `DECIMAL(16,8)`. mysql2 возвращает их строками; backend не выполняет финансовые расчёты через бинарный JS float.
+
+У оплаты без назначенной группы снимки `group_id_snapshot` и `project_id_snapshot` могут быть `NULL`. При первом назначении группы сервис может однократно заполнить только пустые снимки неразрешённых операций. Непустые исторические снимки неизменяемы. В партнёрском расчёте `cash` уменьшает будущий перевод только когда `project_id_snapshot` относится к конкретному партнёру; наличные проекта iCubeRobots партнёрскими не считаются.
 
 `salary_rate_versions`, `salary_accruals`, `partner_agreement_versions`, `partner_settlements` сохраняют снимки ставок и готовых расчётов.
 
@@ -53,6 +60,9 @@ erDiagram
 - завершение занятия, attendance, balance entry и salary accrual создаются одной транзакцией;
 - перенос блокирует обе строки enrollment в стабильном порядке, чтобы избежать deadlock;
 - кеш `balance_lessons` должен совпадать с суммой `balance_entries.lessons_delta`.
+- teacher-действия над занятием требуют не только permission, но и проверки связи авторизованного преподавателя с конкретным занятием;
+- партнёрский `projectId` всегда пересекается с проектами, доступными пользователю через `partner_users`, и не принимается как самостоятельное основание доступа;
+- исторические `group_id_snapshot`/`project_id_snapshot` заполняются только если они пусты и после заполнения не переписываются.
 
 Эти инварианты проверяет backend service и периодическая read-only сверка.
 

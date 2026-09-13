@@ -33,10 +33,14 @@ export function createApiRouter(pool) {
   router.post('/children/:id/enrollments', requirePermission('*'), notImplemented('child enrollment'));
   router.patch('/enrollments/:id', requirePermission('*'), notImplemented('enrollment'));
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
-  router.post('/lessons/:id/start', requirePermission('lessons:conduct'), notImplemented('lessons/:id/start'));
-  router.post('/lessons/:id/finish', requirePermission('lessons:conduct'), notImplemented('lessons/:id/finish'));
-  router.post('/lessons/:id/cancel', requirePermission('*'), notImplemented('lessons/:id/cancel'));
-  router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:conduct'), notImplemented('lesson attendance'));
+  router.post('/lessons/:id/start', requirePermission('lessons:start'), notImplemented('lessons/:id/start'));
+  router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), notImplemented('lesson attendance'));
+  router.post('/lessons/:id/finish', requirePermission('lessons:finish'), notImplemented('lessons/:id/finish'));
+  router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), notImplemented('lesson teacher details'));
+  router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), notImplemented('lessons/:id/cancel'));
+  router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), notImplemented('lesson quick child'));
+  router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
+  router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
   router.post('/balance-transfers', requirePermission('*'), notImplemented('balance-transfers'));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));

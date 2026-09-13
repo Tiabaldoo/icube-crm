@@ -19,7 +19,13 @@ test('test и production не могут случайно использоват
 
 test('модель ролей содержит текущие и будущие роли', () => {
   assert.ok(permissions.director.has('*'));
-  assert.ok(permissions.teacher.has('lessons:conduct'));
+  for (const permission of [
+    'children:read', 'groups:read', 'lessons:read', 'lessons:start', 'lessons:attendance',
+    'lessons:finish', 'lessons:photos', 'lessons:quick-child', 'lessons:update-assigned', 'lessons:cancel',
+  ]) assert.ok(permissions.teacher.has(permission), `teacher: нет ${permission}`);
+  assert.ok(!permissions.teacher.has('*'));
+  assert.ok(!permissions.teacher.has('payments:write'));
+  assert.ok(!permissions.teacher.has('groups:write'));
   assert.ok(permissions.partner.has('partner-settlements:read'));
   assert.ok(permissions.parent.has('own-children:read'));
   assert.ok(permissions.child.has('own-profile:read'));

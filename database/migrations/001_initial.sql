@@ -73,6 +73,16 @@ CREATE TABLE partners (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE partner_users (
+  partner_id BIGINT UNSIGNED NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (partner_id, user_id),
+  KEY idx_partner_users_user (user_id, partner_id),
+  CONSTRAINT fk_partner_users_partner FOREIGN KEY (partner_id) REFERENCES partners(id),
+  CONSTRAINT fk_partner_users_user FOREIGN KEY (user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE projects (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   code VARCHAR(64) NOT NULL,
@@ -139,9 +149,10 @@ CREATE TABLE children (
   birth_date DATE NULL,
   school VARCHAR(255) NULL,
   grade VARCHAR(32) NULL,
-  school_shift VARCHAR(16) NULL,
   status VARCHAR(24) NOT NULL DEFAULT 'lead',
   note TEXT NULL,
+  needs_director_review BOOLEAN NOT NULL DEFAULT FALSE,
+  created_from_lesson_id BIGINT UNSIGNED NULL,
   created_by_user_id BIGINT UNSIGNED NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
@@ -149,6 +160,8 @@ CREATE TABLE children (
   PRIMARY KEY (id),
   KEY idx_children_name (full_name),
   KEY idx_children_status (status),
+  KEY idx_children_review (needs_director_review, created_at),
+  KEY idx_children_created_from_lesson (created_from_lesson_id),
   CONSTRAINT chk_children_status CHECK (status IN ('lead','active','paused','finished','archived')),
   CONSTRAINT fk_children_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -156,7 +169,7 @@ CREATE TABLE children (
 CREATE TABLE guardians (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NULL,
-  full_name VARCHAR(255) NOT NULL,
+  full_name VARCHAR(255) NULL,
   phone VARCHAR(32) NULL,
   email VARCHAR(254) NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -221,7 +234,7 @@ CREATE TABLE child_enrollments (
   direction_id BIGINT UNSIGNED NOT NULL,
   status VARCHAR(24) NOT NULL DEFAULT 'active',
   individual_price DECIMAL(13,2) NULL,
-  balance_lessons DECIMAL(12,4) NOT NULL DEFAULT 0,
+  balance_lessons DECIMAL(16,8) NOT NULL DEFAULT 0,
   started_on DATE NOT NULL,
   ended_on DATE NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -309,6 +322,56 @@ CREATE TABLE lessons (
   CONSTRAINT fk_lessons_actual_teacher FOREIGN KEY (actual_teacher_id) REFERENCES teachers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+ALTER TABLE children
+  ADD CONSTRAINT fk_children_created_from_lesson
+  FOREIGN KEY (created_from_lesson_id) REFERENCES lessons(id);
+
+CREATE TABLE child_status_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  child_id BIGINT UNSIGNED NOT NULL,
+  old_status VARCHAR(24) NULL,
+  new_status VARCHAR(24) NOT NULL,
+  project_id_snapshot BIGINT UNSIGNED NULL,
+  direction_id_snapshot BIGINT UNSIGNED NULL,
+  group_id_snapshot BIGINT UNSIGNED NULL,
+  changed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  changed_by_user_id BIGINT UNSIGNED NULL,
+  note TEXT NULL,
+  PRIMARY KEY (id),
+  KEY idx_child_status_history_child_time (child_id, changed_at, id),
+  KEY idx_child_status_history_stats (new_status, changed_at, project_id_snapshot),
+  CONSTRAINT chk_child_status_history_old CHECK (old_status IS NULL OR old_status IN ('lead','active','paused','finished','archived')),
+  CONSTRAINT chk_child_status_history_new CHECK (new_status IN ('lead','active','paused','finished','archived')),
+  CONSTRAINT fk_child_status_history_child FOREIGN KEY (child_id) REFERENCES children(id),
+  CONSTRAINT fk_child_status_history_project FOREIGN KEY (project_id_snapshot) REFERENCES projects(id),
+  CONSTRAINT fk_child_status_history_direction FOREIGN KEY (direction_id_snapshot) REFERENCES directions(id),
+  CONSTRAINT fk_child_status_history_group FOREIGN KEY (group_id_snapshot) REFERENCES study_groups(id),
+  CONSTRAINT fk_child_status_history_changed_by FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE enrollment_status_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  enrollment_id BIGINT UNSIGNED NOT NULL,
+  old_status VARCHAR(24) NULL,
+  new_status VARCHAR(24) NOT NULL,
+  direction_id_snapshot BIGINT UNSIGNED NOT NULL,
+  group_id_snapshot BIGINT UNSIGNED NULL,
+  project_id_snapshot BIGINT UNSIGNED NULL,
+  changed_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  changed_by_user_id BIGINT UNSIGNED NULL,
+  note TEXT NULL,
+  PRIMARY KEY (id),
+  KEY idx_enrollment_status_history_time (enrollment_id, changed_at, id),
+  KEY idx_enrollment_status_history_stats (new_status, changed_at, project_id_snapshot),
+  CONSTRAINT chk_enrollment_status_history_old CHECK (old_status IS NULL OR old_status IN ('active','paused','finished')),
+  CONSTRAINT chk_enrollment_status_history_new CHECK (new_status IN ('active','paused','finished')),
+  CONSTRAINT fk_enrollment_status_history_enrollment FOREIGN KEY (enrollment_id) REFERENCES child_enrollments(id),
+  CONSTRAINT fk_enrollment_status_history_direction FOREIGN KEY (direction_id_snapshot) REFERENCES directions(id),
+  CONSTRAINT fk_enrollment_status_history_group FOREIGN KEY (group_id_snapshot) REFERENCES study_groups(id),
+  CONSTRAINT fk_enrollment_status_history_project FOREIGN KEY (project_id_snapshot) REFERENCES projects(id),
+  CONSTRAINT fk_enrollment_status_history_changed_by FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE lesson_roster_members (
   lesson_id BIGINT UNSIGNED NOT NULL,
   child_id BIGINT UNSIGNED NOT NULL,
@@ -331,7 +394,7 @@ CREATE TABLE attendances (
   present BOOLEAN NOT NULL DEFAULT FALSE,
   is_trial BOOLEAN NOT NULL DEFAULT FALSE,
   price_snapshot DECIMAL(13,2) NULL,
-  charged_lessons DECIMAL(12,4) NOT NULL DEFAULT 0,
+  charged_lessons DECIMAL(16,8) NOT NULL DEFAULT 0,
   marked_by_user_id BIGINT UNSIGNED NULL,
   marked_at DATETIME(6) NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -374,7 +437,7 @@ CREATE TABLE payments (
   paid_on DATE NOT NULL,
   amount DECIMAL(13,2) NOT NULL,
   price_snapshot DECIMAL(13,2) NOT NULL,
-  lessons_credit DECIMAL(12,4) NOT NULL,
+  lessons_credit DECIMAL(16,8) NOT NULL,
   method VARCHAR(32) NOT NULL,
   external_reference VARCHAR(255) NULL,
   note TEXT NULL,
@@ -406,7 +469,7 @@ CREATE TABLE refunds (
   refunded_on DATE NOT NULL,
   amount DECIMAL(13,2) NOT NULL,
   price_snapshot DECIMAL(13,2) NOT NULL,
-  lessons_debit DECIMAL(12,4) NOT NULL,
+  lessons_debit DECIMAL(16,8) NOT NULL,
   reason TEXT NULL,
   created_by_user_id BIGINT UNSIGNED NOT NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
@@ -431,7 +494,7 @@ CREATE TABLE balance_transfers (
   target_enrollment_id BIGINT UNSIGNED NOT NULL,
   transferred_amount DECIMAL(13,2) NOT NULL,
   target_price_snapshot DECIMAL(13,2) NOT NULL,
-  target_lessons_credit DECIMAL(12,4) NOT NULL,
+  target_lessons_credit DECIMAL(16,8) NOT NULL,
   transferred_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   created_by_user_id BIGINT UNSIGNED NOT NULL,
   note TEXT NULL,
@@ -448,7 +511,7 @@ CREATE TABLE balance_entries (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   enrollment_id BIGINT UNSIGNED NOT NULL,
   entry_type VARCHAR(32) NOT NULL,
-  lessons_delta DECIMAL(12,4) NOT NULL,
+  lessons_delta DECIMAL(16,8) NOT NULL,
   amount_delta DECIMAL(13,2) NOT NULL,
   unit_price_snapshot DECIMAL(13,2) NULL,
   payment_id BIGINT UNSIGNED NULL,
@@ -476,8 +539,8 @@ CREATE TABLE balance_lots (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   enrollment_id BIGINT UNSIGNED NOT NULL,
   source_balance_entry_id BIGINT UNSIGNED NOT NULL,
-  original_lessons DECIMAL(12,4) NOT NULL,
-  remaining_lessons DECIMAL(12,4) NOT NULL,
+  original_lessons DECIMAL(16,8) NOT NULL,
+  remaining_lessons DECIMAL(16,8) NOT NULL,
   unit_price DECIMAL(13,2) NOT NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
@@ -491,7 +554,7 @@ CREATE TABLE balance_lot_consumptions (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   balance_lot_id BIGINT UNSIGNED NOT NULL,
   balance_entry_id BIGINT UNSIGNED NOT NULL,
-  lessons DECIMAL(12,4) NOT NULL,
+  lessons DECIMAL(16,8) NOT NULL,
   amount DECIMAL(13,2) NOT NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),

@@ -5,7 +5,6 @@ export function createPool(config) {
     ...config,
     waitForConnections: true,
     namedPlaceholders: true,
-    decimalNumbers: true,
     timezone: 'Z',
     charset: 'utf8mb4',
   });

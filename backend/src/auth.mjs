@@ -1,6 +1,17 @@
 export const permissions = Object.freeze({
   director: new Set(['*']),
-  teacher: new Set(['children:read', 'groups:read', 'lessons:read', 'lessons:conduct', 'photos:write']),
+  teacher: new Set([
+    'children:read',
+    'groups:read',
+    'lessons:read',
+    'lessons:start',
+    'lessons:attendance',
+    'lessons:finish',
+    'lessons:photos',
+    'lessons:quick-child',
+    'lessons:update-assigned',
+    'lessons:cancel',
+  ]),
   partner: new Set(['partner-settlements:read']),
   parent: new Set(['own-children:read', 'own-payments:read', 'own-attendance:read']),
   child: new Set(['own-profile:read', 'own-attendance:read']),
