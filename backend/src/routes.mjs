@@ -21,15 +21,14 @@ export function createApiRouter(pool) {
 
   router.use(authenticate);
   const readResources = ['children', 'directions', 'groups', 'sites', 'teachers', 'projects', 'lessons', 'payments', 'refunds', 'balances', 'notifications'];
-  const editableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons', 'payments', 'refunds']);
+  const creatableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons', 'payments', 'refunds']);
+  const patchableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons']);
   for (const resource of readResources) {
     const readPermission = resource === 'lessons' ? 'lessons:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : '*';
     router.get(`/${resource}`, requirePermission(readPermission), notImplemented(resource));
     router.get(`/${resource}/:id`, requirePermission(readPermission), notImplemented(`${resource}/:id`));
-    if (editableResources.has(resource)) {
-      router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
-      router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
-    }
+    if (creatableResources.has(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
+    if (patchableResources.has(resource)) router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
   }
   router.post('/children/:id/enrollments', requirePermission('*'), notImplemented('child enrollment'));
   router.patch('/enrollments/:id', requirePermission('*'), notImplemented('enrollment'));
@@ -40,6 +39,8 @@ export function createApiRouter(pool) {
   router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), notImplemented('lesson teacher details'));
   router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), notImplemented('lessons/:id/cancel'));
   router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), notImplemented('lesson quick child'));
+  router.post('/lessons/:id/extras', requirePermission('lessons:extras'), notImplemented('lesson extra child'));
+  router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), notImplemented('lesson extra child removal'));
   router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
   router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
   router.post('/balance-transfers', requirePermission('*'), notImplemented('balance-transfers'));

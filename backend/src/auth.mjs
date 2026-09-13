@@ -8,6 +8,7 @@ export const permissions = Object.freeze({
     'lessons:attendance',
     'lessons:finish',
     'lessons:photos',
+    'lessons:extras',
     'lessons:quick-child',
     'lessons:update-assigned',
     'lessons:cancel',

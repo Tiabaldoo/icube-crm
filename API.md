@@ -29,6 +29,7 @@ Permission преподавателя не даёт доступ к любому
 | Посещение | `PUT /lessons/:id/attendance/:childId` |
 | Завершение | `POST /lessons/:id/finish` |
 | Quick child | `POST /lessons/:id/quick-child` — ФИО обязательно, контакт родителя необязателен |
+| Дополнительный ребёнок | `POST /lessons/:id/extras` с `childId`, `DELETE /lessons/:id/extras/:childId` |
 | Фотографии | `POST /lessons/:id/photos`, `DELETE /lessons/:id/photos/:photoId` |
 | Оплаты | `GET/POST /payments`, `GET /payments/:id`, `POST /payments/:id/reverse` |
 | Возвраты | `GET/POST /refunds`, `POST /refunds/:id/reverse` |
@@ -37,6 +38,8 @@ Permission преподавателя не даёт доступ к любому
 | Партнёр | `GET/POST /partner-settlements` |
 | Статистика | `GET /statistics?...` |
 | Уведомления | `GET /notifications`, `POST /notifications/:id/read` |
+
+Проведённые оплаты и возвраты не имеют обычного `PATCH`. «Редактирование оплаты» в UI выполняется сервером как reversal исходной операции и создание исправленной операции в одной транзакции, без `UPDATE` исторической записи.
 
 ## Командные операции
 
@@ -60,3 +63,5 @@ Content-Type: application/json
 Все входные DTO используют allowlist полей. SQL только параметризованный. Ограничиваются размер JSON, число записей на страницу и размер фотографий. Пароли хешируются Argon2id или bcrypt с актуальными параметрами; refresh token хранится только как хеш и передаётся в `HttpOnly Secure SameSite` cookie. Access token короткоживущий. Изменения финансов и ролей пишутся в `audit_log`.
 
 Quick child создаётся транзакционно с `needs_director_review=true`, `created_from_lesson_id` и текущим `created_by_user_id`. Guardian и связь `child_guardians` создаются только если преподаватель указал контакт; имя guardian не обязательно. Изменения статусов записываются одновременно с основной сущностью в `child_status_history` или `enrollment_status_history`.
+
+Добавление и удаление существующего extra child использует отдельный permission `lessons:extras`. Service-layer повторно проверяет доступ преподавателя к конкретному занятию; permission не открывает остальные занятия.

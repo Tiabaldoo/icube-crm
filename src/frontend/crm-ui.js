@@ -47,7 +47,7 @@ const byId=(arr,id)=>arr.find(x=>x.id===Number(id));
 const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
-const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>e.groupId===id));
+const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>e.groupId===id&&(!e.status||e.status==='Активный')));
 const effectivePrice=e=>e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 function openChild(id){state.selectedChild=id;state.page='child';render()}
@@ -7536,12 +7536,14 @@ render();
   const actualIso=toIso(actualToday);
   const actualMonthStart=toIso(new Date(actualToday.getFullYear(),actualToday.getMonth(),1));
   const actualMonthEnd=toIso(new Date(actualToday.getFullYear(),actualToday.getMonth()+1,0));
+  const partnerDefaultFrom=toIso(new Date(actualToday.getFullYear(),actualToday.getMonth()-1,26));
+  const partnerDefaultTo=toIso(new Date(actualToday.getFullYear(),actualToday.getMonth(),25));
   if(state.calendarCursor==='2026-09-10' || !state.calendarCursor) state.calendarCursor=actualIso;
   if(state.teacherCalendarCursor==='2026-09-10') state.teacherCalendarCursor=actualIso;
   if(state.salaryDateFrom==='2026-08-10') state.salaryDateFrom=actualMonthStart;
   if(state.salaryDateTo==='2026-09-10') state.salaryDateTo=actualIso;
-  if(state.partnerDateFrom==='2026-08-26') state.partnerDateFrom=actualMonthStart;
-  if(state.partnerDateTo==='2026-09-25') state.partnerDateTo=actualIso;
+  if(state.partnerDateFrom==='2026-08-26') state.partnerDateFrom=partnerDefaultFrom;
+  if(state.partnerDateTo==='2026-09-25') state.partnerDateTo=partnerDefaultTo;
   if(state.statsDateFrom==='2026-09-01') state.statsDateFrom=actualMonthStart;
   if(state.statsDateTo==='2026-09-30') state.statsDateTo=actualMonthEnd;
 

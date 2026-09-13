@@ -295,6 +295,8 @@ CREATE TABLE price_versions (
 CREATE TABLE lessons (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   group_id BIGINT UNSIGNED NOT NULL,
+  direction_id_snapshot BIGINT UNSIGNED NOT NULL,
+  project_id_snapshot BIGINT UNSIGNED NOT NULL,
   scheduled_starts_at DATETIME(6) NOT NULL,
   starts_at DATETIME(6) NOT NULL,
   ends_at DATETIME(6) NOT NULL,
@@ -313,11 +315,15 @@ CREATE TABLE lessons (
   updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   PRIMARY KEY (id),
   UNIQUE KEY uq_lessons_occurrence (group_id, scheduled_starts_at),
+  KEY idx_lessons_project_start (project_id_snapshot, starts_at),
+  KEY idx_lessons_direction_start (direction_id_snapshot, starts_at),
   KEY idx_lessons_actual_teacher_start (actual_teacher_id, starts_at),
   KEY idx_lessons_status_start (status, starts_at),
   CONSTRAINT chk_lessons_status CHECK (status IN ('scheduled','in_progress','completed','cancelled')),
   CONSTRAINT chk_lessons_times CHECK (ends_at > starts_at),
   CONSTRAINT fk_lessons_group FOREIGN KEY (group_id) REFERENCES study_groups(id),
+  CONSTRAINT fk_lessons_direction_snapshot FOREIGN KEY (direction_id_snapshot) REFERENCES directions(id),
+  CONSTRAINT fk_lessons_project_snapshot FOREIGN KEY (project_id_snapshot) REFERENCES projects(id),
   CONSTRAINT fk_lessons_planned_teacher FOREIGN KEY (planned_teacher_id) REFERENCES teachers(id),
   CONSTRAINT fk_lessons_actual_teacher FOREIGN KEY (actual_teacher_id) REFERENCES teachers(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -518,6 +524,7 @@ CREATE TABLE balance_entries (
   refund_id BIGINT UNSIGNED NULL,
   attendance_id BIGINT UNSIGNED NULL,
   transfer_id BIGINT UNSIGNED NULL,
+  reversal_of_entry_id BIGINT UNSIGNED NULL,
   idempotency_key VARCHAR(128) NULL,
   occurred_at DATETIME(6) NOT NULL,
   created_by_user_id BIGINT UNSIGNED NULL,
@@ -525,13 +532,19 @@ CREATE TABLE balance_entries (
   PRIMARY KEY (id),
   UNIQUE KEY uq_balance_entries_idempotency (idempotency_key),
   UNIQUE KEY uq_balance_entries_attendance (attendance_id),
+  UNIQUE KEY uq_balance_entries_reversal (reversal_of_entry_id),
   KEY idx_balance_entries_enrollment_time (enrollment_id, occurred_at, id),
   CONSTRAINT chk_balance_entries_type CHECK (entry_type IN ('opening','payment','attendance','refund','transfer_out','transfer_in','adjustment','reversal')),
+  CONSTRAINT chk_balance_entries_reversal CHECK (
+    (entry_type='reversal' AND reversal_of_entry_id IS NOT NULL) OR
+    (entry_type<>'reversal' AND reversal_of_entry_id IS NULL)
+  ),
   CONSTRAINT fk_balance_entries_enrollment FOREIGN KEY (enrollment_id) REFERENCES child_enrollments(id),
   CONSTRAINT fk_balance_entries_payment FOREIGN KEY (payment_id) REFERENCES payments(id),
   CONSTRAINT fk_balance_entries_refund FOREIGN KEY (refund_id) REFERENCES refunds(id),
   CONSTRAINT fk_balance_entries_attendance FOREIGN KEY (attendance_id) REFERENCES attendances(id),
   CONSTRAINT fk_balance_entries_transfer FOREIGN KEY (transfer_id) REFERENCES balance_transfers(id),
+  CONSTRAINT fk_balance_entries_reversal FOREIGN KEY (reversal_of_entry_id) REFERENCES balance_entries(id),
   CONSTRAINT fk_balance_entries_created_by FOREIGN KEY (created_by_user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

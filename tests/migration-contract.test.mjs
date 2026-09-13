@@ -24,6 +24,14 @@ test('initial migration содержит все критические сущн�
   assert.match(sql, /created_from_lesson_id BIGINT UNSIGNED NULL/);
   assert.match(sql, /full_name VARCHAR\(255\) NULL,[\s\S]*?CONSTRAINT fk_guardians_user/);
   assert.match(sql, /PRIMARY KEY \(partner_id, user_id\)/);
+  assert.match(sql, /reversal_of_entry_id BIGINT UNSIGNED NULL/);
+  assert.match(sql, /UNIQUE KEY uq_balance_entries_reversal \(reversal_of_entry_id\)/);
+  assert.match(sql, /CONSTRAINT fk_balance_entries_reversal FOREIGN KEY \(reversal_of_entry_id\) REFERENCES balance_entries\(id\)/);
+  assert.match(sql, /entry_type='reversal' AND reversal_of_entry_id IS NOT NULL/);
+  assert.match(sql, /direction_id_snapshot BIGINT UNSIGNED NOT NULL/);
+  assert.match(sql, /project_id_snapshot BIGINT UNSIGNED NOT NULL/);
+  assert.match(sql, /CONSTRAINT fk_lessons_direction_snapshot FOREIGN KEY \(direction_id_snapshot\) REFERENCES directions\(id\)/);
+  assert.match(sql, /CONSTRAINT fk_lessons_project_snapshot FOREIGN KEY \(project_id_snapshot\) REFERENCES projects\(id\)/);
 
   const preciseLessonColumns = [
     'balance_lessons', 'charged_lessons', 'lessons_credit', 'lessons_debit',

@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import mysql from 'mysql2/promise';
+import { assertDatabaseEnvironment } from '../backend/src/config.mjs';
 
 function required(name) {
   if (!process.env[name]) throw new Error(`Не задана переменная окружения ${name}`);
@@ -11,8 +12,7 @@ function required(name) {
 
 const appEnv = process.env.APP_ENV ?? 'development';
 const database = required('DB_NAME');
-if (appEnv === 'production' && database !== 'icube_prod') throw new Error('Production-миграции разрешены только для icube_prod');
-if (appEnv === 'test' && database !== 'icube_test') throw new Error('Test-миграции разрешены только для icube_test');
+assertDatabaseEnvironment(appEnv, database);
 
 const connection = await mysql.createConnection({
   host: required('DB_HOST'),

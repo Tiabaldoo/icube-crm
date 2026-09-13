@@ -15,13 +15,21 @@ test('test и production не могут случайно использоват
   assert.throws(() => loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_prod' }), /icube_test/);
   assert.equal(loadConfig({ ...base, APP_ENV: 'production', DB_NAME: 'icube_prod' }).database.database, 'icube_prod');
   assert.equal(loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_test' }).database.database, 'icube_test');
+  assert.throws(() => loadConfig({ ...base, APP_ENV: 'development', DB_NAME: 'icube_prod' }), /development/);
+  assert.throws(() => loadConfig({ ...base, APP_ENV: 'development', DB_NAME: 'icube_test' }), /development/);
+  assert.equal(loadConfig({ ...base, APP_ENV: 'development', DB_NAME: 'icube_dev' }).database.database, 'icube_dev');
+});
+
+test('production отклоняет placeholder-секреты', () => {
+  assert.throws(() => loadConfig({ ...base, APP_ENV: 'production', DB_NAME: 'icube_prod', DB_PASSWORD: 'replace_me' }), /DB_PASSWORD/);
+  assert.throws(() => loadConfig({ ...base, APP_ENV: 'production', DB_NAME: 'icube_prod', AUTH_ACCESS_TOKEN_SECRET: 'replace_with_at_least_32_random_bytes' }), /AUTH_ACCESS_TOKEN_SECRET/);
 });
 
 test('модель ролей содержит текущие и будущие роли', () => {
   assert.ok(permissions.director.has('*'));
   for (const permission of [
     'children:read', 'groups:read', 'lessons:read', 'lessons:start', 'lessons:attendance',
-    'lessons:finish', 'lessons:photos', 'lessons:quick-child', 'lessons:update-assigned', 'lessons:cancel',
+    'lessons:finish', 'lessons:photos', 'lessons:extras', 'lessons:quick-child', 'lessons:update-assigned', 'lessons:cancel',
   ]) assert.ok(permissions.teacher.has(permission), `teacher: нет ${permission}`);
   assert.ok(!permissions.teacher.has('*'));
   assert.ok(!permissions.teacher.has('payments:write'));

@@ -57,11 +57,13 @@ test('единый frontend загружается и рендерит все т
   context.window = context;
   context.globalThis = context;
 
-  vm.runInContext(`${source}\n;globalThis.__crmProbe={state,render};`, context, { filename: 'crm-ui.js' });
+  vm.runInContext(`${source}\n;globalThis.__crmProbe={state,render,groupChildren};`, context, { filename: 'crm-ui.js' });
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   assert.equal(context.__crmProbe.state.salaryDateTo, todayIso);
-  assert.equal(context.__crmProbe.state.partnerDateTo, todayIso);
+  assert.equal(context.__crmProbe.state.partnerDateFrom, localIso(new Date(today.getFullYear(), today.getMonth() - 1, 26)));
+  assert.equal(context.__crmProbe.state.partnerDateTo, localIso(new Date(today.getFullYear(), today.getMonth(), 25)));
   const pages = ['dashboard', 'children', 'groups', 'calendar', 'payments', 'refunds', 'balances', 'teachers', 'sites', 'salary', 'partner', 'stats', 'settings'];
   for (const page of pages) {
     context.__crmProbe.state.role = 'director';
@@ -73,4 +75,12 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.page = 'teacherToday';
   context.__crmProbe.render();
   assert.match(app.innerHTML, /teacher-shell/);
+
+  const savedChildren = context.__crmProbe.state.children;
+  context.__crmProbe.state.children = [
+    { status: 'Активный', enrollments: [{ groupId: 999, status: 'Пауза' }] },
+    { status: 'Лид', enrollments: [{ groupId: 999 }] },
+  ];
+  assert.equal(context.__crmProbe.groupChildren(999).length, 1);
+  context.__crmProbe.state.children = savedChildren;
 });
