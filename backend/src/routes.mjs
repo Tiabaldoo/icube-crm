@@ -17,9 +17,10 @@ export function createApiRouter(pool) {
   });
   router.post('/auth/login', notImplemented('auth/login'));
   router.post('/auth/refresh', notImplemented('auth/refresh'));
+  router.post('/auth/logout', notImplemented('auth/logout'));
 
   router.use(authenticate);
-  const readResources = ['children', 'directions', 'groups', 'sites', 'teachers', 'lessons', 'payments', 'refunds', 'balances', 'notifications'];
+  const readResources = ['children', 'directions', 'groups', 'sites', 'teachers', 'projects', 'lessons', 'payments', 'refunds', 'balances', 'notifications'];
   const editableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons', 'payments', 'refunds']);
   for (const resource of readResources) {
     const readPermission = resource === 'lessons' ? 'lessons:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : '*';

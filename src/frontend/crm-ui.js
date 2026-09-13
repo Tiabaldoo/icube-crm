@@ -4,12 +4,12 @@
 const state = {
  role:'director', page:'dashboard', selectedChild:1, selectedGroup:1, selectedLesson:1,
  children:[
-  {id:1,name:'Агафонов Евгений',birth:'2015-04-12',school:'СОШ № 1',grade:'5А',shift:'1',parent:'Агафонова Марина',phone:'+7 914 555-18-04',status:'Активный',note:'Любит конструирование, быстро работает в паре.',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:1},{direction:'Программирование',groupId:3,individualPrice:null,balance:3}]},
-  {id:2,name:'Петров Максим',birth:'2016-09-03',school:'Гимназия № 2',grade:'4Б',shift:'1',parent:'Петрова Ольга',phone:'+7 924 210-44-31',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:0}]},
-  {id:3,name:'Сидоров Артём',birth:'2015-11-21',school:'СОШ № 6',grade:'5В',shift:'2',parent:'Сидорова Анна',phone:'+7 914 781-33-20',status:'Активный',note:'Иногда приходит на соседнюю группу.',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:-1}]},
-  {id:4,name:'Козлов Максим',birth:'2014-02-17',school:'Лицей',grade:'6А',shift:'1',parent:'Козлова Ирина',phone:'+7 962 100-77-55',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:2,individualPrice:null,balance:4}]},
-  {id:5,name:'Иванов Алексей',birth:'2015-06-08',school:'СОШ № 3',grade:'5Б',shift:'2',parent:'Иванова Светлана',phone:'+7 914 610-20-28',status:'Пауза',note:'Пауза до октября.',enrollments:[{direction:'Робототехника',groupId:2,individualPrice:null,balance:2}]},
-  {id:6,name:'Волкова София',birth:'2017-01-19',school:'СОШ № 1',grade:'3А',shift:'1',parent:'Волкова Екатерина',phone:'+7 914 443-19-91',status:'Лид',note:'Была на пробном.',enrollments:[{direction:'Робототехника',groupId:4,individualPrice:null,balance:0}]}
+  {id:1,name:'Агафонов Евгений',birth:'2015-04-12',school:'СОШ № 1',grade:'5А',parent:'Агафонова Марина',phone:'+7 914 555-18-04',status:'Активный',note:'Любит конструирование, быстро работает в паре.',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:1},{direction:'Программирование',groupId:3,individualPrice:null,balance:3}]},
+  {id:2,name:'Петров Максим',birth:'2016-09-03',school:'Гимназия № 2',grade:'4Б',parent:'Петрова Ольга',phone:'+7 924 210-44-31',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:0}]},
+  {id:3,name:'Сидоров Артём',birth:'2015-11-21',school:'СОШ № 6',grade:'5В',parent:'Сидорова Анна',phone:'+7 914 781-33-20',status:'Активный',note:'Иногда приходит на соседнюю группу.',enrollments:[{direction:'Робототехника',groupId:1,individualPrice:null,balance:-1}]},
+  {id:4,name:'Козлов Максим',birth:'2014-02-17',school:'Лицей',grade:'6А',parent:'Козлова Ирина',phone:'+7 962 100-77-55',status:'Активный',note:'',enrollments:[{direction:'Робототехника',groupId:2,individualPrice:null,balance:4}]},
+  {id:5,name:'Иванов Алексей',birth:'2015-06-08',school:'СОШ № 3',grade:'5Б',parent:'Иванова Светлана',phone:'+7 914 610-20-28',status:'Пауза',note:'Пауза до октября.',enrollments:[{direction:'Робототехника',groupId:2,individualPrice:null,balance:2}]},
+  {id:6,name:'Волкова София',birth:'2017-01-19',school:'СОШ № 1',grade:'3А',parent:'Волкова Екатерина',phone:'+7 914 443-19-91',status:'Лид',note:'Была на пробном.',enrollments:[{direction:'Робототехника',groupId:4,individualPrice:null,balance:0}]}
  ],
  groups:[
   {id:1,name:'Роботы · Чт 14:00',direction:'Робототехника',siteId:1,teacherId:1,day:'Четверг',time:'14:00–15:30',project:'iCubeRobots',price:null,active:true},
@@ -109,14 +109,14 @@ function saveChild(id){
      c.statusChangedDirection=oldEnrollment?.direction||null;
    }
  }
- else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,shift:'1',parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,individualPrice:null,balance:0}],statusHistory:[],createdAt:new Date().toISOString()});state.selectedChild=nid;}
+ else{let nid=Math.max(...state.children.map(x=>x.id))+1;state.children.push({id:nid,name,birth:document.querySelector('#cf-birth').value,school:document.querySelector('#cf-school').value,grade:document.querySelector('#cf-grade').value,parent:document.querySelector('#cf-parent').value,phone:document.querySelector('#cf-phone').value,status:document.querySelector('#cf-status').value,note:document.querySelector('#cf-note').value,enrollments:[{direction:byId(state.groups,groupId).direction,groupId,individualPrice:null,balance:0}],statusHistory:[],createdAt:new Date().toISOString()});state.selectedChild=nid;}
  state.modal=null;state.page='child';render();
 }
 function child(){
  const c=byId(state.children,state.selectedChild); if(!c)return children();
  return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'children\')">← Дети</button>'+pageHead(c.name,`${c.school} · ${c.grade} · ${c.parent}`,`<button class="btn" onclick="childForm(${c.id})">Редактировать</button>`)+`
  <div class="tabs"><button class="active">Обзор</button><button>Оплаты</button><button>Посещения</button><button>Возвраты</button></div><div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge ${statusBadge(c.status)}">${c.status}</span></div>${c.enrollments.map(e=>{let g=byId(state.groups,e.groupId);return `<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>${e.direction}</b><div class="muted">${g?.name||'Без группы'}</div></div><div style="text-align:right"><div class="money ${e.balance<0?'negative':e.balance>0?'positive':''}">${e.balance} занятий</div><div class="muted mini">${money(effectivePrice(e))} / занятие</div></div></div><button class="btn soft" style="margin-top:10px" onclick="paymentForm(${c.id},'${e.direction}')">+ Оплата</button></div>`}).join('')}</div>
- <div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>${c.birth}</b></div><div class="info-line"><span>Смена</span><b>${c.shift}</b></div><div class="info-line"><span>Родитель</span><b>${c.parent}</b></div><div class="info-line"><span>Телефон</span><b>${c.phone}</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">${c.note||'—'}</span></div></div></div></div>
+ <div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>${c.birth}</b></div><div class="info-line"><span>Родитель</span><b>${c.parent}</b></div><div class="info-line"><span>Телефон</span><b>${c.phone}</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">${c.note||'—'}</span></div></div></div></div>
  <div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Последние оплаты</h2><button class="btn" onclick="navTo('payments')">Все</button></div>${state.payments.filter(p=>p.childId===c.id).map(p=>`<div class="kpi-line"><div><b>${p.direction}</b><div class="muted mini">${p.date} · ${p.method}</div></div><div class="money positive">+${p.lessons} · ${money(p.amount)}</div></div>`).join('')||'<div class="empty">Оплат пока нет</div>'}</div><div class="card pad"><div class="section-title"><h2>История посещений</h2></div><div class="kpi-line"><div><b>05.09 · Робототехника</b><div class="muted mini">Редукторы и передаточное отношение</div></div><span class="badge green">Был</span></div><div class="kpi-line"><div><b>29.08 · Робототехника</b><div class="muted mini">Зубчатые передачи</div></div><span class="badge green">Был</span></div></div></div>`;
 }
 function groups(){
@@ -341,7 +341,6 @@ child = function() {
       '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div>' +
         '<div class="info-list">' +
           '<div class="info-line"><span>Дата рождения</span><b>' + c.birth + '</b></div>' +
-          '<div class="info-line"><span>Смена</span><b>' + c.shift + '</b></div>' +
           '<div class="info-line"><span>Родитель</span><b>' + c.parent + '</b></div>' +
           '<div class="info-line"><span>Телефон</span><b>' + c.phone + '</b></div>' +
           '<div class="info-line"><span>Примечание</span><span style="text-align:right">' + (c.note || '—') + '</span></div>' +
@@ -773,7 +772,7 @@ render();
       }
     } else {
       const nextId = state.children.length ? Math.max.apply(null,state.children.map(function(x){return Number(x.id)||0;})) + 1 : 1;
-      const c = Object.assign({id:nextId,shift:'1'},common,{enrollments:[{direction:direction,groupId:groupId,individualPrice:null,balance:0}]});
+      const c = Object.assign({id:nextId},common,{enrollments:[{direction:direction,groupId:groupId,individualPrice:null,balance:0}]});
       state.children.push(c);
       state.selectedChild = nextId;
     }
@@ -1969,7 +1968,7 @@ render();
     const visits=childVisitRows(c.id).slice(0,3);
 
     return '<div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge '+statusBadge(c.status)+'">'+c.status+'</span><button class="btn soft" onclick="enrollmentForm('+c.id+',null)">+ Добавить направление</button></div></div>'+directionsHtml+'</div>'+
-      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>'+c.birth+'</b></div><div class="info-line"><span>Смена</span><b>'+c.shift+'</b></div><div class="info-line"><span>Родитель</span><b>'+c.parent+'</b></div><div class="info-line"><span>Телефон</span><b>'+c.phone+'</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">'+(c.note||'—')+'</span></div></div></div></div>'+
+      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>'+c.birth+'</b></div><div class="info-line"><span>Родитель</span><b>'+c.parent+'</b></div><div class="info-line"><span>Телефон</span><b>'+c.phone+'</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">'+(c.note||'—')+'</span></div></div></div></div>'+
       '<div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Последние оплаты</h2><button class="btn" onclick="setChildTab(\'payments\')">Все</button></div>'+(payments.length?payments.map(paymentRowMini).join(''):'<div class="empty">Оплат пока нет</div>')+'</div>'+
       '<div class="card pad"><div class="section-title"><h2>История посещений</h2><button class="btn" onclick="setChildTab(\'visits\')">Все</button></div>'+(visits.length?visits.map(visitRowMini).join(''):'<div class="empty">Посещений пока нет</div>')+'</div></div>';
   }
@@ -3533,7 +3532,6 @@ render();
       birth:'',
       school:'',
       grade:'',
-      shift:'',
       parent:'',
       phone:phone,
       status:'Лид',
@@ -3776,7 +3774,7 @@ render();
     const id=(state.children||[]).length?Math.max.apply(null,state.children.map(function(c){return Number(c.id)||0;}))+1:1;
     const teacherId=(typeof window.currentPrototypeTeacherId==='function'?Number(window.currentPrototypeTeacherId()||0):0) || Number(lesson.teacherId||group.teacherId||0);
     state.children.push({
-      id:id,name:name,birth:'',school:'',grade:'',shift:'',parent:'',phone:phone,status:'Лид',note:'',
+      id:id,name:name,birth:'',school:'',grade:'',parent:'',phone:phone,status:'Лид',note:'',
       enrollments:[{direction:group.direction,groupId:null,individualPrice:null,balance:0}],
       needsDirectorReview:true,createdByTeacher:true,createdByTeacherId:teacherId||null,
       createdFromLessonId:lesson.id,createdAt:new Date().toISOString()
