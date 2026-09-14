@@ -148,7 +148,59 @@ function deleteChildPrompt(childId) {
   legacy.render();
 }
 
-window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt, reload };
+function directoryItem(resource, resourceId) {
+  const key = resource === 'sites' ? 'sites' : resource === 'teachers' ? 'teachers' : 'groups';
+  return legacy.state[key].find((item) => item.id === Number(resourceId));
+}
+
+async function deleteDirectoryEntity(resource, resourceId, label) {
+  const item = directoryItem(resource, resourceId);
+  if (!item) return;
+  if (!window.confirm(`Удалить ${label} «${item.name}»? Это действие нельзя отменить.`)) return;
+  try {
+    await api.delete(resource, resourceId);
+    legacy.state.modal = null;
+    if (resource === 'groups') legacy.state.selectedGroup = null;
+    legacy.state.page = resource;
+    await reload();
+  } catch (error) { fail(error); }
+}
+
+function installDeleteButton(formName, resource, label) {
+  const original = window[formName];
+  if (typeof original !== 'function') return;
+  window[formName] = function (...args) {
+    const result = original.apply(this, args);
+    const resourceId = args[0];
+    if (!resourceId) return result;
+    queueMicrotask(() => {
+      const actions = document.querySelector('.modal-actions');
+      if (!actions || actions.querySelector(`[data-delete-resource="${resource}"]`)) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn danger';
+      button.dataset.deleteResource = resource;
+      button.textContent = 'Удалить';
+      button.addEventListener('click', () => deleteDirectoryEntity(resource, resourceId, label));
+      actions.prepend(button);
+    });
+    return result;
+  };
+}
+
+function installDeletionUi() {
+  installDeleteButton('siteForm', 'sites', 'площадку');
+  installDeleteButton('teacherForm', 'teachers', 'преподавателя');
+  installDeleteButton('groupForm', 'groups', 'группу');
+  const originalSites = window.sites;
+  if (typeof originalSites === 'function') {
+    window.sites = function (...args) {
+      return originalSites.apply(this, args).replace('Площадки не удаляются: неиспользуемую площадку можно сделать неактивной.', 'Пустую площадку можно удалить; используемую — сделать неактивной.');
+    };
+  }
+}
+
+window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt, deleteDirectoryEntity, reload };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
 window.saveGroupV111 = window.icubeApi.saveGroup;
@@ -158,6 +210,7 @@ window.saveAddedDirectionV132 = window.icubeApi.addEnrollment;
 window.deleteChildPrompt = window.icubeApi.deleteChildPrompt;
 window.confirmDeleteChild = window.icubeApi.deleteChild;
 
+installDeletionUi();
 reload().catch((error) => {
   console.error('Первичная загрузка CRM API не выполнена', error);
   legacy.state.sites = [];
