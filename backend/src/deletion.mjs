@@ -60,14 +60,17 @@ export function createDeletionService(pool) {
       (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id) memberships,
       (SELECT COUNT(*) FROM lessons WHERE group_id=:id) lessons,
       (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id) attendances,
-      (SELECT COUNT(*) FROM price_versions WHERE group_id=:id) priceVersions,
       (SELECT COUNT(*) FROM child_status_history WHERE group_id_snapshot=:id) childStatusHistory,
       (SELECT COUNT(*) FROM enrollment_status_history WHERE group_id_snapshot=:id) enrollmentStatusHistory,
       (SELECT COUNT(*) FROM payments WHERE group_id_snapshot=:id) payments,
       (SELECT COUNT(*) FROM refunds WHERE group_id_snapshot=:id) refunds`, { id: groupId });
     if (hasAny(dependencies)) throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.', dependencies);
-    try { await pool.query('DELETE FROM study_groups WHERE id=:id', { id: groupId }); }
-    catch (error) {
+    try {
+      await inTransaction(pool, async (connection) => {
+        await connection.query('DELETE FROM price_versions WHERE group_id=:id', { id: groupId });
+        await connection.query('DELETE FROM study_groups WHERE id=:id', { id: groupId });
+      });
+    } catch (error) {
       if (error?.code === 'ER_ROW_IS_REFERENCED_2') throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.');
       throw error;
     }
