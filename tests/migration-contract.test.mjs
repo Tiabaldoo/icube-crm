@@ -55,6 +55,8 @@ test('payment migration добавляет ledger-инвариант и базо
   assert.match(sql, /MODIFY created_by_user_id BIGINT UNSIGNED NULL/);
   assert.match(sql, /UNIQUE KEY uq_balance_entries_payment \(payment_id\)/);
   assert.match(sql, /1025\.00/);
-  assert.match(sql, /900\.00/);
+  assert.match(sql, /1125\.00/);
+  assert.doesNotMatch(sql, /900\.00/);
+  assert.match(sql, /INSERT INTO balance_lots/);
   assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
 });

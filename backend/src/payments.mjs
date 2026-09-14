@@ -67,15 +67,17 @@ export function createMysqlPayments(pool) {
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
     return mapPayment(rows[0]);
   }
-  async function lockEnrollment(connection, enrollmentId, { requirePrice = true } = {}) {
+  async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = isoDate(new Date()) } = {}) {
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,gm.group_id,g.project_id,
-      COALESCE(e.individual_price,
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+      COALESCE(
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
       ) current_price
       FROM child_enrollments e
-      LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.ended_on IS NULL ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
-      LEFT JOIN study_groups g ON g.id=gm.group_id WHERE e.id=:id FOR UPDATE`, { id: identifier(enrollmentId, 'enrollmentId') });
+      LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=:priceDate AND (gm2.ended_on IS NULL OR gm2.ended_on>=:priceDate) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
+      LEFT JOIN study_groups g ON g.id=gm.group_id WHERE e.id=:id FOR UPDATE`, { id: identifier(enrollmentId, 'enrollmentId'), priceDate });
     if (!rows.length) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
     if (requirePrice && rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для направления не настроена цена занятия');
     return rows[0];
@@ -83,11 +85,12 @@ export function createMysqlPayments(pool) {
   async function create(body, context = {}) {
     try {
       const paymentId = await inTransaction(pool, async (connection) => {
-        const enrollment = await lockEnrollment(connection, body.enrollmentId);
+        const date = paidOn(body.paidOn);
+        const enrollment = await lockEnrollment(connection, body.enrollmentId, { priceDate: date });
         const amount = normalizeMoney(body.amount);
         const price = normalizeMoney(enrollment.current_price, 'priceSnapshot');
         const lessons = calculateLessonsCredit(amount, price);
-        const date = paidOn(body.paidOn); const method = paymentMethod(body.method);
+        const method = paymentMethod(body.method);
         const [result] = await connection.query(`INSERT INTO payments
           (enrollment_id,child_id,direction_id,group_id_snapshot,project_id_snapshot,paid_on,amount,price_snapshot,lessons_credit,method,note,created_by_user_id)
           VALUES (:enrollmentId,:childId,:directionId,:groupId,:projectId,:paidOn,:amount,:price,:lessons,:method,:note,:actorId)`, {
@@ -95,11 +98,16 @@ export function createMysqlPayments(pool) {
           groupId: enrollment.group_id, projectId: enrollment.project_id, paidOn: date, amount, price, lessons, method,
           note: body.note == null || body.note === '' ? null : String(body.note).trim(), actorId: context.actorUserId ?? null,
         });
-        await connection.query(`INSERT INTO balance_entries
+        const [entryResult] = await connection.query(`INSERT INTO balance_entries
           (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,payment_id,idempotency_key,occurred_at,created_by_user_id)
           VALUES (:enrollmentId,'payment',:lessons,:amount,:price,:paymentId,:idempotencyKey,CONCAT(:paidOn,' 12:00:00'),:actorId)`, {
           enrollmentId: enrollment.id, lessons, amount, price, paymentId: result.insertId,
           idempotencyKey: context.idempotencyKey ?? null, paidOn: date, actorId: context.actorUserId ?? null,
+        });
+        await connection.query(`INSERT INTO balance_lots
+          (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
+          VALUES (:enrollmentId,:entryId,:lessons,:lessons,:price)`, {
+          enrollmentId: enrollment.id, entryId: entryResult.insertId, lessons, price,
         });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: enrollment.id, lessons });
         return String(result.insertId);
@@ -114,15 +122,16 @@ export function createMysqlPayments(pool) {
         const [payments] = await connection.query('SELECT * FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: paymentId });
         if (!payments.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
         const old = payments[0];
-        const oldEnrollment = await lockEnrollment(connection, old.enrollment_id, { requirePrice: false });
+        const date = paidOn(body.paidOn ?? isoDate(old.paid_on));
+        const oldEnrollment = await lockEnrollment(connection, old.enrollment_id, { requirePrice: false, priceDate: date });
         const targetId = identifier(body.enrollmentId ?? old.enrollment_id, 'enrollmentId');
-        const target = String(oldEnrollment.id) === targetId ? oldEnrollment : await lockEnrollment(connection, targetId, { requirePrice: body.priceSnapshot === undefined });
+        const target = String(oldEnrollment.id) === targetId ? oldEnrollment : await lockEnrollment(connection, targetId, { requirePrice: body.priceSnapshot === undefined, priceDate: date });
         const amount = normalizeMoney(body.amount ?? old.amount);
         const price = body.priceSnapshot === undefined
           ? normalizeMoney(String(old.enrollment_id) === targetId ? old.price_snapshot : target.current_price, 'priceSnapshot')
           : normalizeMoney(body.priceSnapshot, 'priceSnapshot');
         const lessons = calculateLessonsCredit(amount, price);
-        const date = paidOn(body.paidOn ?? isoDate(old.paid_on)); const method = paymentMethod(body.method ?? old.method);
+        const method = paymentMethod(body.method ?? old.method);
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: old.enrollment_id, lessons: String(old.lessons_credit) });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: target.id, lessons });
         await connection.query(`UPDATE payments SET enrollment_id=:enrollmentId,child_id=:childId,direction_id=:directionId,
@@ -134,9 +143,25 @@ export function createMysqlPayments(pool) {
         });
         const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:paymentId AND entry_type='payment' FOR UPDATE`, { paymentId });
         if (entries.length !== 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Не найдена единственная запись баланса для оплаты');
+        const [lots] = await connection.query('SELECT id FROM balance_lots WHERE source_balance_entry_id=:entryId FOR UPDATE', { entryId: entries[0].id });
+        if (lots.length > 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Для оплаты найдено несколько партий баланса');
+        if (lots.length) {
+          const [consumptions] = await connection.query('SELECT id FROM balance_lot_consumptions WHERE balance_lot_id=:lotId LIMIT 1', { lotId: lots[0].id });
+          if (consumptions.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплата уже использована в финансовой истории');
+        }
         await connection.query(`UPDATE balance_entries SET enrollment_id=:enrollmentId,lessons_delta=:lessons,
           amount_delta=:amount,unit_price_snapshot=:price,occurred_at=CONCAT(:paidOn,' 12:00:00'),created_by_user_id=COALESCE(:actorId,created_by_user_id)
           WHERE id=:entryId`, { enrollmentId: target.id, lessons, amount, price, paidOn: date, actorId: context.actorUserId ?? null, entryId: entries[0].id });
+        if (lots.length) {
+          await connection.query(`UPDATE balance_lots SET enrollment_id=:enrollmentId,original_lessons=:lessons,
+            remaining_lessons=:lessons,unit_price=:price WHERE id=:lotId`, { enrollmentId: target.id, lessons, price, lotId: lots[0].id });
+        } else {
+          await connection.query(`INSERT INTO balance_lots
+            (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
+            VALUES (:enrollmentId,:entryId,:lessons,:lessons,:price)`, {
+            enrollmentId: target.id, entryId: entries[0].id, lessons, price,
+          });
+        }
       });
       return get(paymentId);
     } catch (error) { throw mysqlError(error); }

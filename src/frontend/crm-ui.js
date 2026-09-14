@@ -40,7 +40,7 @@ const state = {
   {id:4,date:'04.09.2026',childId:6,direction:'Робототехника',amount:4100,method:'Наличными партнёру',price:1025,lessons:4}
  ],
  refunds:[{id:1,date:'28.08.2026',childId:5,direction:'Робототехника',amount:1025,price:1025,lessons:1}],
- settings:{robotPrice:1025,codePrice:900,salaryFix:600,salaryChild:100,salaryIntro:600,salaryEmpty:300,tax:4,icubeShare:40,partnerShare:60},
+ settings:{robotPrice:1025,codePrice:1125,salaryFix:600,salaryChild:100,salaryIntro:600,salaryEmpty:300,tax:4,icubeShare:40,partnerShare:60},
  modal:null
 };
 const byId=(arr,id)=>arr.find(x=>x.id===Number(id));
