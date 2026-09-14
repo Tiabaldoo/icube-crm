@@ -10,10 +10,16 @@ export function createApp({ config, pool }) {
   app.set('trust proxy', config.trustProxy);
   app.use(helmet());
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api/v1', createApiRouter(pool));
+  // Авторизация — следующий срез. Test/development временно получают права директора;
+  // production остаётся закрыт до появления настоящих access token.
+  app.use('/api/v1', createApiRouter(pool, { allowUnauthenticated: config.appEnv !== 'production' }));
   app.use((error, _request, response, _next) => {
-    console.error(error);
-    response.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Внутренняя ошибка сервера' } });
+    if (!error.status) console.error(error);
+    response.status(error.status ?? 500).json({ error: {
+      code: error.code ?? 'INTERNAL_ERROR',
+      message: error.status ? error.message : 'Внутренняя ошибка сервера',
+      ...(error.details === undefined ? {} : { details: error.details }),
+    } });
   });
   return app;
 }

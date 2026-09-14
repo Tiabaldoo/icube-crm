@@ -43,4 +43,7 @@ export class ApiClient {
   get(resource, id) { return this.request(`/${resource}/${encodeURIComponent(id)}`); }
   create(resource, value, idempotencyKey) { return this.request(`/${resource}`, { method: 'POST', body: value, idempotencyKey }); }
   update(resource, id, value) { return this.request(`/${resource}/${encodeURIComponent(id)}`, { method: 'PATCH', body: value }); }
+  delete(resource, id) { return this.request(`/${resource}/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+  createEnrollment(childId, value) { return this.request(`/children/${encodeURIComponent(childId)}/enrollments`, { method: 'POST', body: value }); }
+  updateEnrollment(id, value) { return this.request(`/enrollments/${encodeURIComponent(id)}`, { method: 'PATCH', body: value }); }
 }

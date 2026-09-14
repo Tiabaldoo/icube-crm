@@ -5,6 +5,8 @@ export function createPool(config) {
     ...config,
     waitForConnections: true,
     namedPlaceholders: true,
+    supportBigNumbers: true,
+    bigNumberStrings: true,
     timezone: 'Z',
     charset: 'utf8mb4',
   });

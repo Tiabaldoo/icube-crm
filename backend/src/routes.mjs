@@ -1,42 +1,49 @@
 import { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
+import { createMysqlCatalog } from './catalog.mjs';
 
 function notImplemented(resource) {
-  return (_request, response) => response.status(501).json({
-    error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` },
-  });
+  return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
 }
+const run = (handler, status = 200) => async (request, response, next) => {
+  try { const data = await handler(request); return status === 204 ? response.status(204).end() : response.status(status).json({ data }); }
+  catch (error) { return next(error); }
+};
 
-export function createApiRouter(pool) {
+export function createApiRouter(pool, { catalog = createMysqlCatalog(pool), allowUnauthenticated = false } = {}) {
   const router = Router();
-  router.get('/health', async (_request, response, next) => {
-    try {
-      await pool.query('SELECT 1');
-      response.json({ data: { status: 'ok' } });
-    } catch (error) { next(error); }
-  });
+  router.get('/health', async (_request, response, next) => { try { await pool.query('SELECT 1'); response.json({ data: { status: 'ok' } }); } catch (error) { next(error); } });
   router.post('/auth/login', notImplemented('auth/login'));
   router.post('/auth/refresh', notImplemented('auth/refresh'));
   router.post('/auth/logout', notImplemented('auth/logout'));
 
+  if (allowUnauthenticated) router.use((request, _response, next) => { request.auth = { roles: ['director'] }; next(); });
   router.use(authenticate);
-  const readResources = ['children', 'directions', 'groups', 'sites', 'teachers', 'projects', 'lessons', 'payments', 'refunds', 'balances', 'notifications'];
-  const creatableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons', 'payments', 'refunds']);
-  const patchableResources = new Set(['children', 'directions', 'groups', 'sites', 'teachers', 'lessons']);
-  for (const resource of readResources) {
-    const readPermission = resource === 'lessons' ? 'lessons:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : resource === 'projects' ? 'projects:read' : '*';
-    router.get(`/${resource}`, requirePermission(readPermission), notImplemented(resource));
-    router.get(`/${resource}/:id`, requirePermission(readPermission), notImplemented(`${resource}/:id`));
-    if (creatableResources.has(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
-    if (patchableResources.has(resource)) router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
+
+  for (const resource of ['projects', 'directions', 'sites', 'teachers', 'groups', 'children']) {
+    const permission = resource === 'projects' ? 'projects:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : '*';
+    router.get(`/${resource}`, requirePermission(permission), run(() => catalog.list(resource)));
+    router.get(`/${resource}/:id`, requirePermission(permission), run((request) => catalog.get(resource, request.params.id)));
+    if (resource !== 'projects') {
+      router.post(`/${resource}`, requirePermission('*'), run((request) => catalog.create(resource, request.body), 201));
+      router.patch(`/${resource}/:id`, requirePermission('*'), run((request) => catalog.update(resource, request.params.id, request.body)));
+    }
   }
-  router.delete('/children/:id', requirePermission('*'), notImplemented('DELETE children/:id'));
-  for(const resource of ['price-versions','salary-rate-versions','partner-agreement-versions']){
+  router.delete('/children/:id', requirePermission('*'), run((request) => catalog.deleteChild(request.params.id), 204));
+  router.post('/children/:id/enrollments', requirePermission('*'), run((request) => catalog.createEnrollment(request.params.id, request.body), 201));
+  router.patch('/enrollments/:id', requirePermission('*'), run((request) => catalog.updateEnrollment(request.params.id, request.body)));
+
+  for (const resource of ['lessons', 'payments', 'refunds', 'balances', 'notifications']) {
+    const permission = resource === 'lessons' ? 'lessons:read' : '*';
+    router.get(`/${resource}`, requirePermission(permission), notImplemented(resource));
+    router.get(`/${resource}/:id`, requirePermission(permission), notImplemented(`${resource}/:id`));
+    if (['lessons', 'payments', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
+    if (resource === 'lessons') router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
+  }
+  for (const resource of ['price-versions', 'salary-rate-versions', 'partner-agreement-versions']) {
     router.get(`/${resource}`, requirePermission('*'), notImplemented(resource));
     router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
   }
-  router.post('/children/:id/enrollments', requirePermission('*'), notImplemented('child enrollment'));
-  router.patch('/enrollments/:id', requirePermission('*'), notImplemented('enrollment'));
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
   router.post('/lessons/:id/start', requirePermission('lessons:start'), notImplemented('lessons/:id/start'));
   router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), notImplemented('lesson attendance'));
