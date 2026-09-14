@@ -123,9 +123,21 @@ test('фактические save handlers подключены к API namespace
   }
 });
 
-test('после сохранения базовых цен настройки обновляют общее CRM-состояние без двойного render', async () => {
+test('общая кнопка настроек сохраняет цены и зарплату, управляет dirty-state и показывает успех', async () => {
   const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
+  assert.match(source, /button\.textContent = 'Сохранить настройки'/);
+  assert.doesNotMatch(source, /Сохранить базовые цены/);
+  assert.match(source, /api\.create\('price-versions'/);
+  assert.match(source, /api\.create\('salary-rate-versions'/);
+  assert.match(source, /input\.addEventListener\('input', recalculateDirty\)/);
+  assert.match(source, /dirty = Object\.keys\(baseline\)\.some/);
+  assert.match(source, /function setCleanBaseline\(\)[\s\S]*?dirty = false;/);
   assert.match(source, /await window\.icubeApi\.reload\(\{ render: false \}\);/);
-  assert.match(source, /state\.page = 'settings';\s*legacy\.render\(\);/);
-  assert.doesNotMatch(source, /await loadPrices\(\{ render: true \}\);/);
+  assert.match(source, /state\.page = 'settings';[\s\S]*?legacy\.render\(\);/);
+  assert.match(source, /Настройки сохранены/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{ status\.hidden = true; \}, 2500\)/);
+  assert.match(source, /addEventListener\('beforeunload'/);
+  assert.match(source, /event\.preventDefault\(\);\s*event\.returnValue = '';/);
+  assert.match(source, /Есть несохранённые изменения\. Уйти без сохранения\?/);
+  assert.match(source, /window\.navTo = function \(page\)/);
 });

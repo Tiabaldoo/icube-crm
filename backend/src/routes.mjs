@@ -4,6 +4,7 @@ import { createMysqlCatalog } from './catalog.mjs';
 import { createDeletionService } from './deletion.mjs';
 import { createMysqlPayments } from './payments.mjs';
 import { createDirectionPriceVersions } from './price-versions.mjs';
+import { createSalaryRateVersions } from './salary-rate-versions.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -18,6 +19,7 @@ export function createApiRouter(pool, {
   deletions = createDeletionService(pool),
   payments = createMysqlPayments(pool),
   priceVersions = createDirectionPriceVersions(pool),
+  salaryRateVersions = createSalaryRateVersions(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -62,6 +64,10 @@ export function createApiRouter(pool, {
   router.post('/price-versions', requirePermission('*'), run((request) => priceVersions.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
+  router.get('/salary-rate-versions', requirePermission('*'), run(() => salaryRateVersions.list()));
+  router.post('/salary-rate-versions', requirePermission('*'), run((request) => salaryRateVersions.create(request.body, {
+    actorUserId: request.auth?.userId ?? null,
+  }), 201));
 
   for (const resource of ['lessons', 'refunds', 'notifications']) {
     const permission = resource === 'lessons' ? 'lessons:read' : '*';
@@ -70,7 +76,7 @@ export function createApiRouter(pool, {
     if (['lessons', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
     if (resource === 'lessons') router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
   }
-  for (const resource of ['salary-rate-versions', 'partner-agreement-versions']) {
+  for (const resource of ['partner-agreement-versions']) {
     router.get(`/${resource}`, requirePermission('*'), notImplemented(resource));
     router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
   }
