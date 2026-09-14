@@ -122,3 +122,10 @@ test('фактические save handlers подключены к API namespace
     globalThis.fetch = originalFetch;
   }
 });
+
+test('после сохранения базовых цен настройки обновляют общее CRM-состояние без двойного render', async () => {
+  const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
+  assert.match(source, /await window\.icubeApi\.reload\(\{ render: false \}\);/);
+  assert.match(source, /state\.page = 'settings';\s*legacy\.render\(\);/);
+  assert.doesNotMatch(source, /await loadPrices\(\{ render: true \}\);/);
+});

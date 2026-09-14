@@ -79,9 +79,13 @@ async function savePrices() {
   try {
     for (const item of desired) {
       if (String(item.packagePrice).replace(',', '.') === String(item.current.packagePrice).replace(',', '.')) continue;
-      await api.create('price-versions', { directionId: item.current.directionId, packagePrice: String(item.packagePrice).trim() });
+      const saved = await api.create('price-versions', { directionId: item.current.directionId, packagePrice: String(item.packagePrice).trim() });
+      currentByCode.set(saved.directionCode, saved);
     }
-    await loadPrices({ render: true });
+    applyPrices(Array.from(currentByCode.values()));
+    await window.icubeApi.reload({ render: false });
+    state.page = 'settings';
+    legacy.render();
   } catch (error) { fail(error); }
 }
 
