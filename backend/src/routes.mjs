@@ -42,6 +42,7 @@ export function createApiRouter(pool, {
   router.delete('/children/:id', requirePermission('*'), run((request) => catalog.deleteChild(request.params.id), 204));
   router.post('/children/:id/enrollments', requirePermission('*'), run((request) => catalog.createEnrollment(request.params.id, request.body), 201));
   router.patch('/enrollments/:id', requirePermission('*'), run((request) => catalog.updateEnrollment(request.params.id, request.body)));
+  router.delete('/enrollments/:id', requirePermission('*'), run((request) => deletions.deleteEnrollment(request.params.id), 204));
 
   router.get('/payments', requirePermission('*'), run((request) => payments.list(request.query)));
   router.get('/payments/:id', requirePermission('*'), run((request) => payments.get(request.params.id)));

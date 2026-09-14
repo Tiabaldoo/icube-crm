@@ -15,6 +15,24 @@ function fakePool(handler) {
   };
 }
 
+const emptyEnrollmentDependencies = () => ({
+  payments: 0, refunds: 0, attendances: 0, balanceEntries: 0,
+  balanceLots: 0, balanceTransfers: 0, statusHistory: 0,
+});
+
+function enrollmentHandler({ ids = [10, 20], dependencies = emptyEnrollmentDependencies(), onSql = () => {} } = {}) {
+  return async (sql, params) => {
+    onSql(sql, params);
+    if (sql.startsWith('SELECT id,child_id FROM child_enrollments')) return [{ id: 10, child_id: 5 }];
+    if (sql.startsWith('SELECT id FROM child_enrollments WHERE child_id')) return ids.map((id) => ({ id }));
+    if (sql.includes('FROM payments WHERE enrollment_id')) return [dependencies];
+    if (sql.startsWith('DELETE FROM group_memberships')) return { affectedRows: 1 };
+    if (sql.startsWith('DELETE FROM price_versions')) return { affectedRows: 1 };
+    if (sql.startsWith('DELETE FROM child_enrollments')) return { affectedRows: 1 };
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+}
+
 test('удаляет физически пустую площадку', async () => {
   let deleted = false;
   const service = createDeletionService(fakePool(async (sql) => {
@@ -73,4 +91,73 @@ test('не удаляет группу при наличии бизнес-зав
     return true;
   });
   assert.equal(deleted, false);
+});
+
+test('пустой enrollment удаляется, если у ребёнка есть второе направление', async () => {
+  let deleted = false;
+  const service = createDeletionService(fakePool(enrollmentHandler({ onSql(sql) {
+    if (sql.startsWith('DELETE FROM child_enrollments')) deleted = true;
+  } })));
+  await service.deleteEnrollment(10);
+  assert.equal(deleted, true);
+});
+
+test('enrollment только с пустой group_membership удаляется вместе с membership', async () => {
+  let membershipDeleted = false;
+  let enrollmentDeleted = false;
+  const service = createDeletionService(fakePool(enrollmentHandler({ onSql(sql) {
+    if (sql.startsWith('DELETE FROM group_memberships')) membershipDeleted = true;
+    if (sql.startsWith('DELETE FROM child_enrollments')) {
+      assert.equal(membershipDeleted, true);
+      enrollmentDeleted = true;
+    }
+  } })));
+  await service.deleteEnrollment(10);
+  assert.equal(membershipDeleted, true);
+  assert.equal(enrollmentDeleted, true);
+});
+
+test('последнее направление ребёнка не удаляется', async () => {
+  let deleted = false;
+  const service = createDeletionService(fakePool(enrollmentHandler({ ids: [10], onSql(sql) {
+    if (sql.startsWith('DELETE FROM child_enrollments')) deleted = true;
+  } })));
+  await assert.rejects(() => service.deleteEnrollment(10), (error) => {
+    assert.equal(error.status, 409);
+    assert.equal(error.code, 'LAST_ENROLLMENT');
+    assert.match(error.message, /последнее направление/);
+    return true;
+  });
+  assert.equal(deleted, false);
+});
+
+test('enrollment с оплатой не удаляется', async () => {
+  const dependencies = { ...emptyEnrollmentDependencies(), payments: 1 };
+  const service = createDeletionService(fakePool(enrollmentHandler({ dependencies })));
+  await assert.rejects(() => service.deleteEnrollment(10), (error) => {
+    assert.equal(error.status, 409);
+    assert.equal(error.code, 'ENROLLMENT_HAS_HISTORY');
+    return true;
+  });
+});
+
+test('enrollment с посещением не удаляется', async () => {
+  const dependencies = { ...emptyEnrollmentDependencies(), attendances: 1 };
+  const service = createDeletionService(fakePool(enrollmentHandler({ dependencies })));
+  await assert.rejects(() => service.deleteEnrollment(10), (error) => {
+    assert.equal(error.status, 409);
+    assert.equal(error.code, 'ENROLLMENT_HAS_HISTORY');
+    return true;
+  });
+});
+
+test('удаление одного enrollment не затрагивает другое направление ребёнка', async () => {
+  const deletes = [];
+  const service = createDeletionService(fakePool(enrollmentHandler({ onSql(sql, params) {
+    if (sql.startsWith('DELETE')) deletes.push({ sql, params });
+  } })));
+  await service.deleteEnrollment(10);
+  const enrollmentDeletes = deletes.filter(({ sql }) => sql.startsWith('DELETE FROM child_enrollments'));
+  assert.deepEqual(enrollmentDeletes, [{ sql: 'DELETE FROM child_enrollments WHERE id=:id', params: { id: '10' } }]);
+  assert.equal(deletes.some(({ sql }) => sql.includes('child_id')), false);
 });
