@@ -5,6 +5,7 @@ import { createDeletionService } from './deletion.mjs';
 import { createMysqlPayments } from './payments.mjs';
 import { createDirectionPriceVersions } from './price-versions.mjs';
 import { createSalaryRateVersions } from './salary-rate-versions.mjs';
+import { createPartnerAgreementVersions } from './partner-agreement-versions.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -20,6 +21,7 @@ export function createApiRouter(pool, {
   payments = createMysqlPayments(pool),
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
+  partnerAgreementVersions = createPartnerAgreementVersions(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -68,6 +70,10 @@ export function createApiRouter(pool, {
   router.post('/salary-rate-versions', requirePermission('*'), run((request) => salaryRateVersions.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
+  router.get('/partner-agreement-versions', requirePermission('*'), run(() => partnerAgreementVersions.list()));
+  router.post('/partner-agreement-versions', requirePermission('*'), run((request) => partnerAgreementVersions.create(request.body, {
+    actorUserId: request.auth?.userId ?? null,
+  }), 201));
 
   for (const resource of ['lessons', 'refunds', 'notifications']) {
     const permission = resource === 'lessons' ? 'lessons:read' : '*';
@@ -75,10 +81,6 @@ export function createApiRouter(pool, {
     router.get(`/${resource}/:id`, requirePermission(permission), notImplemented(`${resource}/:id`));
     if (['lessons', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
     if (resource === 'lessons') router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
-  }
-  for (const resource of ['partner-agreement-versions']) {
-    router.get(`/${resource}`, requirePermission('*'), notImplemented(resource));
-    router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
   }
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
   router.post('/lessons/:id/start', requirePermission('lessons:start'), notImplemented('lessons/:id/start'));
