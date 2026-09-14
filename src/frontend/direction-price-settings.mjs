@@ -5,6 +5,12 @@ const api = new ApiClient();
 const state = legacy.state;
 const LEAVE_WARNING = 'Есть несохранённые изменения. Уйти без сохранения?';
 const SETTINGS_DESCRIPTION = 'Основные параметры работы CRM: цены, зарплаты и условия партнёрских проектов.';
+const PARTNER_SETUP_MESSAGE = 'Сначала настройте партнёра проекта «Зебра»';
+const DEFAULT_PARTNER_VALUES = {
+  taxPercent: '4.000',
+  icubePercent: '40.000',
+  partnerPercent: '60.000',
+};
 const salaryStateKeys = {
   regular_fixed: 'salaryFix',
   per_present_child: 'salaryChild',
@@ -14,6 +20,8 @@ const salaryStateKeys = {
 let currentByCode = new Map();
 let currentSalaryByKey = new Map();
 let currentPartnerAgreement = null;
+let currentPartnerValues = { ...DEFAULT_PARTNER_VALUES };
+let partnerSettingsAvailable = false;
 let baseline = null;
 let dirty = false;
 let settingsLoaded = false;
@@ -46,9 +54,15 @@ function applySalaryRates(items) {
 
 function applyPartnerAgreement(agreement) {
   currentPartnerAgreement = agreement;
-  if (agreement?.taxPercent != null) state.settings.tax = Number(agreement.taxPercent);
-  if (agreement?.icubePercent != null) state.settings.icubeShare = Number(agreement.icubePercent);
-  if (agreement?.partnerPercent != null) state.settings.partnerShare = Number(agreement.partnerPercent);
+  partnerSettingsAvailable = Boolean(agreement);
+  currentPartnerValues = agreement ? {
+    taxPercent: String(agreement.taxPercent),
+    icubePercent: String(agreement.icubePercent),
+    partnerPercent: String(agreement.partnerPercent),
+  } : { ...DEFAULT_PARTNER_VALUES };
+  state.settings.tax = Number(currentPartnerValues.taxPercent);
+  state.settings.icubeShare = Number(currentPartnerValues.icubePercent);
+  state.settings.partnerShare = Number(currentPartnerValues.partnerPercent);
 }
 
 function normalizeMoney(value) {
@@ -74,9 +88,9 @@ function serverValues() {
     per_present_child: normalizeMoney(currentSalaryByKey.get('per_present_child')?.value),
     intro_fixed: normalizeMoney(currentSalaryByKey.get('intro_fixed')?.value),
     empty_trip_fixed: normalizeMoney(currentSalaryByKey.get('empty_trip_fixed')?.value),
-    taxPercent: normalizePercent(currentPartnerAgreement?.taxPercent),
-    icubePercent: normalizePercent(currentPartnerAgreement?.icubePercent),
-    partnerPercent: normalizePercent(currentPartnerAgreement?.partnerPercent),
+    taxPercent: normalizePercent(currentPartnerValues.taxPercent),
+    icubePercent: normalizePercent(currentPartnerValues.icubePercent),
+    partnerPercent: normalizePercent(currentPartnerValues.partnerPercent),
   };
 }
 
@@ -147,9 +161,16 @@ function bindSettingsForm() {
   prepareInput(rowByLabel(salaryBlock, 'Ознакомительное занятие'), 'settings-salary-intro', currentSalaryByKey.get('intro_fixed')?.value);
   prepareInput(rowByLabel(salaryBlock, 'Пустой выезд'), 'settings-salary-empty', currentSalaryByKey.get('empty_trip_fixed')?.value);
 
-  prepareInput(rowByLabel(partnerBlock, 'Налог, %'), 'settings-partner-tax', currentPartnerAgreement?.taxPercent);
-  prepareInput(rowByLabel(partnerBlock, 'Доля iCube, %'), 'settings-partner-icube', currentPartnerAgreement?.icubePercent);
-  prepareInput(rowByLabel(partnerBlock, 'Доля партнёра, %'), 'settings-partner-share', currentPartnerAgreement?.partnerPercent);
+  prepareInput(rowByLabel(partnerBlock, 'Налог, %'), 'settings-partner-tax', currentPartnerValues.taxPercent);
+  prepareInput(rowByLabel(partnerBlock, 'Доля iCube, %'), 'settings-partner-icube', currentPartnerValues.icubePercent);
+  prepareInput(rowByLabel(partnerBlock, 'Доля партнёра, %'), 'settings-partner-share', currentPartnerValues.partnerPercent);
+  if (!partnerSettingsAvailable) {
+    const notice = document.createElement('div');
+    notice.className = 'notice';
+    notice.style.marginTop = '14px';
+    notice.textContent = PARTNER_SETUP_MESSAGE;
+    partnerBlock.appendChild(notice);
+  }
 
   const actions = document.createElement('div');
   actions.style.cssText = 'display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:16px 20px 20px';
@@ -180,22 +201,33 @@ function showSavedMessage() {
   savedMessageTimer = window.setTimeout(() => { status.hidden = true; }, 2500);
 }
 
+async function loadPartnerAgreement() {
+  try {
+    applyPartnerAgreement(await api.list('partner-agreement-versions'));
+  } catch (error) {
+    if (error instanceof ApiError && ['PARTNER_NOT_CONFIGURED', 'PARTNER_AGREEMENT_NOT_CONFIGURED'].includes(error.code)) {
+      applyPartnerAgreement(null);
+      console.warn(PARTNER_SETUP_MESSAGE);
+      return;
+    }
+    throw error;
+  }
+}
+
 async function refreshServerSettings() {
-  const [prices, salaryRates, partnerAgreement] = await Promise.all([
+  const [prices, salaryRates] = await Promise.all([
     api.list('price-versions'),
     api.list('salary-rate-versions'),
-    api.list('partner-agreement-versions'),
   ]);
   applyPrices(prices);
   applySalaryRates(salaryRates);
-  applyPartnerAgreement(partnerAgreement);
+  await loadPartnerAgreement();
 }
 
 async function saveSettings() {
   const robotics = findPrice('robotics', 'Робототехника');
   const programming = findPrice('programming', 'Программирование');
   if (!robotics || !programming) return window.alert('Не найдены направления в серверном справочнике');
-  if (!currentPartnerAgreement) return window.alert('Не найдены условия партнёрского проекта «Зебра»');
   const values = formValues();
   if (Object.values(values).some((value) => value == null)) return window.alert('Проверьте заполнение полей настроек');
 
@@ -216,16 +248,18 @@ async function saveSettings() {
       await api.create('salary-rate-versions', { key, value: values[key] });
     }
 
-    const partnerChanged = normalizePercent(currentPartnerAgreement.taxPercent) !== values.taxPercent
-      || normalizePercent(currentPartnerAgreement.icubePercent) !== values.icubePercent
-      || normalizePercent(currentPartnerAgreement.partnerPercent) !== values.partnerPercent;
-    if (partnerChanged) {
-      await api.create('partner-agreement-versions', {
-        projectCode: 'zebra',
-        taxPercent: values.taxPercent,
-        icubePercent: values.icubePercent,
-        partnerPercent: values.partnerPercent,
-      });
+    if (partnerSettingsAvailable && currentPartnerAgreement) {
+      const partnerChanged = normalizePercent(currentPartnerAgreement.taxPercent) !== values.taxPercent
+        || normalizePercent(currentPartnerAgreement.icubePercent) !== values.icubePercent
+        || normalizePercent(currentPartnerAgreement.partnerPercent) !== values.partnerPercent;
+      if (partnerChanged) {
+        await api.create('partner-agreement-versions', {
+          projectCode: 'zebra',
+          taxPercent: values.taxPercent,
+          icubePercent: values.icubePercent,
+          partnerPercent: values.partnerPercent,
+        });
+      }
     }
 
     await refreshServerSettings();
