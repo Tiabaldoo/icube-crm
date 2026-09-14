@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
 import { createMysqlCatalog } from './catalog.mjs';
+import { createDeletionService } from './deletion.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -10,7 +11,7 @@ const run = (handler, status = 200) => async (request, response, next) => {
   catch (error) { return next(error); }
 };
 
-export function createApiRouter(pool, { catalog = createMysqlCatalog(pool), allowUnauthenticated = false } = {}) {
+export function createApiRouter(pool, { catalog = createMysqlCatalog(pool), deletions = createDeletionService(pool), allowUnauthenticated = false } = {}) {
   const router = Router();
   router.get('/health', async (_request, response, next) => { try { await pool.query('SELECT 1'); response.json({ data: { status: 'ok' } }); } catch (error) { next(error); } });
   router.post('/auth/login', notImplemented('auth/login'));
@@ -29,6 +30,9 @@ export function createApiRouter(pool, { catalog = createMysqlCatalog(pool), allo
       router.patch(`/${resource}/:id`, requirePermission('*'), run((request) => catalog.update(resource, request.params.id, request.body)));
     }
   }
+  router.delete('/sites/:id', requirePermission('*'), run((request) => deletions.deleteSite(request.params.id), 204));
+  router.delete('/teachers/:id', requirePermission('*'), run((request) => deletions.deleteTeacher(request.params.id), 204));
+  router.delete('/groups/:id', requirePermission('*'), run((request) => deletions.deleteGroup(request.params.id), 204));
   router.delete('/children/:id', requirePermission('*'), run((request) => catalog.deleteChild(request.params.id), 204));
   router.post('/children/:id/enrollments', requirePermission('*'), run((request) => catalog.createEnrollment(request.params.id, request.body), 201));
   router.patch('/enrollments/:id', requirePermission('*'), run((request) => catalog.updateEnrollment(request.params.id, request.body)));
