@@ -3,6 +3,7 @@ import { after, before, test } from 'node:test';
 import express from 'express';
 import { createApiRouter } from '../backend/src/routes.mjs';
 import { ApiProblem } from '../backend/src/catalog.mjs';
+import { calculateLessonsCredit } from '../backend/src/payments.mjs';
 
 function memoryCatalog() {
   const data = {
@@ -42,10 +43,56 @@ function memoryCatalog() {
 }
 
 const catalog = memoryCatalog();
+function memoryPayments(catalogStore) {
+  let nextId = 1;
+  const records = [];
+  const balanceValues = new Map();
+  const prices = new Map();
+  const scaled = (value) => {
+    const [whole, fraction = ''] = String(value).split('.');
+    return BigInt(whole) * 100000000n + BigInt(fraction.padEnd(8, '0').slice(0, 8));
+  };
+  const decimal = (value) => `${value / 100000000n}.${String(value % 100000000n).padStart(8, '0')}`;
+  const change = (enrollmentId, delta) => balanceValues.set(Number(enrollmentId), decimal((scaled(balanceValues.get(Number(enrollmentId)) ?? '0.00000000') + scaled(delta))));
+  const findEnrollment = (rawId) => {
+    for (const child of catalogStore.data.children) {
+      const enrollment = child.enrollments.find((item) => item.id === Number(rawId));
+      if (enrollment) return { child, enrollment };
+    }
+    throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
+  };
+  const apiRecord = (record) => structuredClone(record);
+  return {
+    prices, balanceValues,
+    list: async (filters = {}) => records.filter((record) => !filters.childId || record.childId === String(filters.childId)).map(apiRecord),
+    get: async (rawId) => { const record = records.find((item) => item.id === String(rawId)); if (!record) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена'); return apiRecord(record); },
+    create: async (body) => {
+      const { child, enrollment } = findEnrollment(body.enrollmentId);
+      const priceSnapshot = prices.get(enrollment.id);
+      const record = { id: String(nextId++), enrollmentId: String(enrollment.id), childId: String(child.id), childName: child.name,
+        directionId: String(enrollment.directionId), directionName: enrollment.directionName, paidOn: body.paidOn, amount: String(body.amount),
+        priceSnapshot, lessonsCredit: calculateLessonsCredit(body.amount, priceSnapshot), method: body.method, groupId: enrollment.groupId == null ? null : String(enrollment.groupId), projectId: '1' };
+      records.push(record); change(enrollment.id, record.lessonsCredit); return apiRecord(record);
+    },
+    update: async (rawId, body) => {
+      const record = records.find((item) => item.id === String(rawId));
+      change(record.enrollmentId, `-${record.lessonsCredit}`);
+      const { child, enrollment } = findEnrollment(body.enrollmentId ?? record.enrollmentId);
+      const priceSnapshot = body.priceSnapshot ?? (String(enrollment.id) === record.enrollmentId ? record.priceSnapshot : prices.get(enrollment.id));
+      Object.assign(record, { enrollmentId: String(enrollment.id), childId: String(child.id), directionId: String(enrollment.directionId), directionName: enrollment.directionName,
+        paidOn: body.paidOn ?? record.paidOn, amount: String(body.amount ?? record.amount), priceSnapshot,
+        lessonsCredit: calculateLessonsCredit(body.amount ?? record.amount, priceSnapshot), method: body.method ?? record.method });
+      change(record.enrollmentId, record.lessonsCredit); return apiRecord(record);
+    },
+    remove: async (rawId) => { const index = records.findIndex((item) => item.id === String(rawId)); const [record] = records.splice(index, 1); change(record.enrollmentId, `-${record.lessonsCredit}`); },
+    balances: async () => [...balanceValues].map(([enrollmentId, balanceLessons]) => ({ enrollmentId: String(enrollmentId), balanceLessons })),
+  };
+}
+const paymentStore = memoryPayments(catalog);
 let server;
 let baseUrl;
 before(async () => {
-  const app = express(); app.use(express.json()); app.use('/api/v1', createApiRouter({ query: async () => [[]] }, { catalog, allowUnauthenticated: true }));
+  const app = express(); app.use(express.json()); app.use('/api/v1', createApiRouter({ query: async () => [[]] }, { catalog, payments: paymentStore, allowUnauthenticated: true }));
   app.use((error, _request, response, _next) => response.status(error.status ?? 500).json({ error: { code: error.code ?? 'INTERNAL_ERROR', message: error.message } }));
   await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   baseUrl = `http://127.0.0.1:${server.address().port}/api/v1`;
@@ -76,4 +123,46 @@ test('API блокирует физическое удаление ребёнк�
   assert.equal(result.response.status, 409);
   assert.equal(result.payload.error.code, 'CHILD_HAS_HISTORY');
   assert.ok(catalog.data.children.some((item) => item.id === child.id));
+});
+
+test('API оплат сохраняет снимки цены и независимые балансы', async (t) => {
+  catalog.data.directions.push({ id: 2, code: 'programming', name: 'Программирование', active: true });
+  const child = await request('/children', 'POST', { name: 'Финансовый Тест', status: 'active' });
+  const robotics = await request(`/children/${child.payload.data.id}/enrollments`, 'POST', { directionId: 1, status: 'active' });
+  const programming = await request(`/children/${child.payload.data.id}/enrollments`, 'POST', { directionId: 2, status: 'active' });
+  paymentStore.prices.set(robotics.payload.data.id, '1025.00');
+  paymentStore.prices.set(programming.payload.data.id, '900.00');
+  let firstPayment;
+
+  await t.test('4100 ₽ по 1025 ₽ дают ровно 4 занятия', async () => {
+    firstPayment = await request('/payments', 'POST', { enrollmentId: robotics.payload.data.id, paidOn: '2026-09-14', amount: '4100.00', method: 'cashless' });
+    assert.equal(firstPayment.payload.data.lessonsCredit, '4.00000000');
+    assert.equal(paymentStore.balanceValues.get(robotics.payload.data.id), '4.00000000');
+  });
+  await t.test('старая оплата сохраняет снимок после изменения текущей цены', async () => {
+    paymentStore.prices.set(robotics.payload.data.id, '820.00');
+    const reread = await request(`/payments/${firstPayment.payload.data.id}`);
+    assert.equal(reread.payload.data.priceSnapshot, '1025.00');
+    assert.equal(reread.payload.data.lessonsCredit, '4.00000000');
+  });
+  let secondPayment;
+  await t.test('новая оплата использует новую цену', async () => {
+    secondPayment = await request('/payments', 'POST', { enrollmentId: robotics.payload.data.id, paidOn: '2026-09-15', amount: '820.00', method: 'cash' });
+    assert.equal(secondPayment.payload.data.priceSnapshot, '820.00');
+    assert.equal(secondPayment.payload.data.lessonsCredit, '1.00000000');
+  });
+  await t.test('удаление полностью отменяет вклад оплаты', async () => {
+    assert.equal((await request(`/payments/${secondPayment.payload.data.id}`, 'DELETE')).response.status, 204);
+    assert.equal(paymentStore.balanceValues.get(robotics.payload.data.id), '4.00000000');
+  });
+  await t.test('редактирование не создаёт двойного начисления', async () => {
+    const edited = await request(`/payments/${firstPayment.payload.data.id}`, 'PATCH', { amount: '2050.00', priceSnapshot: '1025.00', paidOn: '2026-09-14', method: 'cashless' });
+    assert.equal(edited.payload.data.lessonsCredit, '2.00000000');
+    assert.equal(paymentStore.balanceValues.get(robotics.payload.data.id), '2.00000000');
+  });
+  await t.test('направления одного ребёнка имеют независимые балансы', async () => {
+    await request('/payments', 'POST', { enrollmentId: programming.payload.data.id, paidOn: '2026-09-16', amount: '900.00', method: 'cashless' });
+    assert.equal(paymentStore.balanceValues.get(robotics.payload.data.id), '2.00000000');
+    assert.equal(paymentStore.balanceValues.get(programming.payload.data.id), '1.00000000');
+  });
 });

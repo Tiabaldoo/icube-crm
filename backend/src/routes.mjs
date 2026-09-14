@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
 import { createMysqlCatalog } from './catalog.mjs';
 import { createDeletionService } from './deletion.mjs';
+import { createMysqlPayments } from './payments.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -11,7 +12,12 @@ const run = (handler, status = 200) => async (request, response, next) => {
   catch (error) { return next(error); }
 };
 
-export function createApiRouter(pool, { catalog = createMysqlCatalog(pool), deletions = createDeletionService(pool), allowUnauthenticated = false } = {}) {
+export function createApiRouter(pool, {
+  catalog = createMysqlCatalog(pool),
+  deletions = createDeletionService(pool),
+  payments = createMysqlPayments(pool),
+  allowUnauthenticated = false,
+} = {}) {
   const router = Router();
   router.get('/health', async (_request, response, next) => { try { await pool.query('SELECT 1'); response.json({ data: { status: 'ok' } }); } catch (error) { next(error); } });
   router.post('/auth/login', notImplemented('auth/login'));
@@ -37,11 +43,23 @@ export function createApiRouter(pool, { catalog = createMysqlCatalog(pool), dele
   router.post('/children/:id/enrollments', requirePermission('*'), run((request) => catalog.createEnrollment(request.params.id, request.body), 201));
   router.patch('/enrollments/:id', requirePermission('*'), run((request) => catalog.updateEnrollment(request.params.id, request.body)));
 
-  for (const resource of ['lessons', 'payments', 'refunds', 'balances', 'notifications']) {
+  router.get('/payments', requirePermission('*'), run((request) => payments.list(request.query)));
+  router.get('/payments/:id', requirePermission('*'), run((request) => payments.get(request.params.id)));
+  router.post('/payments', requirePermission('*'), run((request) => payments.create(request.body, {
+    actorUserId: request.auth?.userId ?? null,
+    idempotencyKey: request.get('Idempotency-Key') ?? null,
+  }), 201));
+  router.patch('/payments/:id', requirePermission('*'), run((request) => payments.update(request.params.id, request.body, {
+    actorUserId: request.auth?.userId ?? null,
+  })));
+  router.delete('/payments/:id', requirePermission('*'), run((request) => payments.remove(request.params.id), 204));
+  router.get('/balances', requirePermission('*'), run((request) => payments.balances(request.query)));
+
+  for (const resource of ['lessons', 'refunds', 'notifications']) {
     const permission = resource === 'lessons' ? 'lessons:read' : '*';
     router.get(`/${resource}`, requirePermission(permission), notImplemented(resource));
     router.get(`/${resource}/:id`, requirePermission(permission), notImplemented(`${resource}/:id`));
-    if (['lessons', 'payments', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
+    if (['lessons', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
     if (resource === 'lessons') router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
   }
   for (const resource of ['price-versions', 'salary-rate-versions', 'partner-agreement-versions']) {

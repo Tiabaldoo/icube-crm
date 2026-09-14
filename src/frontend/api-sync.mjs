@@ -18,6 +18,9 @@ function fail(error) {
   window.alert(message);
   console.error(error);
 }
+const paymentMethodLabel = { cashless: 'Безналичный расчёт', cash: 'Наличные' };
+const isoToRu = (date) => String(date ?? '').split('-').reverse().join('.');
+const html = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 
 function mapGroup(group) {
   return { id: Number(group.id), name: group.name, direction: group.directionName, siteId: Number(group.siteId), teacherId: Number(group.teacherId),
@@ -31,18 +34,26 @@ function mapChild(child) {
     note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
     enrollments: child.enrollments.map((enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
       direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId), status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
-      individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), balance: Number(enrollment.balanceLessons) })) };
+      individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
+      balance: Number(enrollment.balanceLessons) })) };
 }
 
 async function reload({ render = true } = {}) {
-  const [projects, directions, sites, teachers, groups, children] = await Promise.all([
-    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'),
+  const [projects, directions, sites, teachers, groups, children, payments] = await Promise.all([
+    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'),
   ]);
   directories = { projects, directions };
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
   legacy.state.teachers = teachers.map((teacher) => ({ ...teacher, id: Number(teacher.id), directions: teacher.directions.map((direction) => direction.name) }));
   legacy.state.groups = groups.map(mapGroup);
   legacy.state.children = children.map(mapChild);
+  legacy.state.payments = payments.map((payment) => ({
+    id: Number(payment.id), enrollmentId: Number(payment.enrollmentId), childId: Number(payment.childId),
+    direction: payment.directionName, amount: Number(payment.amount), price: Number(payment.priceSnapshot),
+    lessons: Number(payment.lessonsCredit), date: isoToRu(payment.paidOn), paidOn: payment.paidOn,
+    method: paymentMethodLabel[payment.method] ?? payment.method, methodCode: payment.method,
+    groupId: payment.groupId == null ? null : Number(payment.groupId), projectId: payment.projectId == null ? null : Number(payment.projectId),
+  }));
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
   if (render) legacy.render();
@@ -140,6 +151,82 @@ async function deleteChild(childId) {
   catch (error) { fail(error); }
 }
 
+function paymentEnrollment(childId, enrollmentId) {
+  return legacy.state.children.find((child) => child.id === Number(childId))?.enrollments.find((enrollment) => enrollment.id === Number(enrollmentId));
+}
+
+function paymentForm(childId, direction, paymentId) {
+  if (!legacy.state.children.length) return window.alert('Сначала создайте ребёнка.');
+  const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
+  const child = legacy.state.children.find((item) => item.id === Number(existing?.childId ?? childId)) ?? legacy.state.children[0];
+  const preferred = existing?.enrollmentId ?? child.enrollments.find((enrollment) => enrollment.direction === direction)?.id ?? child.enrollments[0]?.id ?? null;
+  const today = new Date();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  legacy.state.modal = `<h3>${existing ? 'Редактировать оплату' : 'Новая оплата'}</h3><div class="form-grid">
+    <div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="${html(existing?.paidOn ?? todayIso)}"></div>
+    <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'})">${legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Направление</label><select class="select" id="pf-enrollment" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})"></select></div>
+    <div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" min="0.01" step="0.01" value="${html(existing?.amount ?? '4100')}" oninput="icubeApi.updatePaymentCalc()"></div>
+    <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" ${existing ? '' : 'readonly'} oninput="icubeApi.updatePaymentCalc()"></div>
+    <div class="field"><label>Способ оплаты</label><select class="select" id="pf-method"><option value="cashless"${(existing?.methodCode ?? 'cashless') === 'cashless' ? ' selected' : ''}>Безналичный расчёт</option><option value="cash"${existing?.methodCode === 'cash' ? ' selected' : ''}>Наличные</option></select></div>
+    </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
+  legacy.render();
+  setTimeout(() => refreshPaymentDirections(existing?.id ?? null, preferred), 0);
+}
+
+function refreshPaymentDirections(paymentId, preferredEnrollmentId) {
+  const child = legacy.state.children.find((item) => item.id === Number(value('#pf-child')));
+  const select = element('#pf-enrollment');
+  if (!select) return;
+  select.innerHTML = (child?.enrollments ?? []).map((enrollment) => `<option value="${enrollment.id}"${enrollment.id === Number(preferredEnrollmentId) ? ' selected' : ''}>${html(enrollment.direction)}</option>`).join('');
+  if (!select.innerHTML) select.innerHTML = '<option value="">Нет направлений</option>';
+  updatePaymentPrice(paymentId);
+}
+
+function updatePaymentPrice(paymentId) {
+  const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
+  const enrollment = paymentEnrollment(value('#pf-child'), value('#pf-enrollment'));
+  const priceInput = element('#pf-price');
+  if (priceInput && (!existing || existing.enrollmentId !== enrollment?.id)) priceInput.value = enrollment ? String(enrollment.currentPrice ?? legacy.effectivePrice(enrollment) ?? '') : '';
+  updatePaymentCalc();
+}
+
+function updatePaymentCalc() {
+  const amount = Number(value('#pf-amount')); const price = Number(value('#pf-price')); const box = element('#pf-calc');
+  if (!box) return;
+  box.innerHTML = price > 0 && amount > 0
+    ? `Цена операции: <b>${html(price)} ₽</b> · будет начислено <b>${Number((amount / price).toFixed(8))} занятия</b>.`
+    : 'Укажите положительную сумму и цену занятия.';
+}
+
+async function savePayment(paymentId) {
+  try {
+    const body = { enrollmentId: value('#pf-enrollment'), paidOn: value('#pf-date'), amount: value('#pf-amount'), method: value('#pf-method') };
+    if (paymentId) body.priceSnapshot = value('#pf-price');
+    const saved = paymentId ? await api.update('payments', paymentId, body) : await api.create('payments', body);
+    await reload({ render: false });
+    legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'payments'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
+}
+
+function deletePaymentPrompt(paymentId) {
+  const payment = legacy.state.payments.find((item) => item.id === Number(paymentId));
+  if (!payment) return;
+  legacy.state.modal = `<h3>Удалить оплату?</h3><div class="notice">Оплата <b>${html(payment.amount)} ₽</b> будет удалена, а её вклад ${html(payment.lessons)} занятия полностью отменён.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubeApi.deletePayment(${payment.id})">Удалить</button></div>`;
+  legacy.render();
+}
+
+async function deletePayment(paymentId) {
+  const payment = legacy.state.payments.find((item) => item.id === Number(paymentId));
+  if (!payment) return;
+  try {
+    await api.delete('payments', paymentId); await reload({ render: false });
+    legacy.state.selectedChild = payment.childId; legacy.state.childTab = 'payments'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
+}
+const deleteChildPaymentPrompt = (_childId, paymentId) => deletePaymentPrompt(paymentId);
+const confirmDeleteChildPayment = (_childId, paymentId) => deletePayment(paymentId);
+
 function deleteChildPrompt(childId) {
   const child = legacy.state.children.find((item) => item.id === Number(childId));
   if (!child) return;
@@ -200,7 +287,9 @@ function installDeletionUi() {
   }
 }
 
-window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt, deleteDirectoryEntity, reload };
+window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
+  paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
+  deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
 window.saveGroupV111 = window.icubeApi.saveGroup;
@@ -209,6 +298,17 @@ window.saveManagedDirection = window.icubeApi.saveEnrollment;
 window.saveAddedDirectionV132 = window.icubeApi.addEnrollment;
 window.deleteChildPrompt = window.icubeApi.deleteChildPrompt;
 window.confirmDeleteChild = window.icubeApi.deleteChild;
+window.paymentForm = window.icubeApi.paymentForm;
+window.refreshPaymentDirections = window.icubeApi.refreshPaymentDirections;
+window.updatePaymentCalc = window.icubeApi.updatePaymentCalc;
+window.savePaymentV116 = window.icubeApi.savePayment;
+window.editPayment = (paymentId) => window.icubeApi.paymentForm(null, null, paymentId);
+window.deletePayment = window.icubeApi.deletePaymentPrompt;
+window.confirmDeletePayment = window.icubeApi.deletePayment;
+window.newChildPayment = (childId, direction) => window.icubeApi.paymentForm(childId, direction, null);
+window.editChildPayment = (_childId, paymentId) => window.icubeApi.paymentForm(null, null, paymentId);
+window.deleteChildPayment = window.icubeApi.deleteChildPaymentPrompt;
+window.confirmDeleteChildPayment = window.icubeApi.confirmDeleteChildPayment;
 
 installDeletionUi();
 reload().catch((error) => {
@@ -217,6 +317,7 @@ reload().catch((error) => {
   legacy.state.teachers = [];
   legacy.state.groups = [];
   legacy.state.children = [];
+  legacy.state.payments = [];
   legacy.state.selectedChild = null;
   legacy.state.selectedGroup = null;
   legacy.state.page = 'children';

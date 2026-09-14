@@ -49,3 +49,12 @@ test('initial migration содержит все критические сущн�
     assert.match(sql, new RegExp(`${column}\\s+DECIMAL\\(16,8\\)`), `${column} должен иметь точность DECIMAL(16,8)`);
   }
 });
+
+test('payment migration добавляет ledger-инвариант и базовые цены без destructive reset', async () => {
+  const sql = await readFile(new URL('../database/migrations/003_payments_balance.sql', import.meta.url), 'utf8');
+  assert.match(sql, /MODIFY created_by_user_id BIGINT UNSIGNED NULL/);
+  assert.match(sql, /UNIQUE KEY uq_balance_entries_payment \(payment_id\)/);
+  assert.match(sql, /1025\.00/);
+  assert.match(sql, /900\.00/);
+  assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
+});
