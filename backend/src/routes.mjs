@@ -3,6 +3,7 @@ import { authenticate, requirePermission } from './auth.mjs';
 import { createMysqlCatalog } from './catalog.mjs';
 import { createDeletionService } from './deletion.mjs';
 import { createMysqlPayments } from './payments.mjs';
+import { createDirectionPriceVersions } from './price-versions.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -16,6 +17,7 @@ export function createApiRouter(pool, {
   catalog = createMysqlCatalog(pool),
   deletions = createDeletionService(pool),
   payments = createMysqlPayments(pool),
+  priceVersions = createDirectionPriceVersions(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -56,6 +58,11 @@ export function createApiRouter(pool, {
   router.delete('/payments/:id', requirePermission('*'), run((request) => payments.remove(request.params.id), 204));
   router.get('/balances', requirePermission('*'), run((request) => payments.balances(request.query)));
 
+  router.get('/price-versions', requirePermission('*'), run(() => priceVersions.list()));
+  router.post('/price-versions', requirePermission('*'), run((request) => priceVersions.create(request.body, {
+    actorUserId: request.auth?.userId ?? null,
+  }), 201));
+
   for (const resource of ['lessons', 'refunds', 'notifications']) {
     const permission = resource === 'lessons' ? 'lessons:read' : '*';
     router.get(`/${resource}`, requirePermission(permission), notImplemented(resource));
@@ -63,7 +70,7 @@ export function createApiRouter(pool, {
     if (['lessons', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
     if (resource === 'lessons') router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
   }
-  for (const resource of ['price-versions', 'salary-rate-versions', 'partner-agreement-versions']) {
+  for (const resource of ['salary-rate-versions', 'partner-agreement-versions']) {
     router.get(`/${resource}`, requirePermission('*'), notImplemented(resource));
     router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
   }
