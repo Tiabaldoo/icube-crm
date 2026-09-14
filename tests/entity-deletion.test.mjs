@@ -51,6 +51,7 @@ test('удаляет группу, если из связей есть толь�
   let groupDeleted = false;
   const service = createDeletionService(fakePool(async (sql) => {
     if (sql.startsWith('SELECT id FROM study_groups')) return [{ id: 10 }];
+    if (sql.startsWith('DELETE l FROM lessons')) return { affectedRows: 0 };
     if (sql.includes('FROM group_memberships WHERE group_id')) return [{
       memberships: 0, lessons: 0, attendances: 0,
       childStatusHistory: 0, enrollmentStatusHistory: 0, payments: 0, refunds: 0,
@@ -76,6 +77,7 @@ test('не удаляет группу при наличии бизнес-зав
   let deleted = false;
   const service = createDeletionService(fakePool(async (sql) => {
     if (sql.startsWith('SELECT id FROM study_groups')) return [{ id: 11 }];
+    if (sql.startsWith('DELETE l FROM lessons')) return { affectedRows: 0 };
     if (sql.includes('FROM group_memberships WHERE group_id')) return [{
       memberships: 1, lessons: 0, attendances: 0,
       childStatusHistory: 0, enrollmentStatusHistory: 0, payments: 0, refunds: 0,
@@ -91,6 +93,45 @@ test('не удаляет группу при наличии бизнес-зав
     return true;
   });
   assert.equal(deleted, false);
+});
+
+test('безопасные будущие materialized lessons не блокируют удаление пустой группы', async () => {
+  const order = [];
+  const service = createDeletionService(fakePool(async (sql) => {
+    if (sql.startsWith('SELECT id FROM study_groups')) return [{ id: 12 }];
+    if (sql.startsWith('DELETE l FROM lessons')) {
+      assert.match(sql, /l\.status='scheduled'/);
+      assert.match(sql, /l\.scheduled_starts_at>NOW\(6\)/);
+      assert.match(sql, /l\.lock_version=1/);
+      assert.match(sql, /NOT EXISTS \(SELECT 1 FROM attendances/);
+      order.push('lessons'); return { affectedRows: 3 };
+    }
+    if (sql.includes('FROM group_memberships WHERE group_id')) return [{
+      memberships: 0, lessons: 0, attendances: 0,
+      childStatusHistory: 0, enrollmentStatusHistory: 0, payments: 0, refunds: 0,
+    }];
+    if (sql.startsWith('DELETE FROM price_versions')) { order.push('prices'); return { affectedRows: 1 }; }
+    if (sql.startsWith('DELETE FROM study_groups')) { order.push('group'); return { affectedRows: 1 }; }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  }));
+  await service.deleteGroup(12);
+  assert.deepEqual(order, ['lessons', 'prices', 'group']);
+});
+
+test('проведённое занятие остаётся реальной историей и блокирует удаление группы', async () => {
+  let groupDeleted = false;
+  const service = createDeletionService(fakePool(async (sql) => {
+    if (sql.startsWith('SELECT id FROM study_groups')) return [{ id: 13 }];
+    if (sql.startsWith('DELETE l FROM lessons')) return { affectedRows: 0 };
+    if (sql.includes('FROM group_memberships WHERE group_id')) return [{
+      memberships: 0, lessons: 1, attendances: 1,
+      childStatusHistory: 0, enrollmentStatusHistory: 0, payments: 0, refunds: 0,
+    }];
+    if (sql.startsWith('DELETE FROM study_groups')) { groupDeleted = true; return { affectedRows: 1 }; }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  }));
+  await assert.rejects(() => service.deleteGroup(13), (error) => error.code === 'GROUP_HAS_DEPENDENCIES');
+  assert.equal(groupDeleted, false);
 });
 
 test('пустой enrollment удаляется, если у ребёнка есть второе направление', async () => {

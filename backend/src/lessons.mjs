@@ -178,7 +178,8 @@ export function createMysqlLessons(pool) {
     try {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId); const actorTeacherId = await assertAccess(connection, lesson, context);
-        if (lesson.status === 'completed' || lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Завершённое или отменённое занятие нельзя изменить этим маршрутом');
+        if (lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя изменить этим маршрутом');
+        if (lesson.status === 'completed' && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Проведённое занятие может перенести только директор');
         if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только директор');
         const date = body.date === undefined ? isoDate(lesson.starts_at) : dateOnly(body.date);
         const start = body.startTime === undefined ? timeOnly(lesson.starts_at) : timeOnly(body.startTime, 'startTime');
@@ -188,6 +189,9 @@ export function createMysqlLessons(pool) {
         if (teacherId != null) {
           const [teachers] = await connection.query('SELECT id FROM teachers WHERE id=:id AND deleted_at IS NULL', { id: teacherId });
           if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Преподаватель не найден');
+        }
+        if (lesson.status === 'completed' && String(teacherId ?? '') !== String(lesson.actual_teacher_id ?? '')) {
+          throw new ApiProblem(409, 'COMPLETED_TEACHER_LOCKED', 'При переносе проведённого занятия нельзя менять фактического преподавателя');
         }
         await connection.query(`UPDATE lessons SET starts_at=CONCAT(:date,' ',:start,':00'),ends_at=CONCAT(:date,' ',:end,':00'),
           actual_teacher_id=:teacherId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
@@ -350,7 +354,7 @@ export function createMysqlLessons(pool) {
         const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
         if (!rows.length) throw new ApiProblem(409, 'ATTENDANCE_NOT_FOUND', 'Строка посещения не создана');
         const attendance = rows[0]; const present = bool(body.present); const trial = body.trial === undefined ? bool(attendance.is_trial) : bool(body.trial);
-        if (bool(attendance.present) === present && bool(attendance.is_trial) === trial && String(attendance.enrollment_id) === String(enrollment.id)) return;
+        if (attendance.marked_at != null && bool(attendance.present) === present && bool(attendance.is_trial) === trial && String(attendance.enrollment_id) === String(enrollment.id)) return;
         if (lesson.status === 'completed') await reverseAttendanceDebit(connection, attendance, context);
         await connection.query(`UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=:type,present=:present,is_trial=:trial,
           marked_by_user_id=:actorId,marked_at=NOW(6),price_snapshot=IF(:present AND NOT :trial,price_snapshot,NULL),charged_lessons=0 WHERE id=:id`, {
@@ -378,6 +382,9 @@ export function createMysqlLessons(pool) {
         if (bool(lesson.is_empty_trip)) {
           await connection.query('UPDATE attendances SET present=FALSE,charged_lessons=0 WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         } else {
+          if (!attendances.some((attendance) => attendance.marked_at != null)) {
+            throw new ApiProblem(409, 'ATTENDANCE_REQUIRED', 'Отметьте посещаемость хотя бы одного ребёнка или отмените занятие');
+          }
           for (const attendance of attendances) {
             if (!bool(attendance.present) || bool(attendance.is_trial)) continue;
             const enrollment = await enrollmentForAttendance(connection, lesson, attendance.child_id);
@@ -465,6 +472,43 @@ export function createMysqlLessons(pool) {
         } else {
           await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
+          const [quickChildren] = await connection.query(`SELECT id,full_name FROM children
+            WHERE id=:childId AND needs_director_review=TRUE AND created_from_lesson_id=:lessonId FOR UPDATE`, {
+            childId, lessonId: lesson.id,
+          });
+          if (quickChildren.length) {
+            const [enrollments] = await connection.query('SELECT id FROM child_enrollments WHERE child_id=:childId FOR UPDATE', { childId });
+            const [historyRows] = await connection.query(`SELECT
+              (SELECT COUNT(*) FROM payments WHERE child_id=:childId) payments,
+              (SELECT COUNT(*) FROM refunds WHERE child_id=:childId) refunds,
+              (SELECT COUNT(*) FROM attendances WHERE child_id=:childId) attendances,
+              (SELECT COUNT(*) FROM lesson_roster_members WHERE child_id=:childId) roster,
+              (SELECT COUNT(*) FROM lesson_photos WHERE child_id=:childId) photos,
+              (SELECT COUNT(*) FROM group_memberships gm JOIN child_enrollments e ON e.id=gm.enrollment_id WHERE e.child_id=:childId) memberships,
+              (SELECT COUNT(*) FROM balance_entries be JOIN child_enrollments e ON e.id=be.enrollment_id WHERE e.child_id=:childId) balanceEntries,
+              (SELECT COUNT(*) FROM balance_lots bl JOIN child_enrollments e ON e.id=bl.enrollment_id WHERE e.child_id=:childId) balanceLots,
+              (SELECT COUNT(*) FROM balance_transfers bt JOIN child_enrollments e ON e.id IN (bt.source_enrollment_id,bt.target_enrollment_id) WHERE e.child_id=:childId) balanceTransfers,
+              (SELECT COUNT(*) FROM child_enrollments WHERE child_id=:childId AND balance_lessons<>0) nonzeroBalances,
+              (SELECT COUNT(*) FROM enrollment_status_history esh JOIN child_enrollments e ON e.id=esh.enrollment_id WHERE e.child_id=:childId) enrollmentHistory,
+              (SELECT COUNT(*) FROM child_status_history WHERE child_id=:childId) childHistory,
+              (SELECT COUNT(*) FROM child_user_accounts WHERE child_id=:childId) userAccounts,
+              (SELECT COUNT(*) FROM price_versions pv JOIN child_enrollments e ON e.id=pv.enrollment_id WHERE e.child_id=:childId) priceHistory`, { childId });
+            if (enrollments.length === 1 && !Object.values(historyRows[0] ?? {}).some((value) => Number(value) > 0)) {
+              const [guardians] = await connection.query('SELECT guardian_id FROM child_guardians WHERE child_id=:childId', { childId });
+              await connection.query(`INSERT INTO notifications
+                (role_code,notification_type,title,body,entity_type,entity_id)
+                VALUES ('director','quick_child_deleted','Преподаватель удалил нового ребёнка',:body,'lesson',:lessonId)`, {
+                lessonId: lesson.id, body: `${quickChildren[0].full_name} был создан преподавателем и удалён из занятия до подтверждения директором.`,
+              });
+              await connection.query('DELETE FROM child_guardians WHERE child_id=:childId', { childId });
+              await connection.query('DELETE FROM child_enrollments WHERE child_id=:childId', { childId });
+              await connection.query('DELETE FROM children WHERE id=:childId', { childId });
+              for (const guardian of guardians) {
+                await connection.query(`DELETE g FROM guardians g LEFT JOIN child_guardians cg ON cg.guardian_id=g.id
+                  WHERE g.id=:id AND cg.guardian_id IS NULL AND g.user_id IS NULL`, { id: guardian.guardian_id });
+              }
+            }
+          }
         }
       });
       return get(lessonId, context);
@@ -517,5 +561,17 @@ export function createMysqlLessons(pool) {
       startsAt: isoDateTime(row.starts_at), groupName: row.group_name }));
   }
 
-  return { list, get, create, update, start, putAttendance, finish, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals };
+  async function notifications(context = {}) {
+    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Уведомления директора недоступны');
+    const [rows] = await pool.query(`SELECT id,notification_type,title,body,entity_type,entity_id,created_at
+      FROM notifications WHERE role_code='director' AND dismissed_at IS NULL
+      ORDER BY created_at DESC,id DESC LIMIT 50`);
+    return rows.map((row) => ({
+      id: String(row.id), type: row.notification_type, title: row.title, body: row.body,
+      entityType: row.entity_type, entityId: row.entity_id == null ? null : String(row.entity_id),
+      createdAt: isoDateTime(row.created_at),
+    }));
+  }
+
+  return { list, get, create, update, start, putAttendance, finish, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
 }

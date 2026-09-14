@@ -3,11 +3,13 @@ import { ApiClient, ApiError } from '../data/api-client.mjs';
 const legacy = window.icubeLegacy;
 const api = new ApiClient();
 const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
+const dayShortNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const childStatusFromApi = { lead: 'Лид', active: 'Активный', paused: 'Пауза', finished: 'Закончил', archived: 'Закончил' };
 const childStatusToApi = { 'Лид': 'lead', 'Активный': 'active', 'Пауза': 'paused', 'Закончил': 'finished' };
 const enrollmentStatusFromApi = { active: 'Активный', paused: 'Пауза', finished: 'Закончил' };
 const enrollmentStatusToApi = { 'Активный': 'active', 'Пауза': 'paused', 'Закончил': 'finished' };
 let directories = { projects: [], directions: [] };
+let groupSavePending = false;
 
 function element(selector) { return document.querySelector(selector); }
 function value(selector) { return element(selector)?.value ?? ''; }
@@ -63,8 +65,8 @@ function mapLesson(lesson) {
 }
 
 async function reload({ render = true } = {}) {
-  const [projects, directions, sites, teachers, groups, children, payments, lessons] = await Promise.all([
-    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('lessons'),
+  const [projects, directions, sites, teachers, groups, children, payments, lessons, notifications] = await Promise.all([
+    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('lessons'), api.list('notifications').catch(() => []),
   ]);
   directories = { projects, directions };
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
@@ -80,6 +82,7 @@ async function reload({ render = true } = {}) {
   }));
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
+  legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
   if (render) legacy.render();
@@ -110,6 +113,10 @@ async function saveTeacher(resourceId, returnToGroup) {
 }
 
 async function saveGroup(resourceId) {
+  if (groupSavePending) return;
+  const submit = element('#gf-submit');
+  groupSavePending = true;
+  if (submit) submit.disabled = true;
   try {
     const direction = byName(directories.directions, value('#gf-dir'));
     const project = byName(directories.projects, value('#gf-project'));
@@ -118,13 +125,18 @@ async function saveGroup(resourceId) {
     if (!startsOn) return window.alert('Укажите дату начала группы.');
     if (!isActive && !endsOn) return window.alert('Для неактивной группы укажите дату окончания.');
     const startTime = value('#gf-start'); const directionLabel = direction.name === 'Программирование' ? 'Программирование' : 'Роботы';
-    const body = { name: `${directionLabel} · ${dayNames[dayNames.indexOf(value('#gf-day'))].slice(0, 2)} ${startTime}`,
+    const weekday = dayNames.indexOf(value('#gf-day'));
+    const body = { name: `${directionLabel} · ${dayShortNames[weekday]} ${startTime}`,
       directionId: direction.id, siteId: Number(value('#gf-site')), projectId: project.id, teacherId: Number(value('#gf-teacher')),
-      weekday: dayNames.indexOf(value('#gf-day')) + 1, startTime, endTime: value('#gf-end'), startsOn, endsOn: isActive ? null : endsOn,
+      weekday: weekday + 1, startTime, endTime: value('#gf-end'), startsOn, endsOn: isActive ? null : endsOn,
       active: isActive, price: value('#gf-price') === '' ? null : Number(value('#gf-price')) };
     const saved = resourceId ? await api.update('groups', resourceId, body) : await api.create('groups', body);
     legacy.state.selectedGroup = saved.id; legacy.state.modal = null; legacy.state.page = 'group'; await reload();
   } catch (error) { fail(error); }
+  finally {
+    groupSavePending = false;
+    if (submit?.isConnected !== false) submit.disabled = false;
+  }
 }
 
 async function saveChild(resourceId) {
@@ -255,6 +267,10 @@ const ruToIso = (date) => String(date ?? '').split('.').reverse().join('-');
 function currentLesson() { return legacy.state.lessons.find((lesson) => lesson.id === Number(legacy.state.selectedLesson)); }
 async function reloadLesson(lessonId, page = legacy.state.page) {
   await reload({ render: false });
+  if (!legacy.state.lessons.some((lesson) => lesson.id === Number(lessonId))) {
+    const lesson = await api.get('lessons', lessonId);
+    legacy.state.lessons.push(mapLesson(lesson));
+  }
   legacy.state.selectedLesson = Number(lessonId); legacy.state.page = page; legacy.state.modal = null; legacy.render();
 }
 async function lessonCommand(path, body, page = legacy.state.page) {
@@ -328,6 +344,13 @@ async function saveQuickChildApi() {
   if (!name) return window.alert('Укажите фамилию и имя ребёнка.');
   try { await api.request(`/lessons/${lesson.id}/quick-child`, { method: 'POST', body: { name, phone: phone || null } }); await reloadLesson(lesson.id, 'teacherLesson'); }
   catch (error) { fail(error); }
+}
+
+async function confirmTeacherCreatedChildApi(childId) {
+  try {
+    await api.update('children', childId, { needsDirectorReview: false });
+    legacy.state.selectedChild = Number(childId); legacy.state.page = 'child'; await reload();
+  } catch (error) { fail(error); }
 }
 
 async function finishLessonApi() {
@@ -446,11 +469,56 @@ function installDeletionUi() {
   }
 }
 
+function installPersistentCalendarBridge() {
+  const generatedEvents = window.sharedCalendarEvents;
+  if (typeof generatedEvents !== 'function') return;
+  const parseRuDate = (value) => {
+    const [day, month, year] = String(value ?? '').split('.').map(Number);
+    return new Date(year, (month || 1) - 1, day || 1);
+  };
+  const timeStart = (value) => String(value ?? '').split('–')[0];
+  window.sharedCalendarEvents = function (startDate, endDate, teacherId) {
+    const events = generatedEvents.apply(this, arguments);
+    const start = new Date(startDate); const end = new Date(endDate);
+    for (const lesson of legacy.state.lessons ?? []) {
+      const actual = parseRuDate(lesson.date);
+      if (actual < start || actual > end) continue;
+      if (teacherId && Number(lesson.teacherId) !== Number(teacherId)) continue;
+      const group = legacy.state.groups.find((item) => item.id === Number(lesson.groupId));
+      if (!group) continue;
+      const persisted = {
+        key: lesson.occurrenceKey, groupId: lesson.groupId, project: group.project, teacherId: lesson.teacherId,
+        scheduledDate: lesson.scheduledDate, scheduledTime: lesson.scheduledTime, date: lesson.date, time: lesson.time,
+        lesson, cancelled: lesson.cancelled, moved: lesson.moved, done: lesson.done,
+      };
+      const existing = events.findIndex((event) => event.lesson && Number(event.lesson.id) === Number(lesson.id));
+      if (existing >= 0) events[existing] = persisted;
+      else events.push(persisted);
+    }
+    return events.sort((left, right) => parseRuDate(left.date) - parseRuDate(right.date) || timeStart(left.time).localeCompare(timeStart(right.time)));
+  };
+}
+
+function installPersistentNotificationUi() {
+  const dashboard = window.dashboard;
+  if (typeof dashboard !== 'function') return;
+  window.dashboard = function (...args) {
+    const base = dashboard.apply(this, args);
+    const notifications = (legacy.state.notifications ?? []).filter((item) => item.type === 'quick_child_deleted');
+    if (legacy.state.role !== 'director' || !notifications.length) return base;
+    const rows = notifications.map((item) => `<div class="kpi-line"><div><b>${html(item.title)}</b><div class="muted mini">${html(item.body)}</div></div></div>`).join('');
+    const block = `<div class="card pad" style="margin-bottom:16px;border-color:#fedf89;background:#fffdf5"><div class="section-title"><div><h2>Изменения преподавателей</h2><div class="muted mini">Сохранено на сервере</div></div><span class="badge amber">${notifications.length}</span></div>${rows}</div>`;
+    const headEnd = base.indexOf('</div>') + 6;
+    return headEnd > 5 ? `${base.slice(0, headEnd)}${block}${base.slice(headEnd)}` : `${block}${base}`;
+  };
+}
+
 window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload,
   openCalendarEvent, startLesson: startLessonApi, attend: attendApi, toggleExtraAttendance: toggleExtraAttendanceApi,
   toggleTrial: toggleTrialApi, addExtra: addExtraApi, removeExtra: removeExtraApi, saveQuickChild: saveQuickChildApi,
+  confirmTeacherCreatedChild: confirmTeacherCreatedChildApi,
   finishLesson: finishLessonApi, confirmFinishLesson: confirmFinishLessonApi, saveLessonEdit: saveLessonEditApi,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
@@ -482,6 +550,7 @@ window.addExtra = window.icubeApi.addExtra;
 window.removeExtraFromLessonV138 = window.icubeApi.removeExtra;
 window.saveTeacherQuickChild = window.icubeApi.saveQuickChild;
 window.saveTeacherQuickChildV121 = window.icubeApi.saveQuickChild;
+window.confirmTeacherCreatedChild = window.icubeApi.confirmTeacherCreatedChild;
 window.finishLesson = window.icubeApi.finishLesson;
 window.confirmFinish = window.icubeApi.confirmFinishLesson;
 window.saveLessonEdit = window.icubeApi.saveLessonEdit;
@@ -490,6 +559,8 @@ window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;
 window.salaryCalculation = window.icubeApi.salaryCalculation;
 
 installDeletionUi();
+installPersistentCalendarBridge();
+installPersistentNotificationUi();
 reload().catch((error) => {
   console.error('Первичная загрузка CRM API не выполнена', error);
   legacy.state.sites = [];

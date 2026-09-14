@@ -115,12 +115,117 @@ test('фактические save handlers подключены к API namespace
       openUnifiedCalendarEvent: 'openCalendarEvent', startLesson: 'startLesson', attend: 'attend',
       toggleExtraAttendanceV138: 'toggleExtraAttendance', toggleVisitTrialV121: 'toggleTrial',
       addExtra: 'addExtra', removeExtraFromLessonV138: 'removeExtra', saveTeacherQuickChildV121: 'saveQuickChild',
+      confirmTeacherCreatedChild: 'confirmTeacherCreatedChild',
       finishLesson: 'finishLesson', confirmFinish: 'confirmFinishLesson', saveLessonEdit: 'saveLessonEdit',
       lToggle: 'lessonToggle', confirmDeleteVisitV121: 'deleteVisit', salaryCalculation: 'salaryCalculation',
     };
     for (const [legacyName, apiName] of Object.entries(aliases)) {
       assert.equal(globalThis.window[legacyName], globalThis.window.icubeApi[apiName], `${legacyName} остался legacy handler`);
     }
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('сохранение группы защищено от двойного submit и использует явное короткое название дня', async () => {
+  const [apiSyncSource, uiSource] = await Promise.all([
+    readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(apiSyncSource, /\['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'\]/);
+  for (const [full, short] of [['Понедельник', 'Пн'], ['Вторник', 'Вт'], ['Среда', 'Ср'], ['Четверг', 'Чт'], ['Пятница', 'Пт'], ['Суббота', 'Сб'], ['Воскресенье', 'Вс']]) {
+    assert.match(uiSource, new RegExp(`'${full}':'${short}'`));
+  }
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const values = {
+    '#gf-dir': 'Робототехника', '#gf-project': 'iCubeRobots', '#gf-start-date': '2026-09-14', '#gf-active': 'true',
+    '#gf-end-date': '', '#gf-start': '10:00', '#gf-end': '11:00', '#gf-site': '2', '#gf-teacher': '3', '#gf-price': '', '#gf-day': 'Вторник',
+  };
+  const submit = { disabled: false, isConnected: true };
+  const resources = {
+    projects: [{ id: '1', code: 'icube', name: 'iCubeRobots', active: true }],
+    directions: [{ id: '1', code: 'robotics', name: 'Робототехника', active: true }],
+    sites: [], teachers: [], groups: [], children: [], payments: [], lessons: [], notifications: [],
+  };
+  let releasePost;
+  const postGate = new Promise((resolve) => { releasePost = resolve; });
+  let postCount = 0;
+  let postedBody;
+  globalThis.window = { icubeLegacy: { state: { sites: [], teachers: [], groups: [], children: [], payments: [], lessons: [] }, render() {} }, alert() {}, sharedCalendarEvents() { return []; } };
+  globalThis.document = { querySelector(selector) { if (selector === '#gf-submit') return submit; return selector in values ? { value: values[selector] } : null; } };
+  globalThis.fetch = async (url, options = {}) => {
+    const resource = String(url).split('/').pop().split('?')[0];
+    if (options.method === 'POST' && resource === 'groups') {
+      postCount += 1;
+      postedBody = JSON.parse(options.body);
+      await postGate;
+      const saved = { id: '9', ...postedBody, directionName: 'Робототехника', siteName: 'Площадка', projectName: 'iCubeRobots', teacherName: 'Преподаватель', price: null };
+      resources.groups = [saved];
+      return { ok: true, status: 201, async json() { return { data: saved }; } };
+    }
+    return { ok: true, status: 200, async json() { return { data: resources[resource] ?? [] }; } };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?double-submit=${Date.now()}`);
+    await globalThis.window.icubeApi.reload();
+    const first = globalThis.window.icubeApi.saveGroup(null);
+    const second = globalThis.window.icubeApi.saveGroup(null);
+    await Promise.resolve();
+    assert.equal(postCount, 1);
+    assert.equal(submit.disabled, true);
+    releasePost();
+    await Promise.all([first, second]);
+    assert.equal(postedBody.name, 'Роботы · Вт 10:00');
+    assert.equal(submit.disabled, false);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('серверные прошлые и перенесённые проведённые занятия остаются видимыми и открываются', async () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const group = { id: '4', name: 'Роботы · Пн 10:00', directionId: '1', directionName: 'Робототехника', siteId: '2', siteName: 'Площадка', projectId: '1', projectName: 'iCubeRobots', teacherId: '3', teacherName: 'Преподаватель', weekday: 5, startTime: '18:00', endTime: '19:00', startsOn: '2026-01-01', endsOn: null, active: true, price: null };
+  const lesson = (id, scheduled, actual, status) => ({
+    id: String(id), groupId: '4', directionId: '1', projectId: '1', siteId: '2', plannedTeacherId: '3', actualTeacherId: '3',
+    scheduledStartsAt: `${scheduled}:00Z`, scheduledEndsAt: `${scheduled.slice(0, 11)}11:00:00Z`, startsAt: `${actual}:00Z`, endsAt: `${actual.slice(0, 11)}19:00:00Z`,
+    status, topic: null, introGroup: false, emptyTrip: false, rosterFrozenAt: status === 'completed' ? `${scheduled}:00Z` : null,
+    attendanceAppliedAt: status === 'completed' ? `${actual.slice(0, 11)}19:00:00Z` : null, roster: [], attendances: [],
+  });
+  const resources = {
+    projects: [{ id: '1', code: 'icube', name: 'iCubeRobots', active: true }], directions: [{ id: '1', code: 'robotics', name: 'Робототехника', active: true }],
+    sites: [], teachers: [], groups: [group], children: [], payments: [], notifications: [],
+    lessons: [lesson(50, '2026-09-14T10:00', '2026-09-18T18:00', 'completed'), lesson(51, '2026-08-10T10:00', '2026-08-10T10:00', 'scheduled')],
+  };
+  globalThis.window = { icubeLegacy: { state: { sites: [], teachers: [], groups: [], children: [], payments: [], lessons: [] }, render() {} }, alert() {}, sharedCalendarEvents() { return []; } };
+  globalThis.document = { querySelector() { return null; } };
+  globalThis.fetch = async (url) => {
+    const resource = String(url).split('/').pop().split('?')[0];
+    return { ok: true, status: 200, async json() { return { data: resources[resource] ?? [] }; } };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?calendar-history=${Date.now()}`);
+    await globalThis.window.icubeApi.reload();
+    const events = globalThis.window.sharedCalendarEvents(new Date(2026, 7, 1), new Date(2026, 8, 30), null);
+    const moved = events.find((event) => event.lesson?.id === 50);
+    assert.equal(moved.done, true);
+    assert.equal(moved.date, '18.09.2026');
+    assert.equal(events.some((event) => event.lesson?.id === 51), true);
+    await globalThis.window.icubeApi.openCalendarEvent('4|14.09.2026', 'director');
+    assert.equal(globalThis.window.icubeLegacy.state.selectedLesson, 50);
+    assert.equal(globalThis.window.icubeLegacy.state.page, 'lesson');
+    await globalThis.window.icubeApi.openCalendarEvent('4|10.08.2026', 'teacher');
+    assert.equal(globalThis.window.icubeLegacy.state.selectedLesson, 51);
+    assert.equal(globalThis.window.icubeLegacy.state.page, 'teacherLesson');
+    const uiSource = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+    assert.match(uiSource, /if\(e\.done\) return '<span class="badge green">Проведено<\/span>';\s*if\(e\.moved\)/);
   } finally {
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;

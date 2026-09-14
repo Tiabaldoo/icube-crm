@@ -77,7 +77,7 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
 
-  for (const resource of ['refunds', 'notifications']) {
+  for (const resource of ['refunds']) {
     const permission = '*';
     router.get(`/${resource}`, requirePermission(permission), notImplemented(resource));
     router.get(`/${resource}/:id`, requirePermission(permission), notImplemented(`${resource}/:id`));
@@ -105,6 +105,8 @@ export function createApiRouter(pool, {
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));
   router.get('/salary-accruals', requirePermission('*'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
+  router.get('/notifications', requirePermission('*'), run((request) => lessons.notifications(lessonContext(request))));
+  router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), notImplemented('partner-settlements'));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), notImplemented('statistics'));

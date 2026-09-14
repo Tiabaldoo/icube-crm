@@ -497,7 +497,7 @@ render();
     html += '<div class="field"><label>Активность</label><select class="select" id="gf-active"><option value="true"' + (g?.active!==false?' selected':'') + '>Активна</option><option value="false"' + (g?.active===false?' selected':'') + '>Неактивна</option></select></div>';
     html += '</div>';
 
-    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveGroup(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
+    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="gf-submit" onclick="icubeApi.saveGroup(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
     modal(html);
     setTimeout(refreshGroupPreview,0);
   };
@@ -4953,7 +4953,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
   function shortGroup(g){
     const d=g.direction==='Робототехника'?'Р':'П';
-    const day=String(g.day||'').slice(0,2);
+    const days={'Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
+    const day=days[g.day]||String(g.day||'');
     const time=g.startTime||String(g.time||'').split('–')[0]||'';
     return d+', '+day+', '+siteName(g)+', '+time;
   }
@@ -5678,8 +5679,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
   function statusHtml(e){
     if(e.cancelled) return '<span class="badge red">Отменено</span>';
-    if(e.moved) return '<span class="badge amber">Перенесено</span>';
     if(e.done) return '<span class="badge green">Проведено</span>';
+    if(e.moved) return '<span class="badge amber">Перенесено</span>';
     return '';
   }
   function eventHtml(e,role){
@@ -7632,8 +7633,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
   function eventStatusHtml(e){
     if(e.cancelled) return '<span class="badge red">Отменено</span>';
-    if(e.moved) return '<span class="badge amber">Перенесено</span>';
     if(e.done) return '<span class="badge green">Проведено</span>';
+    if(e.moved) return '<span class="badge amber">Перенесено</span>';
     return '';
   }
 

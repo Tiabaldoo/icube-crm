@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import express from 'express';
 import { createApiRouter } from '../backend/src/routes.mjs';
-import { ApiProblem } from '../backend/src/catalog.mjs';
+import { ApiProblem, createMysqlCatalog } from '../backend/src/catalog.mjs';
 import { calculateLessonsCredit, createMysqlPayments } from '../backend/src/payments.mjs';
 
 function memoryCatalog() {
@@ -162,6 +162,28 @@ test('API блокирует физическое удаление ребёнк�
   assert.equal(result.response.status, 409);
   assert.equal(result.payload.error.code, 'CHILD_HAS_HISTORY');
   assert.ok(catalog.data.children.some((item) => item.id === child.id));
+});
+
+test('подтверждение созданного преподавателем ребёнка сохраняется в MySQL', async () => {
+  let needsDirectorReview = true;
+  let savedReview;
+  const query = async (sql, params = {}) => {
+    if (sql.includes('FROM children c LEFT JOIN child_guardians')) return [[{
+      id: 8, full_name: 'Новый Ребёнок', birth_date: null, school: null, grade: null, status: 'lead', note: null,
+      needs_director_review: needsDirectorReview, guardian_name: null, guardian_phone: null,
+    }]];
+    if (sql.includes('FROM child_enrollments e JOIN directions')) return [[]];
+    if (sql.startsWith('UPDATE children SET')) {
+      savedReview = params.review;
+      needsDirectorReview = params.review;
+      return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+  const child = await createMysqlCatalog({ query, getConnection: async () => connection }).update('children', 8, { needsDirectorReview: false });
+  assert.equal(savedReview, false);
+  assert.equal(child.needsDirectorReview, false);
 });
 
 test('API оплат сохраняет снимки цены и независимые балансы', async (t) => {

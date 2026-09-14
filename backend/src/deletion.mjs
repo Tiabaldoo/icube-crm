@@ -55,18 +55,28 @@ export function createDeletionService(pool) {
 
   async function deleteGroup(rawId) {
     const groupId = numericId(rawId, 'groupId');
-    await ensureExists('study_groups', groupId, 'Группа');
-    const dependencies = await one(`SELECT
-      (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id) memberships,
-      (SELECT COUNT(*) FROM lessons WHERE group_id=:id) lessons,
-      (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id) attendances,
-      (SELECT COUNT(*) FROM child_status_history WHERE group_id_snapshot=:id) childStatusHistory,
-      (SELECT COUNT(*) FROM enrollment_status_history WHERE group_id_snapshot=:id) enrollmentStatusHistory,
-      (SELECT COUNT(*) FROM payments WHERE group_id_snapshot=:id) payments,
-      (SELECT COUNT(*) FROM refunds WHERE group_id_snapshot=:id) refunds`, { id: groupId });
-    if (hasAny(dependencies)) throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.', dependencies);
     try {
       await inTransaction(pool, async (connection) => {
+        const [groups] = await connection.query('SELECT id FROM study_groups WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: groupId });
+        if (!groups.length) throw new ApiProblem(404, 'NOT_FOUND', 'Группа не найдена');
+        await connection.query(`DELETE l FROM lessons l WHERE l.group_id=:id
+          AND l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
+          AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
+          AND l.lock_version=1
+          AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id)
+          AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id)
+          AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
+          AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)`, { id: groupId });
+        const [dependencyRows] = await connection.query(`SELECT
+          (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id) memberships,
+          (SELECT COUNT(*) FROM lessons WHERE group_id=:id) lessons,
+          (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id) attendances,
+          (SELECT COUNT(*) FROM child_status_history WHERE group_id_snapshot=:id) childStatusHistory,
+          (SELECT COUNT(*) FROM enrollment_status_history WHERE group_id_snapshot=:id) enrollmentStatusHistory,
+          (SELECT COUNT(*) FROM payments WHERE group_id_snapshot=:id) payments,
+          (SELECT COUNT(*) FROM refunds WHERE group_id_snapshot=:id) refunds`, { id: groupId });
+        const dependencies = dependencyRows[0] ?? {};
+        if (hasAny(dependencies)) throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.', dependencies);
         await connection.query('DELETE FROM price_versions WHERE group_id=:id', { id: groupId });
         await connection.query('DELETE FROM study_groups WHERE id=:id', { id: groupId });
       });

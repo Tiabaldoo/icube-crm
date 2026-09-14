@@ -106,7 +106,7 @@ function transactionPool(handler) {
   return { query: handler, getConnection: async () => connection };
 }
 
-function historicalFinishFixture() {
+function historicalFinishFixture({ present = 1, markedAt = '2026-09-14 10:05:00.000000' } = {}) {
   const lesson = {
     id: 50, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
     planned_teacher_id: 6, actual_teacher_id: 6, status: 'in_progress', starts_at: '2026-09-14 10:00:00.000000',
@@ -128,7 +128,7 @@ function historicalFinishFixture() {
   const handler = async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
     if (sql === 'SELECT * FROM attendances WHERE lesson_id=:lessonId FOR UPDATE') return [[{
-      id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'main', present: 1, is_trial: 0,
+      id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'main', present, is_trial: 0, marked_at: markedAt,
     }]];
     if (sql.includes('FROM child_enrollments e WHERE')) {
       captured.priceSql = sql; captured.priceParams = params;
@@ -145,7 +145,7 @@ function historicalFinishFixture() {
       captured.salarySql = sql; captured.salaryParams = params;
       return [[effectiveAt(salaryVersions, params.startsAt)]];
     }
-    if (sql.startsWith('SELECT COUNT(*) present_count')) return [[{ present_count: 1 }]];
+    if (sql.startsWith('SELECT COUNT(*) present_count')) return [[{ present_count: present ? 1 : 0 }]];
     if (sql.startsWith('INSERT INTO salary_accruals')) { captured.salary = params; return [{ insertId: 90 }]; }
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[{
       ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка',
@@ -177,6 +177,21 @@ test('утреннее занятие использует ставку зарп
   assert.match(captured.salarySql, /valid_to>:startsAt/);
   assert.doesNotMatch(captured.salarySql, /DATE_ADD\(DATE\(:startsAt\)/);
   assert.equal(captured.salary.total, '700.00');
+});
+
+test('обычное занятие нельзя завершить без явной отметки посещаемости', async () => {
+  const { pool } = historicalFinishFixture({ present: 0, markedAt: null });
+  await assert.rejects(
+    createMysqlLessons(pool).finish(50, {}, { roles: ['director'] }),
+    (error) => error.code === 'ATTENDANCE_REQUIRED' && error.status === 409,
+  );
+});
+
+test('явно отмеченное отсутствие позволяет завершить обычное занятие', async () => {
+  const { pool, captured } = historicalFinishFixture({ present: 0 });
+  const lesson = await createMysqlLessons(pool).finish(50, {}, { roles: ['director'] });
+  assert.equal(lesson.status, 'completed');
+  assert.equal(captured.salary.present, 0);
 });
 
 test('более позднее посещение не отменяет trial у первого исторического занятия', async () => {
@@ -263,4 +278,87 @@ test('после изменения расписания удаляются то
   assert.deepEqual(lessons.filter((item) => item.status === 'scheduled').map((item) => item.scheduled_starts_at), [
     '2099-09-04 18:00:00', '2099-09-11 18:00:00', '2099-09-18 18:00:00',
   ]);
+});
+
+test('перенос проведённого занятия сохраняет id, статус, посещение и зарплату', async () => {
+  const lesson = {
+    id: 50, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    planned_teacher_id: 6, actual_teacher_id: 6, status: 'completed',
+    scheduled_starts_at: '2026-09-14 10:00:00.000000', scheduled_ends_at: '2026-09-14 11:00:00.000000',
+    starts_at: '2026-09-14 10:00:00.000000', ends_at: '2026-09-14 11:00:00.000000',
+    actual_starts_at: '2026-09-14 10:00:00.000000', actual_ends_at: '2026-09-14 11:00:00.000000',
+    topic: 'Тема', is_intro_group: 0, is_empty_trip: 0, roster_frozen_at: '2026-09-14 10:00:00.000000',
+    attendance_applied_at: '2026-09-14 11:00:00.000000', completed_at: '2026-09-14 11:00:00.000000', cancelled_at: null, lock_version: 3,
+  };
+  const attendance = { id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'main', present: 1, is_trial: 0, price_snapshot: '1025.00', charged_lessons: '1.00000000', marked_at: '2026-09-14 10:05:00.000000' };
+  const salary = { id: 90, lesson_id: 50, teacher_id: 6, rate_version_id: 12, accrual_type: 'regular', present_children: 1, fixed_amount: '600.00', children_amount: '100.00', total_amount: '700.00' };
+  let updateSql;
+  const handler = async (sql, params = {}) => {
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT id FROM teachers WHERE id=')) return [[{ id: 6 }]];
+    if (sql.startsWith('UPDATE lessons SET starts_at=')) {
+      updateSql = sql;
+      lesson.starts_at = `${params.date} ${params.start}:00.000000`;
+      lesson.ends_at = `${params.date} ${params.end}:00.000000`;
+      lesson.lock_version += 1;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка', planned_teacher_name: 'Преподаватель', actual_teacher_name: 'Преподаватель' }]];
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [[{ lesson_id: 50, child_id: 8, roster_type: 'main' }]];
+    if (sql.includes('FROM attendances WHERE lesson_id IN')) return [[attendance]];
+    if (sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[salary]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const result = await createMysqlLessons(transactionPool(handler)).update(50, {
+    date: '2026-09-18', startTime: '18:00', endTime: '19:00', actualTeacherId: 6,
+  }, { roles: ['director'] });
+  assert.equal(result.id, '50');
+  assert.equal(result.status, 'completed');
+  assert.equal(result.startsAt, '2026-09-18T18:00:00Z');
+  assert.equal(result.attendances[0].id, '70');
+  assert.equal(result.salary.id, '90');
+  assert.doesNotMatch(updateSql, /status=/);
+});
+
+function quickChildRemovalFixture(history = {}) {
+  const lesson = {
+    id: 50, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    planned_teacher_id: 6, actual_teacher_id: 6, status: 'in_progress',
+    scheduled_starts_at: '2026-09-14 10:00:00.000000', scheduled_ends_at: '2026-09-14 11:00:00.000000',
+    starts_at: '2026-09-14 10:00:00.000000', ends_at: '2026-09-14 11:00:00.000000',
+    actual_starts_at: '2026-09-14 10:00:00.000000', actual_ends_at: null, topic: null,
+    is_intro_group: 0, is_empty_trip: 0, roster_frozen_at: '2026-09-14 10:00:00.000000', attendance_applied_at: null,
+    completed_at: null, cancelled_at: null, lock_version: 2,
+  };
+  const calls = [];
+  const handler = async (sql, params = {}) => {
+    calls.push({ sql, params });
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT id FROM teachers WHERE user_id=')) return [[{ id: 6 }]];
+    if (sql.startsWith('SELECT a.* FROM attendances')) return [[{ id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'extra', present: 1, is_trial: 1 }]];
+    if (sql.startsWith('SELECT id,full_name FROM children')) return [[{ id: 8, full_name: 'Новый Ребёнок' }]];
+    if (sql === 'SELECT id FROM child_enrollments WHERE child_id=:childId FOR UPDATE') return [[{ id: 9 }]];
+    if (sql.includes('(SELECT COUNT(*) FROM payments')) return [[{ payments: 0, refunds: 0, attendances: 0, roster: 0, photos: 0, memberships: 0, balanceEntries: 0, balanceLots: 0, balanceTransfers: 0, nonzeroBalances: 0, enrollmentHistory: 0, childHistory: 0, userAccounts: 0, priceHistory: 0, ...history }]];
+    if (sql.startsWith('SELECT guardian_id FROM child_guardians')) return [[{ guardian_id: 12 }]];
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка', planned_teacher_name: 'Преподаватель', actual_teacher_name: 'Преподаватель' }]];
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN') || sql.includes('FROM attendances WHERE lesson_id IN') || sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
+    if (/^(DELETE|INSERT INTO notifications)/.test(sql)) return [{ affectedRows: 1, insertId: 100 }];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  return { pool: transactionPool(handler), calls };
+}
+
+test('удаление временного quick child без другой истории полностью удаляет карточку и сохраняет уведомление', async () => {
+  const { pool, calls } = quickChildRemovalFixture();
+  await createMysqlLessons(pool).removeExtra(50, 8, { roles: ['teacher'], userId: 20 });
+  assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE FROM children')));
+  assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE FROM child_enrollments')));
+  assert.ok(calls.some(({ sql }) => sql.includes('INSERT INTO notifications')));
+});
+
+test('quick child с другой историей сохраняется при удалении из занятия', async () => {
+  const { pool, calls } = quickChildRemovalFixture({ payments: 1 });
+  await createMysqlLessons(pool).removeExtra(50, 8, { roles: ['director'] });
+  assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE FROM children')), false);
+  assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO notifications')), false);
 });
