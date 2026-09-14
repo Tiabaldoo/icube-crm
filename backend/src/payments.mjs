@@ -1,5 +1,6 @@
 import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
+import { lessonDecimal, lessonUnits } from './lesson-rules.mjs';
 
 const SCALE = 100000000n;
 const methods = new Set(['cashless', 'cash']);
@@ -50,6 +51,11 @@ const mapPayment = (row) => ({
   paidOn: isoDate(row.paid_on), amount: String(row.amount), priceSnapshot: String(row.price_snapshot),
   lessonsCredit: String(row.lessons_credit), method: row.method, note: row.note,
 });
+function fundedLessons(credit, balanceBefore) {
+  const creditUnits = lessonUnits(credit); const balanceUnits = lessonUnits(balanceBefore ?? '0');
+  const available = balanceUnits < 0n ? creditUnits + balanceUnits : creditUnits;
+  return lessonDecimal(available > 0n ? available : 0n);
+}
 
 export function createMysqlPayments(pool) {
   const paymentSelect = `SELECT p.id,p.enrollment_id,p.child_id,c.full_name child_name,p.direction_id,d.name direction_name,
@@ -68,7 +74,7 @@ export function createMysqlPayments(pool) {
     return mapPayment(rows[0]);
   }
   async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = isoDate(new Date()) } = {}) {
-    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,gm.group_id,g.project_id,
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,g.project_id,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
@@ -90,6 +96,7 @@ export function createMysqlPayments(pool) {
         const amount = normalizeMoney(body.amount);
         const price = normalizeMoney(enrollment.current_price, 'priceSnapshot');
         const lessons = calculateLessonsCredit(amount, price);
+        const lotLessons = fundedLessons(lessons, enrollment.balance_lessons);
         const method = paymentMethod(body.method);
         const [result] = await connection.query(`INSERT INTO payments
           (enrollment_id,child_id,direction_id,group_id_snapshot,project_id_snapshot,paid_on,amount,price_snapshot,lessons_credit,method,note,created_by_user_id)
@@ -106,8 +113,8 @@ export function createMysqlPayments(pool) {
         });
         await connection.query(`INSERT INTO balance_lots
           (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
-          VALUES (:enrollmentId,:entryId,:lessons,:lessons,:price)`, {
-          enrollmentId: enrollment.id, entryId: entryResult.insertId, lessons, price,
+          VALUES (:enrollmentId,:entryId,:lessons,:remainingLessons,:price)`, {
+          enrollmentId: enrollment.id, entryId: entryResult.insertId, lessons, remainingLessons: lotLessons, price,
         });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: enrollment.id, lessons });
         return String(result.insertId);
@@ -131,6 +138,10 @@ export function createMysqlPayments(pool) {
           ? normalizeMoney(String(old.enrollment_id) === targetId ? old.price_snapshot : target.current_price, 'priceSnapshot')
           : normalizeMoney(body.priceSnapshot, 'priceSnapshot');
         const lessons = calculateLessonsCredit(amount, price);
+        const targetBalanceBefore = String(old.enrollment_id) === targetId
+          ? lessonDecimal(lessonUnits(String(oldEnrollment.balance_lessons)) - lessonUnits(String(old.lessons_credit)))
+          : String(target.balance_lessons);
+        const lotLessons = fundedLessons(lessons, targetBalanceBefore);
         const method = paymentMethod(body.method ?? old.method);
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: old.enrollment_id, lessons: String(old.lessons_credit) });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: target.id, lessons });
@@ -154,12 +165,12 @@ export function createMysqlPayments(pool) {
           WHERE id=:entryId`, { enrollmentId: target.id, lessons, amount, price, paidOn: date, actorId: context.actorUserId ?? null, entryId: entries[0].id });
         if (lots.length) {
           await connection.query(`UPDATE balance_lots SET enrollment_id=:enrollmentId,original_lessons=:lessons,
-            remaining_lessons=:lessons,unit_price=:price WHERE id=:lotId`, { enrollmentId: target.id, lessons, price, lotId: lots[0].id });
+            remaining_lessons=:remainingLessons,unit_price=:price WHERE id=:lotId`, { enrollmentId: target.id, lessons, remainingLessons: lotLessons, price, lotId: lots[0].id });
         } else {
           await connection.query(`INSERT INTO balance_lots
             (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
-            VALUES (:enrollmentId,:entryId,:lessons,:lessons,:price)`, {
-            enrollmentId: target.id, entryId: entries[0].id, lessons, price,
+            VALUES (:enrollmentId,:entryId,:lessons,:remainingLessons,:price)`, {
+            enrollmentId: target.id, entryId: entries[0].id, lessons, remainingLessons: lotLessons, price,
           });
         }
       });

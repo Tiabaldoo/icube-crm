@@ -1,0 +1,500 @@
+import { inTransaction } from './db.mjs';
+import { ApiProblem } from './catalog.mjs';
+import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
+
+const DAY = 86400000;
+const identifier = (value, field = 'id') => {
+  const result = String(value ?? '').trim();
+  if (!/^[1-9]\d*$/.test(result)) throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректное поле ${field}`);
+  return result;
+};
+const dateOnly = (value, field = 'date') => {
+  const result = String(value ?? '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(Date.parse(`${result}T00:00:00Z`))) throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректное поле ${field}`);
+  return result;
+};
+const timeOnly = (value, field = 'time') => {
+  const result = value instanceof Date ? value.toISOString().slice(11, 16) : String(value ?? '').includes(' ') ? String(value).slice(11, 16) : String(value ?? '').slice(0, 5);
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(result)) throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректное поле ${field}`);
+  return result;
+};
+const isoDate = (value) => typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
+const isoDateTime = (value) => {
+  if (value == null) return null;
+  if (typeof value !== 'string') return value.toISOString();
+  return `${value.slice(0, 10)}T${value.slice(11, 19)}Z`;
+};
+const bool = (value) => value === true || value === 1 || value === '1';
+const nullableText = (value) => value == null || value === '' ? null : String(value).trim() || null;
+const hasRole = (context, role) => (context.roles ?? []).includes(role);
+
+function mysqlError(error) {
+  if (error instanceof ApiProblem) return error;
+  if (error?.code === 'ER_DUP_ENTRY') return new ApiProblem(409, 'CONFLICT', 'Операция уже выполнена');
+  if (error?.code === 'ER_NO_REFERENCED_ROW_2') return new ApiProblem(400, 'INVALID_REFERENCE', 'Связанная запись не найдена');
+  return error;
+}
+
+function lessonKind(row) {
+  if (row.status === 'cancelled') return 'cancelled';
+  if (bool(row.is_empty_trip)) return 'empty_trip';
+  if (bool(row.is_intro_group)) return 'intro';
+  return 'regular';
+}
+
+export function createMysqlLessons(pool) {
+  const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,
+    pt.full_name planned_teacher_name,act.full_name actual_teacher_name
+    FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
+    JOIN projects p ON p.id=l.project_id_snapshot JOIN sites s ON s.id=l.site_id_snapshot
+    JOIN teachers pt ON pt.id=l.planned_teacher_id LEFT JOIN teachers act ON act.id=l.actual_teacher_id`;
+
+  async function teacherForContext(connection, context) {
+    if (!hasRole(context, 'teacher') || hasRole(context, 'director')) return null;
+    if (!context.userId) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не связан с пользователем');
+    const [rows] = await connection.query('SELECT id FROM teachers WHERE user_id=:userId AND deleted_at IS NULL AND active=TRUE', { userId: context.userId });
+    if (!rows.length) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не найден');
+    return String(rows[0].id);
+  }
+
+  async function loadRows(where, params, context, connection = pool) {
+    const teacherId = await teacherForContext(connection, context);
+    const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)` : '';
+    const [lessonRows] = await connection.query(`${baseSelect} WHERE ${where}${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
+    if (!lessonRows.length) return [];
+    const ids = lessonRows.map((row) => String(row.id)).join(',');
+    const [[rosterRows], [attendanceRows], [salaryRows]] = await Promise.all([
+      connection.query(`SELECT lesson_id,child_id,roster_type FROM lesson_roster_members WHERE lesson_id IN (${ids}) ORDER BY child_id`),
+      connection.query(`SELECT id,lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,price_snapshot,charged_lessons,marked_at FROM attendances WHERE lesson_id IN (${ids}) ORDER BY child_id`),
+      hasRole(context, 'director')
+        ? connection.query(`SELECT sa.* FROM salary_accruals sa WHERE sa.lesson_id IN (${ids}) AND sa.reversed_at IS NULL ORDER BY sa.id`)
+        : Promise.resolve([[]]),
+    ]);
+    return lessonRows.map((row) => {
+      const roster = rosterRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({ childId: String(item.child_id), type: item.roster_type }));
+      const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({
+        id: String(item.id), childId: String(item.child_id), enrollmentId: item.enrollment_id == null ? null : String(item.enrollment_id),
+        type: item.attendance_type, present: bool(item.present), trial: bool(item.is_trial),
+        priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons), markedAt: isoDateTime(item.marked_at),
+      }));
+      const salary = salaryRows.find((item) => String(item.lesson_id) === String(row.id));
+      return {
+        id: String(row.id), groupId: String(row.group_id), groupName: row.group_name,
+        directionId: String(row.direction_id_snapshot), directionName: row.direction_name,
+        projectId: String(row.project_id_snapshot), projectName: row.project_name,
+        siteId: String(row.site_id_snapshot), siteName: row.site_name,
+        plannedTeacherId: String(row.planned_teacher_id), plannedTeacherName: row.planned_teacher_name,
+        actualTeacherId: row.actual_teacher_id == null ? null : String(row.actual_teacher_id), actualTeacherName: row.actual_teacher_name,
+        scheduledStartsAt: isoDateTime(row.scheduled_starts_at), scheduledEndsAt: isoDateTime(row.scheduled_ends_at), startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at),
+        actualStartsAt: isoDateTime(row.actual_starts_at), actualEndsAt: isoDateTime(row.actual_ends_at), status: row.status,
+        topic: row.topic, introGroup: bool(row.is_intro_group), emptyTrip: bool(row.is_empty_trip), rosterFrozenAt: isoDateTime(row.roster_frozen_at),
+        attendanceAppliedAt: isoDateTime(row.attendance_applied_at), completedAt: isoDateTime(row.completed_at), cancelledAt: isoDateTime(row.cancelled_at),
+        lockVersion: Number(row.lock_version), roster, attendances,
+        ...(salary ? { salary: { id: String(salary.id), teacherId: String(salary.teacher_id), rateVersionId: salary.rate_version_id == null ? null : String(salary.rate_version_id),
+          type: salary.accrual_type, presentChildren: Number(salary.present_children), fixedAmount: String(salary.fixed_amount), childrenAmount: String(salary.children_amount), totalAmount: String(salary.total_amount) } } : {}),
+      };
+    });
+  }
+
+  async function materialize(from, to, groupId = null) {
+    from = dateOnly(from, 'from'); to = dateOnly(to, 'to');
+    const first = Date.parse(`${from}T00:00:00Z`); const last = Date.parse(`${to}T00:00:00Z`);
+    if (last < first || last - first > 370 * DAY) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Диапазон занятий должен быть не больше 370 дней');
+    const params = { from, to };
+    const groupFilter = groupId == null ? '' : ' AND g.id=:groupId';
+    if (groupId != null) params.groupId = identifier(groupId, 'groupId');
+    const [groups] = await pool.query(`SELECT g.id,g.direction_id,g.project_id,g.site_id,g.default_teacher_id,g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on
+      FROM study_groups g WHERE g.deleted_at IS NULL AND g.active=TRUE AND g.starts_on<=:to AND (g.ends_on IS NULL OR g.ends_on>=:from)${groupFilter}`, params);
+    for (const group of groups) {
+      for (const date of occurrenceDates(group, from, to)) {
+        const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
+        await pool.query(`INSERT IGNORE INTO lessons
+          (group_id,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
+          VALUES (:groupId,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
+          groupId: group.id, directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
+          date, start, end, teacherId: group.default_teacher_id,
+        });
+      }
+    }
+  }
+
+  async function list(filters = {}, context = {}) {
+    const today = new Date();
+    const from = filters.from ? dateOnly(filters.from, 'from') : new Date(today.getTime() - 120 * DAY).toISOString().slice(0, 10);
+    const to = filters.to ? dateOnly(filters.to, 'to') : new Date(today.getTime() + 240 * DAY).toISOString().slice(0, 10);
+    await materialize(from, to);
+    const conditions = ['l.starts_at>=CONCAT(:from,\' 00:00:00\')', 'l.starts_at<DATE_ADD(:to,INTERVAL 1 DAY)']; const params = { from, to };
+    if (filters.teacherId) { conditions.push('(l.planned_teacher_id=:teacherId OR l.actual_teacher_id=:teacherId)'); params.teacherId = identifier(filters.teacherId, 'teacherId'); }
+    if (filters.projectId) { conditions.push('l.project_id_snapshot=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
+    return loadRows(conditions.join(' AND '), params, context);
+  }
+
+  async function get(lessonId, context = {}, connection = pool) {
+    const rows = await loadRows('l.id=:id', { id: identifier(lessonId) }, context, connection);
+    if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Занятие не найдено');
+    return rows[0];
+  }
+
+  async function create(body, context = {}) {
+    const groupId = identifier(body.groupId, 'groupId'); const scheduledDate = dateOnly(body.scheduledDate, 'scheduledDate');
+    await materialize(scheduledDate, scheduledDate, groupId);
+    const [rows] = await pool.query(`SELECT l.id FROM lessons l WHERE l.group_id=:groupId AND DATE(l.scheduled_starts_at)=:scheduledDate`, { groupId, scheduledDate });
+    if (!rows.length) throw new ApiProblem(409, 'OCCURRENCE_OUTSIDE_SCHEDULE', 'На эту дату занятие группы не запланировано');
+    return get(rows[0].id, context);
+  }
+
+  async function lockLesson(connection, lessonId) {
+    const [rows] = await connection.query('SELECT * FROM lessons WHERE id=:id FOR UPDATE', { id: identifier(lessonId) });
+    if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Занятие не найдено');
+    return rows[0];
+  }
+
+  async function assertAccess(connection, lesson, context) {
+    const actorTeacherId = await teacherForContext(connection, context);
+    if (actorTeacherId && ![lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id) === actorTeacherId)) throw new ApiProblem(403, 'FORBIDDEN', 'Занятие не назначено преподавателю');
+    return actorTeacherId;
+  }
+
+  async function update(lessonId, body, context = {}) {
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); const actorTeacherId = await assertAccess(connection, lesson, context);
+        if (lesson.status === 'completed' || lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Завершённое или отменённое занятие нельзя изменить этим маршрутом');
+        if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только директор');
+        const date = body.date === undefined ? isoDate(lesson.starts_at) : dateOnly(body.date);
+        const start = body.startTime === undefined ? timeOnly(lesson.starts_at) : timeOnly(body.startTime, 'startTime');
+        const end = body.endTime === undefined ? timeOnly(lesson.ends_at) : timeOnly(body.endTime, 'endTime');
+        if (end <= start) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Окончание должно быть позже начала');
+        const teacherId = actorTeacherId ?? (body.actualTeacherId === undefined ? lesson.actual_teacher_id : identifier(body.actualTeacherId, 'actualTeacherId'));
+        if (teacherId != null) {
+          const [teachers] = await connection.query('SELECT id FROM teachers WHERE id=:id AND deleted_at IS NULL', { id: teacherId });
+          if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Преподаватель не найден');
+        }
+        await connection.query(`UPDATE lessons SET starts_at=CONCAT(:date,' ',:start,':00'),ends_at=CONCAT(:date,' ',:end,':00'),
+          actual_teacher_id=:teacherId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
+          id: lesson.id, date, start, end, teacherId, topic: body.topic === undefined ? lesson.topic : nullableText(body.topic),
+          introGroup: body.introGroup === undefined ? bool(lesson.is_intro_group) : bool(body.introGroup),
+          emptyTrip: body.emptyTrip === undefined ? bool(lesson.is_empty_trip) : bool(body.emptyTrip),
+        });
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function priorVisit(connection, enrollmentId, lessonId) {
+    const [rows] = await connection.query(`SELECT a.id FROM attendances a JOIN lessons l ON l.id=a.lesson_id
+      WHERE a.enrollment_id=:enrollmentId AND a.present=TRUE AND a.lesson_id<>:lessonId AND l.status='completed' LIMIT 1`, { enrollmentId, lessonId });
+    return rows.length > 0;
+  }
+
+  async function start(lessonId, body = {}, context = {}) {
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); const actorTeacherId = await assertAccess(connection, lesson, context);
+        if (lesson.status === 'in_progress' || lesson.status === 'completed') return;
+        if (lesson.status !== 'scheduled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя начать');
+        const actualTeacherId = actorTeacherId ?? identifier(body.actualTeacherId ?? lesson.planned_teacher_id, 'actualTeacherId');
+        const [teachers] = await connection.query('SELECT id FROM teachers WHERE id=:id AND deleted_at IS NULL AND active=TRUE', { id: actualTeacherId });
+        if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Фактический преподаватель не найден');
+        const [members] = await connection.query(`SELECT gm.child_id,gm.enrollment_id FROM (
+          SELECT e.child_id,e.id enrollment_id,gm.id membership_id FROM group_memberships gm
+          JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN children c ON c.id=e.child_id
+          WHERE gm.group_id=:groupId AND gm.started_on<=DATE(:startsAt) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(:startsAt))
+            AND e.status='active' AND c.deleted_at IS NULL AND c.status IN ('lead','active')
+        ) gm ORDER BY gm.child_id`, { groupId: lesson.group_id, startsAt: lesson.starts_at });
+        const roster = freezeRosterMembers(members);
+        for (const member of roster) {
+          await connection.query(`INSERT IGNORE INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
+            VALUES (:lessonId,:childId,'main',:actorId,NOW(6))`, { lessonId: lesson.id, childId: member.childId, actorId: context.userId ?? null });
+          const trial = !(await priorVisit(connection, member.enrollmentId, lesson.id));
+          await connection.query(`INSERT IGNORE INTO attendances
+            (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id)
+            VALUES (:lessonId,:childId,:enrollmentId,'main',FALSE,:trial,:actorId)`, {
+            lessonId: lesson.id, childId: member.childId, enrollmentId: member.enrollmentId, trial, actorId: context.userId ?? null,
+          });
+        }
+        await connection.query(`UPDATE lessons SET status='in_progress',actual_teacher_id=:teacherId,actual_starts_at=NOW(6),
+          roster_frozen_at=NOW(6),lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id, teacherId: actualTeacherId });
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function enrollmentForAttendance(connection, lesson, childId) {
+    const date = isoDate(lesson.starts_at);
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,
+      COALESCE(
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:date,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:date,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
+        (SELECT pv.price FROM price_versions pv JOIN group_memberships gm ON gm.group_id=pv.group_id WHERE pv.scope_type='group' AND gm.enrollment_id=e.id AND gm.started_on<=:date AND (gm.ended_on IS NULL OR gm.ended_on>=:date) AND pv.valid_from<DATE_ADD(:date,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:date,INTERVAL 1 DAY)) ORDER BY gm.started_on DESC,pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<DATE_ADD(:date,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:date,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+      ) current_price
+      FROM child_enrollments e WHERE e.child_id=:childId AND e.direction_id=:directionId FOR UPDATE`, {
+      childId: identifier(childId, 'childId'), directionId: lesson.direction_id_snapshot, date,
+    });
+    if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет направления этого занятия');
+    if (rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
+    return rows[0];
+  }
+
+  async function activeAttendanceDebit(connection, attendanceId) {
+    const [rows] = await connection.query(`SELECT be.* FROM balance_entries be
+      LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=be.id
+      WHERE be.attendance_id=:attendanceId AND be.entry_type='attendance' AND reversal.id IS NULL FOR UPDATE`, { attendanceId });
+    if (rows.length > 1) throw new ApiProblem(409, 'ATTENDANCE_LEDGER_INCONSISTENT', 'У посещения несколько активных списаний');
+    return rows[0] ?? null;
+  }
+
+  async function debitAttendance(connection, attendance, enrollment, lesson, context) {
+    const [lots] = await connection.query(`SELECT id,remaining_lessons,unit_price FROM balance_lots
+      WHERE enrollment_id=:enrollmentId AND remaining_lessons>0 ORDER BY created_at,id FOR UPDATE`, { enrollmentId: enrollment.id });
+    const plan = planFifoConsumption(lots, '1.00000000', String(enrollment.current_price));
+    const [entry] = await connection.query(`INSERT INTO balance_entries
+      (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,attendance_id,occurred_at,created_by_user_id)
+      VALUES (:enrollmentId,'attendance','-1.00000000',:amount,:price,:attendanceId,:occurredAt,:actorId)`, {
+      enrollmentId: enrollment.id, amount: moneyDecimal(-moneyCents(plan.amount)), price: String(enrollment.current_price),
+      attendanceId: attendance.id, occurredAt: lesson.starts_at, actorId: context.userId ?? null,
+    });
+    for (const consumption of plan.consumptions) {
+      await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', { id: consumption.lotId, lessons: consumption.lessons });
+      await connection.query(`INSERT INTO balance_lot_consumptions (balance_lot_id,balance_entry_id,lessons,amount)
+        VALUES (:lotId,:entryId,:lessons,:amount)`, { lotId: consumption.lotId, entryId: entry.insertId, lessons: consumption.lessons, amount: consumption.amount });
+    }
+    await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-1.00000000 WHERE id=:id', { id: enrollment.id });
+    await connection.query('UPDATE attendances SET enrollment_id=:enrollmentId,price_snapshot=:price,charged_lessons=1.00000000 WHERE id=:id', { id: attendance.id, enrollmentId: enrollment.id, price: String(enrollment.current_price) });
+  }
+
+  async function reverseAttendanceDebit(connection, attendance, context) {
+    const debit = await activeAttendanceDebit(connection, attendance.id);
+    if (!debit) return;
+    const [consumptions] = await connection.query('SELECT balance_lot_id,lessons FROM balance_lot_consumptions WHERE balance_entry_id=:entryId FOR UPDATE', { entryId: debit.id });
+    for (const consumption of consumptions) {
+      await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: consumption.balance_lot_id, lessons: String(consumption.lessons) });
+    }
+    await connection.query(`INSERT INTO balance_entries
+      (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,reversal_of_entry_id,occurred_at,created_by_user_id)
+      VALUES (:enrollmentId,'reversal',:lessons,:amount,:price,:oldEntryId,NOW(6),:actorId)`, {
+      enrollmentId: debit.enrollment_id, lessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))),
+      amount: moneyDecimal(-moneyCents(String(debit.amount_delta))), price: debit.unit_price_snapshot,
+      oldEntryId: debit.id, actorId: context.userId ?? null,
+    });
+    await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', {
+      id: debit.enrollment_id, lessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))),
+    });
+    await connection.query('UPDATE attendances SET charged_lessons=0 WHERE id=:id', { id: attendance.id });
+  }
+
+  async function salaryRate(connection, lesson) {
+    const [rows] = await connection.query(`SELECT * FROM salary_rate_versions WHERE
+      (teacher_id=:teacherId OR teacher_id IS NULL) AND (direction_id=:directionId OR direction_id IS NULL)
+      AND valid_from<DATE_ADD(DATE(:startsAt),INTERVAL 1 DAY)
+      AND (valid_to IS NULL OR valid_to>=DATE_ADD(DATE(:startsAt),INTERVAL 1 DAY))
+      ORDER BY (teacher_id=:teacherId) DESC,(direction_id=:directionId) DESC,valid_from DESC,id DESC LIMIT 1`, {
+      teacherId: lesson.actual_teacher_id ?? lesson.planned_teacher_id, directionId: lesson.direction_id_snapshot, startsAt: lesson.starts_at,
+    });
+    if (!rows.length) throw new ApiProblem(409, 'SALARY_RATE_NOT_CONFIGURED', 'Не настроена ставка зарплаты на дату занятия');
+    return rows[0];
+  }
+
+  async function recalculateSalary(connection, lesson) {
+    const [oldRows] = await connection.query('SELECT * FROM salary_accruals WHERE lesson_id=:lessonId AND reversed_at IS NULL ORDER BY id DESC LIMIT 1 FOR UPDATE', { lessonId: lesson.id });
+    const old = oldRows[0] ?? null;
+    if (lesson.status === 'cancelled') {
+      if (old) await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE id=:id', { id: old.id });
+      return;
+    }
+    if (lesson.status !== 'completed') return;
+    const rate = await salaryRate(connection, lesson);
+    const [countRows] = await connection.query('SELECT COUNT(*) present_count FROM attendances WHERE lesson_id=:lessonId AND present=TRUE', { lessonId: lesson.id });
+    const salary = calculateSalary(lessonKind(lesson), Number(countRows[0].present_count), rate);
+    const teacherId = lesson.actual_teacher_id ?? lesson.planned_teacher_id;
+    if (old && String(old.teacher_id) === String(teacherId) && String(old.rate_version_id) === String(rate.id) && old.accrual_type === salary.kind && Number(old.present_children) === salary.presentCount && String(old.total_amount) === salary.total) return;
+    if (old) await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE id=:id', { id: old.id });
+    await connection.query(`INSERT INTO salary_accruals
+      (lesson_id,teacher_id,rate_version_id,accrual_type,present_children,fixed_amount,children_amount,total_amount,supersedes_accrual_id)
+      VALUES (:lessonId,:teacherId,:rateId,:type,:present,:fixed,:children,:total,:supersedes)`, {
+      lessonId: lesson.id, teacherId, rateId: rate.id, type: salary.kind, present: salary.presentCount,
+      fixed: salary.fixed, children: salary.children, total: salary.total, supersedes: old?.id ?? null,
+    });
+  }
+
+  async function putAttendance(lessonId, childId, body, context = {}) {
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
+        const [roster] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId: identifier(childId, 'childId') });
+        if (!roster.length) throw new ApiProblem(409, 'CHILD_NOT_IN_LESSON', 'Ребёнок не входит в состав занятия');
+        const enrollment = await enrollmentForAttendance(connection, lesson, childId);
+        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
+        if (!rows.length) throw new ApiProblem(409, 'ATTENDANCE_NOT_FOUND', 'Строка посещения не создана');
+        const attendance = rows[0]; const present = bool(body.present); const trial = body.trial === undefined ? bool(attendance.is_trial) : bool(body.trial);
+        if (bool(attendance.present) === present && bool(attendance.is_trial) === trial && String(attendance.enrollment_id) === String(enrollment.id)) return;
+        if (lesson.status === 'completed') await reverseAttendanceDebit(connection, attendance, context);
+        await connection.query(`UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=:type,present=:present,is_trial=:trial,
+          marked_by_user_id=:actorId,marked_at=NOW(6),price_snapshot=IF(:present AND NOT :trial,price_snapshot,NULL),charged_lessons=0 WHERE id=:id`, {
+          id: attendance.id, enrollmentId: enrollment.id, type: roster[0].roster_type, present, trial, actorId: context.userId ?? null,
+        });
+        if (lesson.status === 'completed' && present && !trial) await debitAttendance(connection, attendance, enrollment, lesson, context);
+        await connection.query('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data) VALUES (:actorId,\'attendance.update\',\'attendance\',:id,:before,:after)', {
+          actorId: context.userId ?? null, id: attendance.id,
+          before: JSON.stringify({ present: bool(attendance.present), trial: bool(attendance.is_trial), enrollmentId: String(attendance.enrollment_id) }),
+          after: JSON.stringify({ present, trial, enrollmentId: String(enrollment.id) }),
+        });
+        if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function finish(lessonId, _body = {}, context = {}) {
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        if (lesson.status === 'completed') return;
+        if (lesson.status !== 'in_progress') throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
+        const [attendances] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId FOR UPDATE', { lessonId: lesson.id });
+        if (bool(lesson.is_empty_trip)) {
+          await connection.query('UPDATE attendances SET present=FALSE,charged_lessons=0 WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        } else {
+          for (const attendance of attendances) {
+            if (!bool(attendance.present) || bool(attendance.is_trial)) continue;
+            const enrollment = await enrollmentForAttendance(connection, lesson, attendance.child_id);
+            if (!(await activeAttendanceDebit(connection, attendance.id))) await debitAttendance(connection, attendance, enrollment, lesson, context);
+          }
+        }
+        await connection.query(`UPDATE lessons SET status='completed',actual_ends_at=NOW(6),completed_at=NOW(6),attendance_applied_at=NOW(6),
+          lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
+        lesson.status = 'completed';
+        await recalculateSalary(connection, lesson);
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function cancel(lessonId, context = {}) {
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        if (lesson.status === 'cancelled') return;
+        if (lesson.status === 'completed') throw new ApiProblem(409, 'LESSON_FINAL', 'Проведённое занятие нельзя отменить');
+        await connection.query(`UPDATE lessons SET status='cancelled',cancelled_at=NOW(6),is_empty_trip=FALSE,lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
+        lesson.status = 'cancelled';
+        await recalculateSalary(connection, lesson);
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function emptyTrip(lessonId, context = {}) {
+    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Пустой выезд отмечает только директор');
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId);
+        if (lesson.status === 'completed' && bool(lesson.is_empty_trip)) return;
+        if (lesson.status === 'completed' || lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Статус занятия уже финальный');
+        await connection.query(`UPDATE attendances SET present=FALSE,charged_lessons=0 WHERE lesson_id=:lessonId`, { lessonId: lesson.id });
+        await connection.query(`UPDATE lessons SET status='completed',is_empty_trip=TRUE,actual_teacher_id=COALESCE(actual_teacher_id,planned_teacher_id),
+          actual_starts_at=COALESCE(actual_starts_at,NOW(6)),actual_ends_at=NOW(6),completed_at=NOW(6),attendance_applied_at=NOW(6),lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
+        lesson.status = 'completed'; lesson.is_empty_trip = true; lesson.actual_teacher_id ??= lesson.planned_teacher_id;
+        await recalculateSalary(connection, lesson);
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function addExtra(lessonId, body, context = {}) {
+    const childId = identifier(body.childId, 'childId');
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
+        const enrollment = await enrollmentForAttendance(connection, lesson, childId);
+        const [existing] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
+        if (existing.length) return;
+        const trial = !(await priorVisit(connection, enrollment.id, lesson.id));
+        await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
+          VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
+        const [result] = await connection.query(`INSERT INTO attendances
+          (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id,marked_at)
+          VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,:trial,:actorId,NOW(6))`, {
+          lessonId: lesson.id, childId, enrollmentId: enrollment.id, trial, actorId: context.userId ?? null,
+        });
+        if (lesson.status === 'completed' && !trial) {
+          await debitAttendance(connection, { id: result.insertId }, enrollment, lesson, context);
+          await recalculateSalary(connection, lesson);
+        } else if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function removeExtra(lessonId, childId, context = {}) {
+    childId = identifier(childId, 'childId');
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        const [rows] = await connection.query(`SELECT a.* FROM attendances a JOIN lesson_roster_members r ON r.lesson_id=a.lesson_id AND r.child_id=a.child_id
+          WHERE a.lesson_id=:lessonId AND a.child_id=:childId AND r.roster_type='extra' FOR UPDATE`, { lessonId: lesson.id, childId });
+        if (!rows.length) return;
+        if (lesson.status === 'completed') {
+          await reverseAttendanceDebit(connection, rows[0], context);
+          await connection.query('UPDATE attendances SET present=FALSE,charged_lessons=0,marked_at=NOW(6) WHERE id=:id', { id: rows[0].id });
+          await recalculateSalary(connection, lesson);
+        } else {
+          await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
+          await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
+        }
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function quickChild(lessonId, body, context = {}) {
+    const name = String(body.name ?? '').trim(); const phone = nullableText(body.phone);
+    if (!name) throw new ApiProblem(400, 'VALIDATION_ERROR', 'ФИО ребёнка обязательно');
+    try {
+      let childId;
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
+        const [childResult] = await connection.query(`INSERT INTO children
+          (full_name,status,needs_director_review,created_from_lesson_id,created_by_user_id)
+          VALUES (:name,'lead',TRUE,:lessonId,:actorId)`, { name, lessonId: lesson.id, actorId: context.userId ?? null });
+        childId = childResult.insertId;
+        if (phone) {
+          const [guardian] = await connection.query('INSERT INTO guardians (phone) VALUES (:phone)', { phone });
+          await connection.query('INSERT INTO child_guardians (child_id,guardian_id,is_primary) VALUES (:childId,:guardianId,TRUE)', { childId, guardianId: guardian.insertId });
+        }
+        const [enrollment] = await connection.query(`INSERT INTO child_enrollments
+          (child_id,direction_id,status,started_on) VALUES (:childId,:directionId,'active',DATE(:startsAt))`, {
+          childId, directionId: lesson.direction_id_snapshot, startsAt: lesson.starts_at,
+        });
+        await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
+          VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
+        await connection.query(`INSERT INTO attendances
+          (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id,marked_at)
+          VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,TRUE,:actorId,NOW(6))`, {
+          lessonId: lesson.id, childId, enrollmentId: enrollment.insertId, actorId: context.userId ?? null,
+        });
+        if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+      });
+      return { childId: String(childId), lesson: await get(lessonId, context) };
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function salaryAccruals(filters = {}, context = {}) {
+    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Зарплату видит только директор');
+    const conditions = ['sa.reversed_at IS NULL']; const params = {};
+    if (filters.teacherId) { conditions.push('sa.teacher_id=:teacherId'); params.teacherId = identifier(filters.teacherId, 'teacherId'); }
+    if (filters.from) { conditions.push('DATE(l.starts_at)>=:from'); params.from = dateOnly(filters.from, 'from'); }
+    if (filters.to) { conditions.push('DATE(l.starts_at)<=:to'); params.to = dateOnly(filters.to, 'to'); }
+    const [rows] = await pool.query(`SELECT sa.*,l.starts_at,g.name group_name FROM salary_accruals sa JOIN lessons l ON l.id=sa.lesson_id
+      JOIN study_groups g ON g.id=l.group_id WHERE ${conditions.join(' AND ')} ORDER BY l.starts_at,sa.id`, params);
+    return rows.map((row) => ({ id: String(row.id), lessonId: String(row.lesson_id), teacherId: String(row.teacher_id), rateVersionId: row.rate_version_id == null ? null : String(row.rate_version_id),
+      type: row.accrual_type, presentChildren: Number(row.present_children), fixedAmount: String(row.fixed_amount), childrenAmount: String(row.children_amount), totalAmount: String(row.total_amount),
+      startsAt: isoDateTime(row.starts_at), groupName: row.group_name }));
+  }
+
+  return { list, get, create, update, start, putAttendance, finish, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals };
+}

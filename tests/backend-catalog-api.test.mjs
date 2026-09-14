@@ -120,7 +120,7 @@ test('MySQL-оплата задним числом выбирает цену н�
       if (sql.includes('FROM child_enrollments e')) {
         assert.equal(params.priceDate, '2026-08-20');
         assert.doesNotMatch(sql, /NOW\(6\)/);
-        return [[{ id: 7, child_id: 8, direction_id: 1, group_id: 9, project_id: 1, current_price: params.priceDate < '2026-09-01' ? '1025.00' : '820.00' }]];
+        return [[{ id: 7, child_id: 8, direction_id: 1, group_id: 9, project_id: 1, balance_lessons: '-1.00000000', current_price: params.priceDate < '2026-09-01' ? '1025.00' : '820.00' }]];
       }
       if (sql.includes('INSERT INTO payments')) return [{ insertId: 11 }];
       if (sql.includes('INSERT INTO balance_entries')) return [{ insertId: 12 }];
@@ -139,6 +139,7 @@ test('MySQL-оплата задним числом выбирает цену н�
   const lot = calls.find((call) => call.sql.includes('INSERT INTO balance_lots'));
   assert.equal(lot.params.entryId, 12);
   assert.equal(lot.params.price, '1025.00');
+  assert.equal(lot.params.remainingLessons, '1.00000000');
 });
 
 test('первый API-срез сохраняет справочники, ребёнка и независимое направление', async () => {

@@ -60,3 +60,13 @@ test('payment migration добавляет ledger-инвариант и базо
   assert.match(sql, /INSERT INTO balance_lots/);
   assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
 });
+
+test('lesson migration сохраняет историю attendance и фактическое время', async () => {
+  const sql = await readFile(new URL('../database/migrations/006_lessons_attendance_salary.sql', import.meta.url), 'utf8');
+  assert.match(sql, /scheduled_ends_at DATETIME\(6\)/);
+  assert.match(sql, /actual_starts_at DATETIME\(6\)/);
+  assert.match(sql, /actual_ends_at DATETIME\(6\)/);
+  assert.match(sql, /DROP INDEX uq_balance_entries_attendance/);
+  assert.match(sql, /idx_balance_entries_attendance/);
+  assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
+});

@@ -112,6 +112,11 @@ test('фактические save handlers подключены к API namespace
       paymentForm: 'paymentForm', refreshPaymentDirections: 'refreshPaymentDirections', updatePaymentCalc: 'updatePaymentCalc',
       savePaymentV116: 'savePayment', deletePayment: 'deletePaymentPrompt', confirmDeletePayment: 'deletePayment',
       deleteChildPayment: 'deleteChildPaymentPrompt', confirmDeleteChildPayment: 'confirmDeleteChildPayment',
+      openUnifiedCalendarEvent: 'openCalendarEvent', startLesson: 'startLesson', attend: 'attend',
+      toggleExtraAttendanceV138: 'toggleExtraAttendance', toggleVisitTrialV121: 'toggleTrial',
+      addExtra: 'addExtra', removeExtraFromLessonV138: 'removeExtra', saveTeacherQuickChildV121: 'saveQuickChild',
+      finishLesson: 'finishLesson', confirmFinish: 'confirmFinishLesson', saveLessonEdit: 'saveLessonEdit',
+      lToggle: 'lessonToggle', confirmDeleteVisitV121: 'deleteVisit', salaryCalculation: 'salaryCalculation',
     };
     for (const [legacyName, apiName] of Object.entries(aliases)) {
       assert.equal(globalThis.window[legacyName], globalThis.window.icubeApi[apiName], `${legacyName} остался legacy handler`);

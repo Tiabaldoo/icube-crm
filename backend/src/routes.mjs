@@ -6,6 +6,7 @@ import { createMysqlPayments } from './payments.mjs';
 import { createDirectionPriceVersions } from './price-versions.mjs';
 import { createSalaryRateVersions } from './salary-rate-versions.mjs';
 import { createPartnerAgreementVersions } from './partner-agreement-versions.mjs';
+import { createMysqlLessons } from './lessons.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -22,6 +23,7 @@ export function createApiRouter(pool, {
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
+  lessons = createMysqlLessons(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -75,29 +77,34 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
 
-  for (const resource of ['lessons', 'refunds', 'notifications']) {
-    const permission = resource === 'lessons' ? 'lessons:read' : '*';
+  for (const resource of ['refunds', 'notifications']) {
+    const permission = '*';
     router.get(`/${resource}`, requirePermission(permission), notImplemented(resource));
     router.get(`/${resource}/:id`, requirePermission(permission), notImplemented(`${resource}/:id`));
-    if (['lessons', 'refunds'].includes(resource)) router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
-    if (resource === 'lessons') router.patch(`/${resource}/:id`, requirePermission('*'), notImplemented(`PATCH ${resource}/:id`));
+    if (resource === 'refunds') router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
   }
+  const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [] });
+  router.get('/lessons', requirePermission('lessons:read'), run((request) => lessons.list(request.query, lessonContext(request))));
+  router.get('/lessons/:id', requirePermission('lessons:read'), run((request) => lessons.get(request.params.id, lessonContext(request))));
+  router.post('/lessons', requirePermission('*'), run((request) => lessons.create(request.body, lessonContext(request)), 201));
+  router.patch('/lessons/:id', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
-  router.post('/lessons/:id/start', requirePermission('lessons:start'), notImplemented('lessons/:id/start'));
-  router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), notImplemented('lesson attendance'));
-  router.post('/lessons/:id/finish', requirePermission('lessons:finish'), notImplemented('lessons/:id/finish'));
-  router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), notImplemented('lesson teacher details'));
-  router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), notImplemented('lessons/:id/cancel'));
-  router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), notImplemented('lesson quick child'));
-  router.post('/lessons/:id/extras', requirePermission('lessons:extras'), notImplemented('lesson extra child'));
-  router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), notImplemented('lesson extra child removal'));
+  router.post('/lessons/:id/start', requirePermission('lessons:start'), run((request) => lessons.start(request.params.id, request.body, lessonContext(request))));
+  router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.putAttendance(request.params.id, request.params.childId, request.body, lessonContext(request))));
+  router.post('/lessons/:id/finish', requirePermission('lessons:finish'), run((request) => lessons.finish(request.params.id, request.body, lessonContext(request))));
+  router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
+  router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), run((request) => lessons.cancel(request.params.id, lessonContext(request))));
+  router.post('/lessons/:id/empty-trip', requirePermission('*'), run((request) => lessons.emptyTrip(request.params.id, lessonContext(request))));
+  router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), run((request) => lessons.quickChild(request.params.id, request.body, lessonContext(request)), 201));
+  router.post('/lessons/:id/extras', requirePermission('lessons:extras'), run((request) => lessons.addExtra(request.params.id, request.body, lessonContext(request)), 201));
+  router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), run((request) => lessons.removeExtra(request.params.id, request.params.childId, lessonContext(request)), 200));
   router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
   router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
   router.post('/balance-transfers', requirePermission('*'), notImplemented('balance-transfers'));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));
-  router.get('/salary-accruals', requirePermission('*'), notImplemented('salary-accruals'));
+  router.get('/salary-accruals', requirePermission('*'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), notImplemented('partner-settlements'));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), notImplemented('statistics'));

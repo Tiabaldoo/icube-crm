@@ -20,6 +20,8 @@ function fail(error) {
 }
 const paymentMethodLabel = { cashless: 'Безналичный расчёт', cash: 'Наличные' };
 const isoToRu = (date) => String(date ?? '').split('-').reverse().join('.');
+const timestampDate = (value) => String(value ?? '').slice(0, 10);
+const timestampTime = (value) => String(value ?? '').slice(11, 16);
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 
 function mapGroup(group) {
@@ -38,9 +40,31 @@ function mapChild(child) {
       balance: Number(enrollment.balanceLessons) })) };
 }
 
+function mapLesson(lesson) {
+  const main = lesson.attendances.filter((item) => item.type === 'main');
+  const extras = lesson.attendances.filter((item) => item.type === 'extra');
+  const attendance = {}; const trialChildren = {};
+  main.forEach((item) => { attendance[Number(item.childId)] = item.present; trialChildren[Number(item.childId)] = item.trial; });
+  const scheduledDate = isoToRu(timestampDate(lesson.scheduledStartsAt));
+  const scheduledTime = `${timestampTime(lesson.scheduledStartsAt)}–${timestampTime(lesson.scheduledEndsAt)}`;
+  const date = isoToRu(timestampDate(lesson.startsAt)); const time = `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`;
+  const status = lesson.status === 'completed' ? 'Проведено' : lesson.status === 'in_progress' ? 'Идёт' : lesson.status === 'cancelled' ? 'Отменено' : 'Запланировано';
+  return {
+    id: Number(lesson.id), groupId: Number(lesson.groupId), teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
+    plannedTeacherId: Number(lesson.plannedTeacherId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
+    date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
+    extras: extras.map((item) => ({ childId: Number(item.childId), enrollmentId: Number(item.enrollmentId), trial: item.trial, present: item.present })),
+    photos: {}, started: ['in_progress', 'completed'].includes(lesson.status), done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
+    moved: date !== scheduledDate || time !== scheduledTime, intro: lesson.introGroup, emptyTrip: lesson.emptyTrip,
+    attendanceApplied: Boolean(lesson.attendanceAppliedAt), groupChildIdsV146: lesson.roster.filter((item) => item.type === 'main').map((item) => Number(item.childId)),
+    groupRosterFrozenV146: Boolean(lesson.rosterFrozenAt), groupRosterFrozenAtV146: lesson.rosterFrozenAt,
+    salaryAccrual: lesson.salary ?? null,
+  };
+}
+
 async function reload({ render = true } = {}) {
-  const [projects, directions, sites, teachers, groups, children, payments] = await Promise.all([
-    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'),
+  const [projects, directions, sites, teachers, groups, children, payments, lessons] = await Promise.all([
+    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('lessons'),
   ]);
   directories = { projects, directions };
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
@@ -54,6 +78,8 @@ async function reload({ render = true } = {}) {
     method: paymentMethodLabel[payment.method] ?? payment.method, methodCode: payment.method,
     groupId: payment.groupId == null ? null : Number(payment.groupId), projectId: payment.projectId == null ? null : Number(payment.projectId),
   }));
+  const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
+  legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
   if (render) legacy.render();
@@ -224,6 +250,139 @@ async function deletePayment(paymentId) {
     legacy.state.selectedChild = payment.childId; legacy.state.childTab = 'payments'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
   } catch (error) { fail(error); }
 }
+
+const ruToIso = (date) => String(date ?? '').split('.').reverse().join('-');
+function currentLesson() { return legacy.state.lessons.find((lesson) => lesson.id === Number(legacy.state.selectedLesson)); }
+async function reloadLesson(lessonId, page = legacy.state.page) {
+  await reload({ render: false });
+  legacy.state.selectedLesson = Number(lessonId); legacy.state.page = page; legacy.state.modal = null; legacy.render();
+}
+async function lessonCommand(path, body, page = legacy.state.page) {
+  const lessonId = currentLesson()?.id;
+  if (!lessonId) return;
+  try { await api.request(`/lessons/${lessonId}/${path}`, { method: 'POST', body: body ?? {} }); await reloadLesson(lessonId, page); }
+  catch (error) { fail(error); }
+}
+
+async function openCalendarEvent(key, role) {
+  try {
+    let lesson = legacy.state.lessons.find((item) => item.occurrenceKey === key);
+    if (!lesson) {
+      const [groupId, ...dateParts] = String(key).split('|');
+      const date = ruToIso(dateParts.join('|'));
+      const loaded = await api.list('lessons', `?from=${encodeURIComponent(date)}&to=${encodeURIComponent(date)}`);
+      const serverLesson = loaded.find((item) => String(item.groupId) === String(groupId));
+      if (serverLesson) {
+        lesson = mapLesson(serverLesson);
+        legacy.state.lessons.push(lesson);
+      }
+    }
+    if (!lesson) return;
+    legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson'; legacy.render();
+  } catch (error) { fail(error); }
+}
+
+async function startLessonApi() {
+  const lesson = currentLesson(); if (!lesson) return;
+  const teacherId = legacy.state.role === 'teacher' && typeof window.currentPrototypeTeacherId === 'function'
+    ? Number(window.currentPrototypeTeacherId() || lesson.teacherId) : lesson.teacherId;
+  await lessonCommand('start', { actualTeacherId: teacherId }, 'teacherLesson');
+}
+
+async function putAttendance(childId, present, trial) {
+  const lesson = currentLesson(); if (!lesson) return;
+  try {
+    await api.request(`/lessons/${lesson.id}/attendance/${Number(childId)}`, { method: 'PUT', body: { present: Boolean(present), trial: Boolean(trial) } });
+    await reloadLesson(lesson.id);
+  } catch (error) { fail(error); }
+}
+
+async function attendApi(childId, present) {
+  const lesson = currentLesson();
+  await putAttendance(childId, present, Boolean(lesson?.trialChildren?.[childId]));
+}
+async function toggleExtraAttendanceApi(childId, present) {
+  const extra = currentLesson()?.extras.find((item) => item.childId === Number(childId));
+  await putAttendance(childId, present, Boolean(extra?.trial));
+}
+async function toggleTrialApi(childId, trial, isExtra) {
+  const lesson = currentLesson();
+  const present = isExtra ? lesson?.extras.find((item) => item.childId === Number(childId))?.present : lesson?.attendance?.[childId];
+  await putAttendance(childId, Boolean(present), trial);
+}
+
+async function addExtraApi(childId) {
+  const lesson = currentLesson(); if (!lesson) return;
+  try { await api.request(`/lessons/${lesson.id}/extras`, { method: 'POST', body: { childId: Number(childId) } }); await reloadLesson(lesson.id, 'teacherLesson'); }
+  catch (error) { fail(error); }
+}
+async function removeExtraApi(childId) {
+  const lesson = currentLesson(); if (!lesson) return;
+  try { await api.request(`/lessons/${lesson.id}/extras/${Number(childId)}`, { method: 'DELETE' }); await reloadLesson(lesson.id, 'teacherLesson'); }
+  catch (error) { fail(error); }
+}
+
+async function saveQuickChildApi() {
+  const lesson = currentLesson(); if (!lesson) return;
+  const name = value('#tqc-name').trim(); const phone = value('#tqc-phone').trim();
+  if (!name) return window.alert('Укажите фамилию и имя ребёнка.');
+  try { await api.request(`/lessons/${lesson.id}/quick-child`, { method: 'POST', body: { name, phone: phone || null } }); await reloadLesson(lesson.id, 'teacherLesson'); }
+  catch (error) { fail(error); }
+}
+
+async function finishLessonApi() {
+  const lesson = currentLesson(); if (!lesson) return;
+  const present = Object.entries(lesson.attendance ?? {}).filter(([, value]) => value).map(([id]) => Number(id))
+    .concat(lesson.extras.filter((extra) => extra.present).map((extra) => extra.childId));
+  const missing = present.filter((id) => !lesson.photos?.[id]).length;
+  if (missing) {
+    legacy.state.modal = `<h3>Не у всех есть фотографии</h3><div class="notice">У ${missing} детей отсутствуют фотографии. Всё равно завершить занятие?</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn primary" onclick="icubeApi.confirmFinishLesson()">Завершить всё равно</button></div>`;
+    legacy.render(); return;
+  }
+  await confirmFinishLessonApi();
+}
+async function confirmFinishLessonApi() {
+  const lesson = currentLesson(); if (!lesson) return;
+  const topic = lesson.topic ?? '';
+  try {
+    if (topic) await api.update('lessons', lesson.id, { topic });
+    await api.request(`/lessons/${lesson.id}/finish`, { method: 'POST', body: {} });
+    await reloadLesson(lesson.id, 'teacherLesson');
+  } catch (error) { fail(error); }
+}
+
+async function saveLessonEditApi(lessonId, role) {
+  const lesson = legacy.state.lessons.find((item) => item.id === Number(lessonId)); if (!lesson) return;
+  try {
+    if (value('#le-cancel') === 'cancelled') await api.request(`/lessons/${lesson.id}/cancel`, { method: 'POST', body: {} });
+    else await api.update('lessons', lesson.id, { date: value('#le-date'), startTime: value('#le-start'), endTime: value('#le-end'), actualTeacherId: value('#le-teacher') });
+    await reloadLesson(lesson.id, role === 'teacher' ? 'teacherLesson' : 'lesson');
+  } catch (error) { fail(error); }
+}
+
+async function lessonToggleApi(key, enabled) {
+  const lesson = currentLesson(); if (!lesson) return;
+  try {
+    if (key === 'emptyTrip' && enabled) await api.request(`/lessons/${lesson.id}/empty-trip`, { method: 'POST', body: {} });
+    else if (key === 'emptyTrip') return window.alert('Пустой выезд уже зафиксирован. Для исправления обратитесь к разработчику.');
+    else await api.update('lessons', lesson.id, { introGroup: Boolean(enabled) });
+    await reloadLesson(lesson.id, 'lesson');
+  } catch (error) { fail(error); }
+}
+
+async function deleteVisitApi(childId, lessonId) {
+  const lesson = legacy.state.lessons.find((item) => item.id === Number(lessonId)); if (!lesson) return;
+  legacy.state.selectedLesson = lesson.id;
+  await putAttendance(childId, false, false);
+  legacy.state.modal = null;
+}
+
+function salaryCalculationApi(lesson) {
+  const salary = lesson?.salaryAccrual;
+  if (!salary) return { type: 'Не начисляется', children: 0, fixed: 0, childrenPay: 0, total: 0, rates: {} };
+  return { type: salary.type === 'empty_trip' ? 'Пустой выезд' : salary.type === 'intro' ? 'Ознакомительное занятие' : 'Обычное занятие',
+    children: salary.presentChildren, fixed: Number(salary.fixedAmount), childrenPay: Number(salary.childrenAmount), total: Number(salary.totalAmount), rates: {} };
+}
 const deleteChildPaymentPrompt = (_childId, paymentId) => deletePaymentPrompt(paymentId);
 const confirmDeleteChildPayment = (_childId, paymentId) => deletePayment(paymentId);
 
@@ -289,7 +448,11 @@ function installDeletionUi() {
 
 window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
-  deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload };
+  deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload,
+  openCalendarEvent, startLesson: startLessonApi, attend: attendApi, toggleExtraAttendance: toggleExtraAttendanceApi,
+  toggleTrial: toggleTrialApi, addExtra: addExtraApi, removeExtra: removeExtraApi, saveQuickChild: saveQuickChildApi,
+  finishLesson: finishLessonApi, confirmFinishLesson: confirmFinishLessonApi, saveLessonEdit: saveLessonEditApi,
+  lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
 window.saveGroupV111 = window.icubeApi.saveGroup;
@@ -309,6 +472,22 @@ window.newChildPayment = (childId, direction) => window.icubeApi.paymentForm(chi
 window.editChildPayment = (_childId, paymentId) => window.icubeApi.paymentForm(null, null, paymentId);
 window.deleteChildPayment = window.icubeApi.deleteChildPaymentPrompt;
 window.confirmDeleteChildPayment = window.icubeApi.confirmDeleteChildPayment;
+window.openUnifiedCalendarEvent = window.icubeApi.openCalendarEvent;
+window.startLesson = window.icubeApi.startLesson;
+window.attend = window.icubeApi.attend;
+window.toggleExtraAttendanceV138 = window.icubeApi.toggleExtraAttendance;
+window.toggleVisitTrialV121 = window.icubeApi.toggleTrial;
+window.forceVisitTrialV121 = window.icubeApi.toggleTrial;
+window.addExtra = window.icubeApi.addExtra;
+window.removeExtraFromLessonV138 = window.icubeApi.removeExtra;
+window.saveTeacherQuickChild = window.icubeApi.saveQuickChild;
+window.saveTeacherQuickChildV121 = window.icubeApi.saveQuickChild;
+window.finishLesson = window.icubeApi.finishLesson;
+window.confirmFinish = window.icubeApi.confirmFinishLesson;
+window.saveLessonEdit = window.icubeApi.saveLessonEdit;
+window.lToggle = window.icubeApi.lessonToggle;
+window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;
+window.salaryCalculation = window.icubeApi.salaryCalculation;
 
 installDeletionUi();
 reload().catch((error) => {
@@ -318,6 +497,7 @@ reload().catch((error) => {
   legacy.state.groups = [];
   legacy.state.children = [];
   legacy.state.payments = [];
+  legacy.state.lessons = [];
   legacy.state.selectedChild = null;
   legacy.state.selectedGroup = null;
   legacy.state.page = 'children';
