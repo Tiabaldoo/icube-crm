@@ -77,5 +77,38 @@ export function createDeletionService(pool) {
     return null;
   }
 
-  return { deleteSite, deleteTeacher, deleteGroup };
+  async function deleteEnrollment(rawId) {
+    const enrollmentId = numericId(rawId, 'enrollmentId');
+    try {
+      await inTransaction(pool, async (connection) => {
+        const [foundRows] = await connection.query('SELECT id,child_id FROM child_enrollments WHERE id=:id FOR UPDATE', { id: enrollmentId });
+        const enrollment = foundRows[0];
+        if (!enrollment) throw new ApiProblem(404, 'NOT_FOUND', 'Направление ребёнка не найдено');
+
+        const [childEnrollments] = await connection.query('SELECT id FROM child_enrollments WHERE child_id=:childId FOR UPDATE', { childId: enrollment.child_id });
+        if (childEnrollments.length <= 1) throw new ApiProblem(409, 'LAST_ENROLLMENT', 'Нельзя удалить последнее направление ребёнка. Сначала добавьте другое направление или удалите карточку ребёнка, если она создана ошибочно.');
+
+        const [dependencyRows] = await connection.query(`SELECT
+          (SELECT COUNT(*) FROM payments WHERE enrollment_id=:id) payments,
+          (SELECT COUNT(*) FROM refunds WHERE enrollment_id=:id) refunds,
+          (SELECT COUNT(*) FROM attendances WHERE enrollment_id=:id) attendances,
+          (SELECT COUNT(*) FROM balance_entries WHERE enrollment_id=:id) balanceEntries,
+          (SELECT COUNT(*) FROM balance_lots WHERE enrollment_id=:id) balanceLots,
+          (SELECT COUNT(*) FROM balance_transfers WHERE source_enrollment_id=:id OR target_enrollment_id=:id) balanceTransfers,
+          (SELECT COUNT(*) FROM enrollment_status_history WHERE enrollment_id=:id) statusHistory`, { id: enrollmentId });
+        const dependencies = dependencyRows[0] ?? {};
+        if (hasAny(dependencies)) throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', 'Нельзя удалить направление ребёнка, потому что по нему уже есть оплаты, посещения или другая история.', dependencies);
+
+        await connection.query('DELETE FROM group_memberships WHERE enrollment_id=:id', { id: enrollmentId });
+        await connection.query('DELETE FROM price_versions WHERE enrollment_id=:id', { id: enrollmentId });
+        await connection.query('DELETE FROM child_enrollments WHERE id=:id', { id: enrollmentId });
+      });
+    } catch (error) {
+      if (error?.code === 'ER_ROW_IS_REFERENCED_2') throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', 'Нельзя удалить направление ребёнка, потому что по нему уже есть оплаты, посещения или другая история.');
+      throw error;
+    }
+    return null;
+  }
+
+  return { deleteSite, deleteTeacher, deleteGroup, deleteEnrollment };
 }
