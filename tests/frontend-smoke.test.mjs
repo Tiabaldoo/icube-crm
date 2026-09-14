@@ -84,3 +84,38 @@ test('единый frontend загружается и рендерит все т
   assert.equal(context.__crmProbe.groupChildren(999).length, 1);
   context.__crmProbe.state.children = savedChildren;
 });
+
+test('фактические save handlers подключены к API namespace', async () => {
+  const [uiSource, indexSource] = await Promise.all([
+    readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+    readFile(new URL('../index.html', import.meta.url), 'utf8'),
+  ]);
+  assert.ok(indexSource.indexOf('crm-ui.js') < indexSource.indexOf('api-sync.mjs'));
+  for (const handler of ['saveSite', 'saveTeacher', 'saveGroup', 'saveChild', 'saveEnrollment', 'addEnrollment', 'deleteChild']) {
+    assert.match(uiSource, new RegExp(`onclick="icubeApi\\.${handler}\\(`), `форма не вызывает icubeApi.${handler}`);
+  }
+
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const state = { sites: [], teachers: [], groups: [], children: [], selectedChild: null, selectedGroup: null };
+  globalThis.window = { icubeLegacy: { state, render() {} }, alert() {} };
+  globalThis.document = { querySelector() { return null; } };
+  globalThis.fetch = async () => ({ ok: true, status: 200, async json() { return { data: [] }; } });
+  try {
+    await import(`../src/frontend/api-sync.mjs?smoke=${Date.now()}`);
+    await globalThis.window.icubeApi.reload();
+    const aliases = {
+      saveSite: 'saveSite', saveTeacher: 'saveTeacher', saveGroupV111: 'saveGroup', saveChildV111: 'saveChild',
+      saveManagedDirection: 'saveEnrollment', saveAddedDirectionV132: 'addEnrollment',
+      deleteChildPrompt: 'deleteChildPrompt', confirmDeleteChild: 'deleteChild',
+    };
+    for (const [legacyName, apiName] of Object.entries(aliases)) {
+      assert.equal(globalThis.window[legacyName], globalThis.window.icubeApi[apiName], `${legacyName} остался legacy handler`);
+    }
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+  }
+});

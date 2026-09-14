@@ -497,7 +497,7 @@ render();
     html += '<div class="field"><label>Активность</label><select class="select" id="gf-active"><option value="true"' + (g?.active!==false?' selected':'') + '>Активна</option><option value="false"' + (g?.active===false?' selected':'') + '>Неактивна</option></select></div>';
     html += '</div>';
 
-    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveGroupV111(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
+    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveGroup(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
     modal(html);
     setTimeout(refreshGroupPreview,0);
   };
@@ -710,7 +710,7 @@ render();
     html += '<div class="field"><label>Направление</label><select class="select" id="cf-direction" ' + (c?'disabled':'onchange="refreshChildGroupOptions()"') + '><option' + (direction==='Робототехника'?' selected':'') + '>Робототехника</option><option' + (direction==='Программирование'?' selected':'') + '>Программирование</option></select></div>';
     html += '<div class="field"><label>Основная группа</label><select class="select" id="cf-group"></select></div>';
     html += '<div class="field span-2"><label>Примечание</label><textarea class="textarea" id="cf-note">' + (c?.note || '') + '</textarea></div></div>';
-    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveChildV111(' + (c?.id || 'null') + ')">Сохранить</button></div>';
+    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveChild(' + (c?.id || 'null') + ')">Сохранить</button></div>';
     modal(html);
     setTimeout(function(){refreshChildGroupOptions(first?.groupId ?? null);},0);
   };
@@ -873,7 +873,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html += '</select></div>';
 
     html += '</div>';
-    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveGroupV111(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
+    html += '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveGroup(' + (g?.id || 'null') + ')">' + (g?'Сохранить':'Создать группу') + '</button></div>';
     modal(html);
   };
 
@@ -1769,7 +1769,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field"><label>Проект / владелец</label><select class="select" id="gf-project"><option'+(draft.project==='iCubeRobots'?' selected':'')+'>iCubeRobots</option><option'+(draft.project==='Зебра'?' selected':'')+'>Зебра</option></select></div>';
     html+='<div class="field"><label>Специальная цена, ₽</label><input class="input" id="gf-price" type="number" step="0.01" value="'+(draft.price??'')+'" placeholder="Пусто = цена направления"></div>';
     html+='<div class="field"><label>Активность</label><select class="select" id="gf-active"><option value="true"'+(draft.active?' selected':'')+'>Активна</option><option value="false"'+(!draft.active?' selected':'')+'>Неактивна</option></select></div>';
-    html+='</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveGroupV111('+(id||'null')+')">'+(g?'Сохранить':'Создать группу')+'</button></div>';
+    html+='</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveGroup('+(id||'null')+')">'+(g?'Сохранить':'Создать группу')+'</button></div>';
     modal(html);
   };
 
@@ -1790,7 +1790,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Телефон</label><input class="input" id="tf-phone" value="'+(t?.phone||'')+'" placeholder="+7 900 000-00-00"></div>';
     html+='<div class="field span-2"><label>Направления</label><div style="display:flex;gap:14px;flex-wrap:wrap;padding:10px 0"><label><input type="checkbox" id="tf-robot" '+(dirs.includes('Робототехника')?'checked':'')+'> Робототехника</label><label><input type="checkbox" id="tf-code" '+(dirs.includes('Программирование')?'checked':'')+'> Программирование</label></div></div>';
     html+='<div class="field span-2"><label>Статус</label><select class="select" id="tf-active"><option value="true"'+(t?.active!==false?' selected':'')+'>Активен</option><option value="false"'+(t?.active===false?' selected':'')+'>Неактивен</option></select></div>';
-    html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="saveTeacher('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
+    html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="icubeApi.saveTeacher('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
     modal(html);
   };
 
@@ -1823,7 +1823,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Адрес</label><input class="input" id="sf-address" value="'+(s?.address||'')+'"></div>';
     html+='<div class="field span-2"><label>Примечание</label><textarea class="textarea" id="sf-note">'+(s?.note||'')+'</textarea></div>';
     html+='<div class="field span-2"><label>Статус</label><select class="select" id="sf-active"><option value="true"'+(s?.active!==false?' selected':'')+'>Активна</option><option value="false"'+(s?.active===false?' selected':'')+'>Неактивна</option></select></div>';
-    html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="saveSite('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
+    html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="icubeApi.saveSite('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
     modal(html);
   };
 
@@ -2557,7 +2557,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2" id="md-individual-wrap" style="display:'+(enrollment.individualPrice!=null?'block':'none')+'"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="md-individual-package" type="number" min="0" step="1" value="'+packagePrice+'" placeholder="Например, 2900" oninput="refreshManageDirectionPreview()"><div class="muted mini" id="md-individual-hint" style="margin-top:5px">CRM будет считать стоимость одного занятия как цену абонемента ÷ 4.</div></div>';
     html+='</div>';
     html+='<div id="md-preview" class="card pad" style="margin-top:14px"></div>';
-    html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveManagedDirection('+childId+',\''+oldDirection+'\')">Сохранить изменения</button></div>';
+    html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveEnrollment('+childId+',\''+oldDirection+'\')">Сохранить изменения</button></div>';
     modal(html);
     setTimeout(refreshManageDirectionPreview,0);
   };
@@ -2900,7 +2900,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return;
     }
 
-    modal('<h3>Удалить ребёнка?</h3><div class="notice">У <b>'+child.name+'</b> нет оплат, возвратов и посещений. Карточка будет удалена без возможности восстановления в этом прототипе.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="confirmDeleteChild('+childId+')">Удалить ребёнка</button></div>');
+    modal('<h3>Удалить ребёнка?</h3><div class="notice">У <b>'+child.name+'</b> нет оплат, возвратов и посещений. Карточка будет удалена без возможности восстановления в этом прототипе.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubeApi.deleteChild('+childId+')">Удалить ребёнка</button></div>');
   };
 
   window.confirmDeleteChild=function(childId){
@@ -3490,7 +3490,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const missing=[]; if(!sites.length)missing.push('площадку'); if(!teachers.length)missing.push('преподавателя');
       html+='<div class="notice" style="margin-top:14px">Для создания группы сначала создайте '+missing.join(' и ')+' прямо кнопкой выше. Уже заполненные данные группы сохранятся.</div>';
     }
-    html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveGroupV111('+(id||'null')+')"'+((!sites.length||!teachers.length)?' disabled title="Сначала создайте площадку и преподавателя"':'')+'>'+(g?'Сохранить':'Создать группу')+'</button></div>';
+    html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveGroup('+(id||'null')+')"'+((!sites.length||!teachers.length)?' disabled title="Сначала создайте площадку и преподавателя"':'')+'>'+(g?'Сохранить':'Создать группу')+'</button></div>';
     modal(html);
   };
 
@@ -6026,7 +6026,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2" id="ad-individual-wrap" style="display:none"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="ad-individual-package" type="number" min="0" step="1" placeholder="Например, 2500" oninput="refreshAddDirectionPreviewV132()"><div class="muted mini" style="margin-top:5px">CRM разделит эту сумму на 4 и будет считать отдельную стоимость занятия для этого направления.</div></div>';
     html+='</div>';
     html+='<div id="ad-preview" class="card pad" style="margin-top:14px"></div>';
-    html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveAddedDirectionV132()">Добавить направление</button></div>';
+    html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.addEnrollment()">Добавить направление</button></div>';
     modal(html);
     setTimeout(refreshAddDirectionPreviewV132,0);
   };

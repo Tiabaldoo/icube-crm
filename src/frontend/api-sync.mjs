@@ -144,18 +144,19 @@ function deleteChildPrompt(childId) {
   const child = legacy.state.children.find((item) => item.id === Number(childId));
   if (!child) return;
   const safeName = String(child.name).replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
-  legacy.state.modal = `<h3>Удалить ребёнка?</h3><div class="notice">Сервер проверит оплаты, возвраты и посещения у <b>${safeName}</b>. При наличии истории удаление будет запрещено.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="confirmDeleteChild(${Number(childId)})">Удалить ребёнка</button></div>`;
+  legacy.state.modal = `<h3>Удалить ребёнка?</h3><div class="notice">Сервер проверит оплаты, возвраты и посещения у <b>${safeName}</b>. При наличии истории удаление будет запрещено.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubeApi.deleteChild(${Number(childId)})">Удалить ребёнка</button></div>`;
   legacy.render();
 }
 
-window.saveSite = saveSite;
-window.saveTeacher = saveTeacher;
-window.saveGroupV111 = saveGroup;
-window.saveChildV111 = saveChild;
-window.saveManagedDirection = saveEnrollment;
-window.saveAddedDirectionV132 = addEnrollment;
-window.deleteChildPrompt = deleteChildPrompt;
-window.confirmDeleteChild = deleteChild;
+window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt, reload };
+window.saveSite = window.icubeApi.saveSite;
+window.saveTeacher = window.icubeApi.saveTeacher;
+window.saveGroupV111 = window.icubeApi.saveGroup;
+window.saveChildV111 = window.icubeApi.saveChild;
+window.saveManagedDirection = window.icubeApi.saveEnrollment;
+window.saveAddedDirectionV132 = window.icubeApi.addEnrollment;
+window.deleteChildPrompt = window.icubeApi.deleteChildPrompt;
+window.confirmDeleteChild = window.icubeApi.deleteChild;
 
 reload().catch((error) => {
   console.error('Первичная загрузка CRM API не выполнена', error);
