@@ -9,7 +9,7 @@ export class ApiError extends Error {
 }
 
 export class ApiClient {
-  constructor({ baseUrl = '/api/v1', getAccessToken = () => null, fetchImpl = globalThis.fetch } = {}) {
+  constructor({ baseUrl = '/api/v1', getAccessToken = () => null, fetchImpl = globalThis.fetch.bind(globalThis) } = {}) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.getAccessToken = getAccessToken;
     this.fetchImpl = fetchImpl;
