@@ -101,12 +101,31 @@ export function createMysqlLessons(pool) {
     const first = Date.parse(`${from}T00:00:00Z`); const last = Date.parse(`${to}T00:00:00Z`);
     if (last < first || last - first > 370 * DAY) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Диапазон занятий должен быть не больше 370 дней');
     const params = { from, to };
-    const groupFilter = groupId == null ? '' : ' AND g.id=:groupId';
+    const cleanupGroupFilter = groupId == null ? '' : ' AND l.group_id=:groupId';
     if (groupId != null) params.groupId = identifier(groupId, 'groupId');
+    await pool.query(`DELETE l FROM lessons l JOIN study_groups g ON g.id=l.group_id
+      WHERE l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
+        AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
+        AND l.lock_version=1
+        AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)
+        AND (g.deleted_at IS NOT NULL OR g.active=FALSE OR DATE(l.scheduled_starts_at)<g.starts_on
+          OR (g.ends_on IS NOT NULL AND DATE(l.scheduled_starts_at)>g.ends_on)
+          OR WEEKDAY(l.scheduled_starts_at)+1<>g.weekday OR TIME(l.scheduled_starts_at)<>g.start_time
+          OR TIME(l.scheduled_ends_at)<>g.end_time OR l.direction_id_snapshot<>g.direction_id
+          OR l.project_id_snapshot<>g.project_id OR l.site_id_snapshot<>g.site_id
+          OR l.planned_teacher_id<>g.default_teacher_id)${cleanupGroupFilter}`, params);
+    const today = new Date().toISOString().slice(0, 10);
+    const occurrenceFrom = from < today ? today : from;
+    if (to < occurrenceFrom) return;
+    params.from = occurrenceFrom;
+    const groupFilter = groupId == null ? '' : ' AND g.id=:groupId';
     const [groups] = await pool.query(`SELECT g.id,g.direction_id,g.project_id,g.site_id,g.default_teacher_id,g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on
       FROM study_groups g WHERE g.deleted_at IS NULL AND g.active=TRUE AND g.starts_on<=:to AND (g.ends_on IS NULL OR g.ends_on>=:from)${groupFilter}`, params);
     for (const group of groups) {
-      for (const date of occurrenceDates(group, from, to)) {
+      for (const date of occurrenceDates(group, occurrenceFrom, to)) {
         const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
         await pool.query(`INSERT IGNORE INTO lessons
           (group_id,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
@@ -121,7 +140,7 @@ export function createMysqlLessons(pool) {
   async function list(filters = {}, context = {}) {
     const today = new Date();
     const from = filters.from ? dateOnly(filters.from, 'from') : new Date(today.getTime() - 120 * DAY).toISOString().slice(0, 10);
-    const to = filters.to ? dateOnly(filters.to, 'to') : new Date(today.getTime() + 240 * DAY).toISOString().slice(0, 10);
+    const to = filters.to ? dateOnly(filters.to, 'to') : new Date(today.getTime() + 90 * DAY).toISOString().slice(0, 10);
     await materialize(from, to);
     const conditions = ['l.starts_at>=CONCAT(:from,\' 00:00:00\')', 'l.starts_at<DATE_ADD(:to,INTERVAL 1 DAY)']; const params = { from, to };
     if (filters.teacherId) { conditions.push('(l.planned_teacher_id=:teacherId OR l.actual_teacher_id=:teacherId)'); params.teacherId = identifier(filters.teacherId, 'teacherId'); }
@@ -181,9 +200,12 @@ export function createMysqlLessons(pool) {
     } catch (error) { throw mysqlError(error); }
   }
 
-  async function priorVisit(connection, enrollmentId, lessonId) {
+  async function priorVisit(connection, enrollmentId, lesson) {
     const [rows] = await connection.query(`SELECT a.id FROM attendances a JOIN lessons l ON l.id=a.lesson_id
-      WHERE a.enrollment_id=:enrollmentId AND a.present=TRUE AND a.lesson_id<>:lessonId AND l.status='completed' LIMIT 1`, { enrollmentId, lessonId });
+      WHERE a.enrollment_id=:enrollmentId AND a.present=TRUE AND l.status='completed'
+        AND (l.starts_at<:startsAt OR (l.starts_at=:startsAt AND l.id<:lessonId)) LIMIT 1`, {
+      enrollmentId, startsAt: lesson.starts_at, lessonId: lesson.id,
+    });
     return rows.length > 0;
   }
 
@@ -206,7 +228,7 @@ export function createMysqlLessons(pool) {
         for (const member of roster) {
           await connection.query(`INSERT IGNORE INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
             VALUES (:lessonId,:childId,'main',:actorId,NOW(6))`, { lessonId: lesson.id, childId: member.childId, actorId: context.userId ?? null });
-          const trial = !(await priorVisit(connection, member.enrollmentId, lesson.id));
+          const trial = !(await priorVisit(connection, member.enrollmentId, lesson));
           await connection.query(`INSERT IGNORE INTO attendances
             (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id)
             VALUES (:lessonId,:childId,:enrollmentId,'main',FALSE,:trial,:actorId)`, {
@@ -224,13 +246,13 @@ export function createMysqlLessons(pool) {
     const date = isoDate(lesson.starts_at);
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,
       COALESCE(
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:date,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:date,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
-        (SELECT pv.price FROM price_versions pv JOIN group_memberships gm ON gm.group_id=pv.group_id WHERE pv.scope_type='group' AND gm.enrollment_id=e.id AND gm.started_on<=:date AND (gm.ended_on IS NULL OR gm.ended_on>=:date) AND pv.valid_from<DATE_ADD(:date,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:date,INTERVAL 1 DAY)) ORDER BY gm.started_on DESC,pv.valid_from DESC,pv.id DESC LIMIT 1),
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<DATE_ADD(:date,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:date,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+        (SELECT pv.price FROM price_versions pv JOIN group_memberships gm ON gm.group_id=pv.group_id WHERE pv.scope_type='group' AND gm.enrollment_id=e.id AND gm.started_on<=:date AND (gm.ended_on IS NULL OR gm.ended_on>=:date) AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY gm.started_on DESC,pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
       ) current_price
       FROM child_enrollments e WHERE e.child_id=:childId AND e.direction_id=:directionId FOR UPDATE`, {
-      childId: identifier(childId, 'childId'), directionId: lesson.direction_id_snapshot, date,
+      childId: identifier(childId, 'childId'), directionId: lesson.direction_id_snapshot, date, startsAt: lesson.starts_at,
     });
     if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет направления этого занятия');
     if (rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
@@ -287,8 +309,7 @@ export function createMysqlLessons(pool) {
   async function salaryRate(connection, lesson) {
     const [rows] = await connection.query(`SELECT * FROM salary_rate_versions WHERE
       (teacher_id=:teacherId OR teacher_id IS NULL) AND (direction_id=:directionId OR direction_id IS NULL)
-      AND valid_from<DATE_ADD(DATE(:startsAt),INTERVAL 1 DAY)
-      AND (valid_to IS NULL OR valid_to>=DATE_ADD(DATE(:startsAt),INTERVAL 1 DAY))
+      AND valid_from<=:startsAt AND (valid_to IS NULL OR valid_to>:startsAt)
       ORDER BY (teacher_id=:teacherId) DESC,(direction_id=:directionId) DESC,valid_from DESC,id DESC LIMIT 1`, {
       teacherId: lesson.actual_teacher_id ?? lesson.planned_teacher_id, directionId: lesson.direction_id_snapshot, startsAt: lesson.starts_at,
     });
@@ -412,7 +433,7 @@ export function createMysqlLessons(pool) {
         const enrollment = await enrollmentForAttendance(connection, lesson, childId);
         const [existing] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
         if (existing.length) return;
-        const trial = !(await priorVisit(connection, enrollment.id, lesson.id));
+        const trial = !(await priorVisit(connection, enrollment.id, lesson));
         await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
           VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
         const [result] = await connection.query(`INSERT INTO attendances

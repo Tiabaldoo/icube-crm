@@ -153,7 +153,17 @@ export function createMysqlCatalog(pool) {
     await assertIds(connection, 'directions', [value.directionId], 'directionId'); await assertIds(connection, 'sites', [value.siteId], 'siteId'); await assertIds(connection, 'projects', [value.projectId], 'projectId'); await assertIds(connection, 'teachers', [value.teacherId], 'teacherId');
     const [teacherDirection] = await connection.query('SELECT teacher_id FROM teacher_directions WHERE teacher_id=:teacherId AND direction_id=:directionId', value);
     if (!teacherDirection.length) throw new ApiProblem(400, 'TEACHER_DIRECTION_MISMATCH', 'Преподаватель не работает с направлением группы');
-    if (groupId && (String(value.directionId) !== String(current.directionId) || String(value.projectId) !== String(current.projectId))) { const [lessons] = await connection.query('SELECT id FROM lessons WHERE group_id=:id LIMIT 1', { id: groupId }); if (lessons.length) throw new ApiProblem(409, 'GROUP_HAS_HISTORY', 'Направление и проект группы с занятиями менять нельзя'); }
+    if (groupId && (String(value.directionId) !== String(current.directionId) || String(value.projectId) !== String(current.projectId))) {
+      const [lessons] = await connection.query(`SELECT l.id FROM lessons l WHERE l.group_id=:id AND NOT (
+        l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
+        AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
+        AND l.lock_version=1 AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)
+      ) LIMIT 1`, { id: groupId });
+      if (lessons.length) throw new ApiProblem(409, 'GROUP_HAS_HISTORY', 'Направление и проект группы с историей занятий менять нельзя');
+    }
     if (groupId) await connection.query(`UPDATE study_groups SET name=:name,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active WHERE id=:id`, { ...value, id: groupId });
     else { const [result] = await connection.query(`INSERT INTO study_groups (name,direction_id,site_id,project_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,active) VALUES (:name,:directionId,:siteId,:projectId,:teacherId,:weekday,:startTime,:endTime,:startsOn,:endsOn,:active)`, value); groupId = result.insertId; }
     if (body.price !== undefined) await setGroupPrice(connection, groupId, body.price === '' ? null : body.price);
