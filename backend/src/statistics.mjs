@@ -82,18 +82,18 @@ export function createStatistics(pool) {
         ORDER BY l.starts_at,l.id,a.id`, params),
       pool.query(`WITH ranked AS (
           SELECT a.child_id,l.group_id,l.project_id_snapshot,l.direction_id_snapshot,l.starts_at,
-            ROW_NUMBER() OVER (PARTITION BY a.child_id,l.project_id_snapshot,l.direction_id_snapshot ORDER BY l.starts_at,l.id,a.id) row_number
+            ROW_NUMBER() OVER (PARTITION BY a.child_id,l.project_id_snapshot,l.direction_id_snapshot ORDER BY l.starts_at,l.id,a.id) AS rn
           FROM attendances a JOIN lessons l ON l.id=a.lesson_id
           WHERE l.status='completed' AND l.deleted_at IS NULL AND a.marked_at IS NOT NULL AND a.present=TRUE AND a.is_trial=FALSE
         ) SELECT child_id,group_id,project_id_snapshot,direction_id_snapshot,starts_at FROM ranked
-        WHERE row_number=1 AND DATE(starts_at) BETWEEN :from AND :to${snapshotFilter}`, params),
+        WHERE rn=1 AND DATE(starts_at) BETWEEN :from AND :to${snapshotFilter}`, params),
       pool.query(`WITH ranked AS (
           SELECT h.enrollment_id,e.child_id,h.group_id_snapshot group_id,h.project_id_snapshot,h.direction_id_snapshot,h.new_status,
-            ROW_NUMBER() OVER (PARTITION BY h.enrollment_id ORDER BY h.changed_at DESC,h.id DESC) row_number
+            ROW_NUMBER() OVER (PARTITION BY h.enrollment_id ORDER BY h.changed_at DESC,h.id DESC) AS rn
           FROM enrollment_status_history h JOIN child_enrollments e ON e.id=h.enrollment_id
           WHERE DATE(h.changed_at) BETWEEN :from AND :to
         ) SELECT enrollment_id,child_id,group_id,project_id_snapshot,direction_id_snapshot,new_status FROM ranked
-        WHERE row_number=1 AND new_status IN ('paused','finished')${snapshotFilter}`, params),
+        WHERE rn=1 AND new_status IN ('paused','finished')${snapshotFilter}`, params),
       pool.query(`SELECT g.id group_id,g.name group_name,g.project_id,p.name project_name,g.direction_id,d.name direction_name,e.child_id
         FROM study_groups g JOIN projects p ON p.id=g.project_id JOIN directions d ON d.id=g.direction_id
         LEFT JOIN group_memberships gm ON gm.group_id=g.id AND gm.started_on<=CURDATE() AND (gm.ended_on IS NULL OR gm.ended_on>=CURDATE())
