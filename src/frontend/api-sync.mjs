@@ -13,6 +13,14 @@ let groupSavePending = false;
 let balanceTransferPending = false;
 let balanceTransferKey = null;
 
+export function partnerDefaultPeriod(now = new Date()) {
+  const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return { from: localIso(new Date(now.getFullYear(), now.getMonth() - 1, 26)), to: localIso(new Date(now.getFullYear(), now.getMonth(), 25)) };
+}
+const initialPartnerPeriod = partnerDefaultPeriod();
+legacy.state.partnerDateFrom ||= initialPartnerPeriod.from;
+legacy.state.partnerDateTo ||= initialPartnerPeriod.to;
+
 function element(selector) { return document.querySelector(selector); }
 function value(selector) { return element(selector)?.value ?? ''; }
 function checked(selector) { return Boolean(element(selector)?.checked); }
@@ -246,6 +254,45 @@ async function confirmBalanceTransfer(sourceEnrollmentId) {
     await reload({ render: false }); legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; legacy.render();
   } catch (error) { fail(error); }
   finally { balanceTransferPending = false; if (button?.isConnected !== false) button.disabled = false; }
+}
+
+function partnerProjects() { return directories.projects.filter((project) => project.partnerId != null); }
+function partnerPage() {
+  const projects = partnerProjects();
+  if (!projects.length) return `${legacy.pageHead('Партнёр', 'Расчёт по операциям партнёрского проекта.')}<div class="card pad"><div class="empty">Нет проекта с назначенным партнёром.</div></div>`;
+  if (!projects.some((project) => String(project.id) === String(legacy.state.partnerProjectId))) legacy.state.partnerProjectId = String(projects[0].id);
+  const result = legacy.state.partnerSettlement;
+  let content = `<div class="card pad"><div class="empty">Выберите период и нажмите «Рассчитать».</div></div>`;
+  if (legacy.state.partnerSettlementError) content = `<div class="card pad"><div class="notice">${html(legacy.state.partnerSettlementError)}</div></div>`;
+  if (result) {
+    const percent = (value) => String(value).replace(/\.0+$/, ''); const transfer = Number(result.transferAmount); const positive = transfer >= 0;
+    content = `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>
+      <div class="partner-lines"><div class="partner-line"><span>Оплаты</span><b>${displayMoney(result.paymentsAmount)}</b></div>
+      <div class="partner-line"><span>Получено партнёром наличными</span><b>${displayMoney(result.cashHeldByPartner)}</b></div>
+      <div class="partner-line"><span>Возвраты</span><b>${displayMoney(result.refundsAmount)}</b></div>
+      <div class="partner-line"><span>Доход после возвратов</span><b>${displayMoney(result.incomeAmount)}</b></div>
+      <div class="partner-line"><span>Налог ${percent(result.taxPercent)}%</span><b>− ${displayMoney(result.taxAmount)}</b></div>
+      <div class="partner-line"><span>Зарплата</span><b>− ${displayMoney(result.salaryAmount)}</b></div>
+      <div class="partner-line partner-divider"><span>К распределению</span><b>${displayMoney(result.distributableAmount)}</b></div>
+      <div class="partner-line"><span>iCube ${percent(result.icubePercent)}%</span><b>${displayMoney(result.icubeShareAmount)}</b></div>
+      <div class="partner-line"><span>Партнёр ${percent(result.partnerPercent)}%</span><b>${displayMoney(result.partnerShareAmount)}</b></div></div>
+      <div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'Перевести партнёру' : 'Партнёр должен передать iCube'}</span><b>${displayMoney(positive ? result.transferAmount : String(result.transferAmount).replace('-', ''))}</b></div></div>`;
+  }
+  return `${legacy.pageHead('Партнёр', 'Расчёт по реальным операциям и занятиям партнёрского проекта.')}<div class="toolbar">
+    <select class="select" id="partner-project" style="max-width:240px">${projects.map((project) => `<option value="${project.id}"${String(project.id) === String(legacy.state.partnerProjectId) ? ' selected' : ''}>${html(project.name)}</option>`).join('')}</select>
+    <input class="input" id="partner-from" type="date" value="${html(legacy.state.partnerDateFrom)}" style="max-width:180px">
+    <input class="input" id="partner-to" type="date" value="${html(legacy.state.partnerDateTo)}" style="max-width:180px">
+    <button class="btn primary" onclick="icubeApi.calculatePartnerSettlement()">Рассчитать</button></div>${content}`;
+}
+async function calculatePartnerSettlement() {
+  legacy.state.partnerProjectId = value('#partner-project') || legacy.state.partnerProjectId;
+  legacy.state.partnerDateFrom = value('#partner-from') || legacy.state.partnerDateFrom;
+  legacy.state.partnerDateTo = value('#partner-to') || legacy.state.partnerDateTo;
+  try {
+    legacy.state.partnerSettlement = await api.list('partner-settlements', `?projectId=${encodeURIComponent(legacy.state.partnerProjectId)}&from=${encodeURIComponent(legacy.state.partnerDateFrom)}&to=${encodeURIComponent(legacy.state.partnerDateTo)}`);
+    legacy.state.partnerSettlementError = null;
+  } catch (error) { legacy.state.partnerSettlement = null; legacy.state.partnerSettlementError = error.message; }
+  legacy.render();
 }
 
 function paymentEnrollment(childId, enrollmentId) {
@@ -668,6 +715,7 @@ window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment,
   cancelCurrentLesson: cancelCurrentLessonApi, markCurrentLessonEmptyTrip: markCurrentLessonEmptyTripApi,
   confirmAddChildren: confirmAddChildrenApi, deleteLesson: deleteLessonApi,
   transferDirectionBalanceForm, refreshBalanceTransferPreview, confirmBalanceTransfer,
+  calculatePartnerSettlement,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
@@ -713,6 +761,8 @@ window.deleteLessonConfirmed = window.icubeApi.deleteLesson;
 window.transferDirectionBalanceFormV142 = window.icubeApi.transferDirectionBalanceForm;
 window.refreshTransferPreviewV142 = window.icubeApi.refreshBalanceTransferPreview;
 window.confirmTransferDirectionBalanceV142 = window.icubeApi.confirmBalanceTransfer;
+window.partner = partnerPage;
+window.applyPartnerFiltersV123 = window.icubeApi.calculatePartnerSettlement;
 window.saveLessonEdit = window.icubeApi.saveLessonEdit;
 window.lToggle = window.icubeApi.lessonToggle;
 window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;

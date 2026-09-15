@@ -796,7 +796,7 @@ render();
 
 // Узкий мост для модульного API-адаптера. Legacy-интерфейс остаётся владельцем
 // отображения, а выбранные справочники ниже заменяются серверным read model.
-window.icubeLegacy = { state: state, render: function(){ return window.render(); }, effectivePrice: effectivePrice };
+window.icubeLegacy = { state: state, render: function(){ return window.render(); }, effectivePrice: effectivePrice, pageHead: pageHead };
 
 
 // v1.1.1 polish — compact group time row + recurring monthly calendar.

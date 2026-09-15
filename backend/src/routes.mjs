@@ -9,6 +9,7 @@ import { createSalaryRateVersions } from './salary-rate-versions.mjs';
 import { createPartnerAgreementVersions } from './partner-agreement-versions.mjs';
 import { createMysqlLessons } from './lessons.mjs';
 import { createBalanceTransfers } from './balance-transfers.mjs';
+import { createPartnerSettlements } from './partner-settlements.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -28,6 +29,7 @@ export function createApiRouter(pool, {
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
   lessons = createMysqlLessons(pool),
   balanceTransfers = createBalanceTransfers(pool),
+  partnerSettlements = createPartnerSettlements(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -118,7 +120,7 @@ export function createApiRouter(pool, {
   router.get('/salary-accruals', requirePermission('*'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
   router.get('/notifications', requirePermission('*'), run((request) => lessons.notifications(lessonContext(request))));
   router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
-  router.get('/partner-settlements', requirePermission('partner-settlements:read'), notImplemented('partner-settlements'));
+  router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(request.query)));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), notImplemented('statistics'));
   router.post('/notifications/:id/read', requirePermission('*'), notImplemented('notification read'));
