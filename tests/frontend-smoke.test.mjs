@@ -233,6 +233,15 @@ test('серверные прошлые и перенесённые провед
   }
 });
 
+test('кнопка удаления посещения вызывает отдельный DELETE API и затем reload', async () => {
+  const [frontend, routes] = await Promise.all([
+    readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/routes.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(frontend, /async function deleteVisitApi[\s\S]*?\/attendance\/\$\{Number\(childId\)\}`,[\s\S]*?method: 'DELETE'[\s\S]*?await reload\(\{ render: false \}\)/);
+  assert.match(routes, /router\.delete\('\/lessons\/:id\/attendance\/:childId'/);
+});
+
 test('общая кнопка настроек сохраняет цены и зарплату, управляет dirty-state и показывает успех', async () => {
   const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
   assert.match(source, /button\.textContent = 'Сохранить настройки'/);

@@ -16,6 +16,17 @@ export function createDeletionService(pool) {
     if (!found) throw new ApiProblem(404, 'NOT_FOUND', `${label} не найдена`);
   }
 
+  async function purgeEnrollmentLedger(connection, enrollmentId) {
+    await connection.query(`DELETE blc FROM balance_lot_consumptions blc
+      LEFT JOIN balance_lots bl ON bl.id=blc.balance_lot_id
+      LEFT JOIN balance_entries be ON be.id=blc.balance_entry_id
+      WHERE bl.enrollment_id=:id OR be.enrollment_id=:id`, { id: enrollmentId });
+    await connection.query('DELETE FROM balance_lots WHERE enrollment_id=:id', { id: enrollmentId });
+    await connection.query(`DELETE reversal FROM balance_entries reversal
+      JOIN balance_entries original ON original.id=reversal.reversal_of_entry_id WHERE original.enrollment_id=:id`, { id: enrollmentId });
+    await connection.query('DELETE FROM balance_entries WHERE enrollment_id=:id', { id: enrollmentId });
+  }
+
   async function deleteSite(rawId) {
     const siteId = numericId(rawId, 'siteId');
     await ensureExists('sites', siteId, 'Площадка');
@@ -67,14 +78,40 @@ export function createDeletionService(pool) {
           AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id)
           AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
           AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)`, { id: groupId });
+        const [safeLessons] = await connection.query(`SELECT l.id FROM lessons l WHERE l.group_id=:id
+          AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id AND a.marked_at IS NOT NULL)
+          AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id AND ph.deleted_at IS NULL)
+          AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id AND sa.reversed_at IS NULL AND sa.total_amount<>0)
+          AND NOT EXISTS (SELECT 1 FROM children c WHERE c.created_from_lesson_id=l.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM attendances a JOIN balance_entries debit ON debit.attendance_id=a.id
+            LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=debit.id
+            WHERE a.lesson_id=l.id AND debit.entry_type<>'reversal' AND reversal.id IS NULL
+              AND (debit.lessons_delta<>0 OR debit.amount_delta<>0)
+          ) FOR UPDATE`, { id: groupId });
+        for (const lesson of safeLessons) {
+          await connection.query(`DELETE blc FROM balance_lot_consumptions blc JOIN balance_entries debit ON debit.id=blc.balance_entry_id
+            JOIN attendances a ON a.id=debit.attendance_id WHERE a.lesson_id=:lessonId`, { lessonId: lesson.id });
+          await connection.query(`DELETE reversal FROM balance_entries reversal JOIN balance_entries debit ON debit.id=reversal.reversal_of_entry_id
+            JOIN attendances a ON a.id=debit.attendance_id WHERE a.lesson_id=:lessonId`, { lessonId: lesson.id });
+          await connection.query(`DELETE debit FROM balance_entries debit JOIN attendances a ON a.id=debit.attendance_id
+            WHERE a.lesson_id=:lessonId`, { lessonId: lesson.id });
+          await connection.query('UPDATE salary_accruals SET supersedes_accrual_id=NULL WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+          await connection.query('DELETE FROM salary_accruals WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+          await connection.query('DELETE FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+          await connection.query('DELETE FROM attendances WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+          await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+          await connection.query('DELETE FROM lessons WHERE id=:lessonId', { lessonId: lesson.id });
+        }
+        await connection.query('DELETE FROM group_memberships WHERE group_id=:id AND ended_on IS NOT NULL', { id: groupId });
         const [dependencyRows] = await connection.query(`SELECT
-          (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id) memberships,
+          (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id AND ended_on IS NULL) memberships,
           (SELECT COUNT(*) FROM lessons WHERE group_id=:id) lessons,
-          (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id) attendances,
+          (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id AND a.marked_at IS NOT NULL) attendances,
           (SELECT COUNT(*) FROM child_status_history WHERE group_id_snapshot=:id) childStatusHistory,
           (SELECT COUNT(*) FROM enrollment_status_history WHERE group_id_snapshot=:id) enrollmentStatusHistory,
-          (SELECT COUNT(*) FROM payments WHERE group_id_snapshot=:id) payments,
-          (SELECT COUNT(*) FROM refunds WHERE group_id_snapshot=:id) refunds`, { id: groupId });
+          (SELECT COUNT(*) FROM payments WHERE group_id_snapshot=:id AND deleted_at IS NULL) payments,
+          (SELECT COUNT(*) FROM refunds WHERE group_id_snapshot=:id AND deleted_at IS NULL) refunds`, { id: groupId });
         const dependencies = dependencyRows[0] ?? {};
         if (hasAny(dependencies)) throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.', dependencies);
         await connection.query('DELETE FROM price_versions WHERE group_id=:id', { id: groupId });
@@ -91,7 +128,7 @@ export function createDeletionService(pool) {
     const enrollmentId = numericId(rawId, 'enrollmentId');
     try {
       await inTransaction(pool, async (connection) => {
-        const [foundRows] = await connection.query('SELECT id,child_id FROM child_enrollments WHERE id=:id FOR UPDATE', { id: enrollmentId });
+        const [foundRows] = await connection.query('SELECT id,child_id,balance_lessons FROM child_enrollments WHERE id=:id FOR UPDATE', { id: enrollmentId });
         const enrollment = foundRows[0];
         if (!enrollment) throw new ApiProblem(404, 'NOT_FOUND', 'Направление ребёнка не найдено');
 
@@ -99,17 +136,23 @@ export function createDeletionService(pool) {
         if (childEnrollments.length <= 1) throw new ApiProblem(409, 'LAST_ENROLLMENT', 'Нельзя удалить последнее направление ребёнка. Сначала добавьте другое направление или удалите карточку ребёнка, если она создана ошибочно.');
 
         const [dependencyRows] = await connection.query(`SELECT
-          (SELECT COUNT(*) FROM payments WHERE enrollment_id=:id) payments,
-          (SELECT COUNT(*) FROM refunds WHERE enrollment_id=:id) refunds,
-          (SELECT COUNT(*) FROM attendances WHERE enrollment_id=:id) attendances,
-          (SELECT COUNT(*) FROM balance_entries WHERE enrollment_id=:id) balanceEntries,
-          (SELECT COUNT(*) FROM balance_lots WHERE enrollment_id=:id) balanceLots,
+          (SELECT COUNT(*) FROM payments WHERE enrollment_id=:id AND deleted_at IS NULL) payments,
+          (SELECT COUNT(*) FROM refunds WHERE enrollment_id=:id AND deleted_at IS NULL) refunds,
+          (SELECT COUNT(*) FROM attendances WHERE enrollment_id=:id AND marked_at IS NOT NULL) attendances,
+          (SELECT COUNT(*) FROM group_memberships WHERE enrollment_id=:id AND ended_on IS NULL) memberships,
           (SELECT COUNT(*) FROM balance_transfers WHERE source_enrollment_id=:id OR target_enrollment_id=:id) balanceTransfers,
-          (SELECT COUNT(*) FROM enrollment_status_history WHERE enrollment_id=:id) statusHistory`, { id: enrollmentId });
+          (SELECT COUNT(*) FROM balance_entries original
+            LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=original.id
+            WHERE original.enrollment_id=:id AND original.entry_type<>'reversal' AND reversal.id IS NULL
+              AND (original.lessons_delta<>0 OR original.amount_delta<>0)) balanceEffects`, { id: enrollmentId });
         const dependencies = dependencyRows[0] ?? {};
+        dependencies.balance = Number(enrollment.balance_lessons) === 0 ? 0 : 1;
         if (hasAny(dependencies)) throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', 'Нельзя удалить направление ребёнка, потому что по нему уже есть оплаты, посещения или другая история.', dependencies);
 
+        await purgeEnrollmentLedger(connection, enrollmentId);
+        await connection.query('DELETE FROM attendances WHERE enrollment_id=:id AND marked_at IS NULL', { id: enrollmentId });
         await connection.query('DELETE FROM group_memberships WHERE enrollment_id=:id', { id: enrollmentId });
+        await connection.query('DELETE FROM enrollment_status_history WHERE enrollment_id=:id', { id: enrollmentId });
         await connection.query('DELETE FROM price_versions WHERE enrollment_id=:id', { id: enrollmentId });
         await connection.query('DELETE FROM child_enrollments WHERE id=:id', { id: enrollmentId });
       });

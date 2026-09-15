@@ -292,12 +292,12 @@ export function createMysqlLessons(pool) {
 
   async function reverseAttendanceDebit(connection, attendance, context) {
     const debit = await activeAttendanceDebit(connection, attendance.id);
-    if (!debit) return;
+    if (!debit) return null;
     const [consumptions] = await connection.query('SELECT balance_lot_id,lessons FROM balance_lot_consumptions WHERE balance_entry_id=:entryId FOR UPDATE', { entryId: debit.id });
     for (const consumption of consumptions) {
       await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: consumption.balance_lot_id, lessons: String(consumption.lessons) });
     }
-    await connection.query(`INSERT INTO balance_entries
+    const [reversal] = await connection.query(`INSERT INTO balance_entries
       (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,reversal_of_entry_id,occurred_at,created_by_user_id)
       VALUES (:enrollmentId,'reversal',:lessons,:amount,:price,:oldEntryId,NOW(6),:actorId)`, {
       enrollmentId: debit.enrollment_id, lessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))),
@@ -308,6 +308,15 @@ export function createMysqlLessons(pool) {
       id: debit.enrollment_id, lessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))),
     });
     await connection.query('UPDATE attendances SET charged_lessons=0 WHERE id=:id', { id: attendance.id });
+    return { debitId: debit.id, reversalId: reversal.insertId };
+  }
+
+  async function purgeAttendanceLedger(connection, attendanceId) {
+    await connection.query(`DELETE blc FROM balance_lot_consumptions blc
+      JOIN balance_entries debit ON debit.id=blc.balance_entry_id WHERE debit.attendance_id=:attendanceId`, { attendanceId });
+    await connection.query(`DELETE reversal FROM balance_entries reversal
+      JOIN balance_entries debit ON debit.id=reversal.reversal_of_entry_id WHERE debit.attendance_id=:attendanceId`, { attendanceId });
+    await connection.query('DELETE FROM balance_entries WHERE attendance_id=:attendanceId', { attendanceId });
   }
 
   async function salaryRate(connection, lesson) {
@@ -395,6 +404,34 @@ export function createMysqlLessons(pool) {
           lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
         lesson.status = 'completed';
         await recalculateSalary(connection, lesson);
+      });
+      return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function removeAttendance(lessonId, childId, context = {}) {
+    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить ошибочное посещение может только директор');
+    childId = identifier(childId, 'childId');
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId);
+        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
+        if (!rows.length) throw new ApiProblem(404, 'ATTENDANCE_NOT_FOUND', 'Посещение не найдено');
+        const attendance = rows[0];
+        await reverseAttendanceDebit(connection, attendance, context);
+        await purgeAttendanceLedger(connection, attendance.id);
+        await connection.query('DELETE FROM attendances WHERE id=:id', { id: attendance.id });
+        if (attendance.attendance_type === 'extra') {
+          await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
+        }
+        if (lesson.status === 'completed') {
+          const [markedRows] = await connection.query('SELECT COUNT(*) marked_count FROM attendances WHERE lesson_id=:lessonId AND marked_at IS NOT NULL', { lessonId: lesson.id });
+          if (!bool(lesson.is_empty_trip) && Number(markedRows[0]?.marked_count ?? 0) === 0) {
+            await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE lesson_id=:lessonId AND reversed_at IS NULL', { lessonId: lesson.id });
+          } else {
+            await recalculateSalary(connection, lesson);
+          }
+        }
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -573,5 +610,5 @@ export function createMysqlLessons(pool) {
     }));
   }
 
-  return { list, get, create, update, start, putAttendance, finish, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
+  return { list, get, create, update, start, putAttendance, finish, removeAttendance, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
 }

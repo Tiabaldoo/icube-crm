@@ -188,9 +188,15 @@ export function createMysqlPayments(pool) {
         if (refunds.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплату с возвратом удалить нельзя');
         const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:id AND entry_type='payment' FOR UPDATE`, { id: paymentId });
         if (entries.length !== 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Не найдена единственная запись баланса для оплаты');
-        const [consumptions] = await connection.query(`SELECT blc.id FROM balance_lot_consumptions blc JOIN balance_lots bl ON bl.id=blc.balance_lot_id WHERE bl.source_balance_entry_id=:id LIMIT 1`, { id: entries[0].id });
-        if (consumptions.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплата уже использована в финансовой истории');
+        const [activeConsumptions] = await connection.query(`SELECT blc.id FROM balance_lot_consumptions blc
+          JOIN balance_lots bl ON bl.id=blc.balance_lot_id
+          JOIN balance_entries debit ON debit.id=blc.balance_entry_id
+          LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=debit.id
+          WHERE bl.source_balance_entry_id=:id AND reversal.id IS NULL LIMIT 1`, { id: entries[0].id });
+        if (activeConsumptions.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплата ещё используется в активной финансовой истории');
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: payment.enrollment_id, lessons: String(payment.lessons_credit) });
+        await connection.query(`DELETE blc FROM balance_lot_consumptions blc
+          JOIN balance_lots bl ON bl.id=blc.balance_lot_id WHERE bl.source_balance_entry_id=:id`, { id: entries[0].id });
         await connection.query('DELETE FROM balance_lots WHERE source_balance_entry_id=:id', { id: entries[0].id });
         await connection.query('DELETE FROM balance_entries WHERE id=:id', { id: entries[0].id });
         await connection.query('DELETE FROM payments WHERE id=:id', { id: paymentId });

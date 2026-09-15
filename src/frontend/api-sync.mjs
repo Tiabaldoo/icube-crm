@@ -395,9 +395,11 @@ async function lessonToggleApi(key, enabled) {
 
 async function deleteVisitApi(childId, lessonId) {
   const lesson = legacy.state.lessons.find((item) => item.id === Number(lessonId)); if (!lesson) return;
-  legacy.state.selectedLesson = lesson.id;
-  await putAttendance(childId, false, false);
-  legacy.state.modal = null;
+  try {
+    await api.request(`/lessons/${lesson.id}/attendance/${Number(childId)}`, { method: 'DELETE' });
+    await reload({ render: false });
+    legacy.state.selectedChild = Number(childId); legacy.state.childTab = 'visits'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
 }
 
 function salaryCalculationApi(lesson) {

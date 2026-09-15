@@ -91,6 +91,7 @@ export function createApiRouter(pool, {
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
   router.post('/lessons/:id/start', requirePermission('lessons:start'), run((request) => lessons.start(request.params.id, request.body, lessonContext(request))));
   router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.putAttendance(request.params.id, request.params.childId, request.body, lessonContext(request))));
+  router.delete('/lessons/:id/attendance/:childId', requirePermission('*'), run((request) => lessons.removeAttendance(request.params.id, request.params.childId, lessonContext(request))));
   router.post('/lessons/:id/finish', requirePermission('lessons:finish'), run((request) => lessons.finish(request.params.id, request.body, lessonContext(request))));
   router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
   router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), run((request) => lessons.cancel(request.params.id, lessonContext(request))));

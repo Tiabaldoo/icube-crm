@@ -149,6 +149,7 @@ export function createMysqlCatalog(pool) {
       weekday: Number(body.weekday ?? current.weekday), startTime: body.startTime ?? current.startTime, endTime: body.endTime ?? current.endTime,
       startsOn: body.startsOn ?? current.startsOn, endsOn: body.endsOn === undefined ? current.endsOn : nullable(body.endsOn), active: body.active === undefined ? active(current.active) : Boolean(body.active),
     };
+    if (!value.active && value.endsOn == null) value.endsOn = new Date().toISOString().slice(0, 10);
     if (!Number.isInteger(value.weekday) || value.weekday < 1 || value.weekday > 7 || !/^\d\d:\d\d$/.test(value.startTime) || !/^\d\d:\d\d$/.test(value.endTime) || !value.startsOn) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректное расписание группы');
     await assertIds(connection, 'directions', [value.directionId], 'directionId'); await assertIds(connection, 'sites', [value.siteId], 'siteId'); await assertIds(connection, 'projects', [value.projectId], 'projectId'); await assertIds(connection, 'teachers', [value.teacherId], 'teacherId');
     const [teacherDirection] = await connection.query('SELECT teacher_id FROM teacher_directions WHERE teacher_id=:teacherId AND direction_id=:directionId', value);
@@ -166,6 +167,17 @@ export function createMysqlCatalog(pool) {
     }
     if (groupId) await connection.query(`UPDATE study_groups SET name=:name,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active WHERE id=:id`, { ...value, id: groupId });
     else { const [result] = await connection.query(`INSERT INTO study_groups (name,direction_id,site_id,project_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,active) VALUES (:name,:directionId,:siteId,:projectId,:teacherId,:weekday,:startTime,:endTime,:startsOn,:endsOn,:active)`, value); groupId = result.insertId; }
+    if (groupId && current.active === true && value.active === false) {
+      await connection.query('UPDATE group_memberships SET ended_on=:endedOn WHERE group_id=:groupId AND ended_on IS NULL', { groupId, endedOn: value.endsOn });
+      await connection.query(`DELETE l FROM lessons l WHERE l.group_id=:groupId
+        AND l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
+        AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
+        AND l.lock_version=1
+        AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
+        AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)`, { groupId });
+    }
     if (body.price !== undefined) await setGroupPrice(connection, groupId, body.price === '' ? null : body.price);
     return groupId;
   }
@@ -205,11 +217,19 @@ export function createMysqlCatalog(pool) {
   }
   async function deleteChild(childId) {
     childId = id(childId, 'childId'); await get('children', childId);
-    const history = await one(`SELECT (SELECT COUNT(*) FROM payments WHERE child_id=:id) payments,
-      (SELECT COUNT(*) FROM refunds WHERE child_id=:id) refunds,
-      (SELECT COUNT(*) FROM attendances WHERE child_id=:id) attendances`, { id: childId });
-    if (Number(history.payments) || Number(history.refunds) || Number(history.attendances)) throw new ApiProblem(409, 'CHILD_HAS_HISTORY', 'Ребёнка с оплатами, возвратами или посещениями удалить нельзя', history);
-    try { await inTransaction(pool, async (connection) => { const [enrollments] = await connection.query('SELECT id FROM child_enrollments WHERE child_id=:id', { id: childId }); const enrollmentIds = enrollments.map((row) => String(row.id)); for (const enrollmentId of enrollmentIds) { await connection.query('DELETE FROM price_versions WHERE enrollment_id=:id', { id: enrollmentId }); await connection.query('DELETE FROM enrollment_status_history WHERE enrollment_id=:id', { id: enrollmentId }); await connection.query('DELETE FROM group_memberships WHERE enrollment_id=:id', { id: enrollmentId }); } await connection.query('DELETE FROM lesson_photos WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM lesson_roster_members WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_status_history WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_user_accounts WHERE child_id=:id', { id: childId }); const [guardians] = await connection.query('SELECT guardian_id FROM child_guardians WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_guardians WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_enrollments WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM children WHERE id=:id', { id: childId }); for (const guardian of guardians) await connection.query('DELETE g FROM guardians g LEFT JOIN child_guardians cg ON cg.guardian_id=g.id WHERE g.id=:id AND cg.guardian_id IS NULL AND g.user_id IS NULL', { id: guardian.guardian_id }); }); }
+    const history = await one(`SELECT
+      (SELECT COUNT(*) FROM payments WHERE child_id=:id AND deleted_at IS NULL) payments,
+      (SELECT COUNT(*) FROM refunds WHERE child_id=:id AND deleted_at IS NULL) refunds,
+      (SELECT COUNT(*) FROM attendances WHERE child_id=:id AND marked_at IS NOT NULL) attendances,
+      (SELECT COUNT(*) FROM balance_transfers WHERE child_id=:id) balanceTransfers,
+      (SELECT COUNT(*) FROM child_enrollments WHERE child_id=:id AND balance_lessons<>0) nonzeroBalances,
+      (SELECT COUNT(*) FROM balance_entries original
+        JOIN child_enrollments e ON e.id=original.enrollment_id
+        LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=original.id
+        WHERE e.child_id=:id AND original.entry_type<>'reversal' AND reversal.id IS NULL
+          AND (original.lessons_delta<>0 OR original.amount_delta<>0)) balanceEffects`, { id: childId });
+    if (Object.values(history).some((value) => Number(value) > 0)) throw new ApiProblem(409, 'CHILD_HAS_HISTORY', 'Ребёнка с активной финансовой историей или посещениями удалить нельзя', history);
+    try { await inTransaction(pool, async (connection) => { const [enrollments] = await connection.query('SELECT id FROM child_enrollments WHERE child_id=:id FOR UPDATE', { id: childId }); const enrollmentIds = enrollments.map((row) => String(row.id)); for (const enrollmentId of enrollmentIds) { await connection.query(`DELETE blc FROM balance_lot_consumptions blc LEFT JOIN balance_lots bl ON bl.id=blc.balance_lot_id LEFT JOIN balance_entries be ON be.id=blc.balance_entry_id WHERE bl.enrollment_id=:id OR be.enrollment_id=:id`, { id: enrollmentId }); await connection.query('DELETE FROM balance_lots WHERE enrollment_id=:id', { id: enrollmentId }); await connection.query(`DELETE reversal FROM balance_entries reversal JOIN balance_entries original ON original.id=reversal.reversal_of_entry_id WHERE original.enrollment_id=:id`, { id: enrollmentId }); await connection.query('DELETE FROM balance_entries WHERE enrollment_id=:id', { id: enrollmentId }); await connection.query('DELETE FROM attendances WHERE enrollment_id=:id AND marked_at IS NULL', { id: enrollmentId }); await connection.query('DELETE FROM price_versions WHERE enrollment_id=:id', { id: enrollmentId }); await connection.query('DELETE FROM enrollment_status_history WHERE enrollment_id=:id', { id: enrollmentId }); await connection.query('DELETE FROM group_memberships WHERE enrollment_id=:id', { id: enrollmentId }); } await connection.query('DELETE FROM lesson_photos WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM lesson_roster_members WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_status_history WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_user_accounts WHERE child_id=:id', { id: childId }); const [guardians] = await connection.query('SELECT guardian_id FROM child_guardians WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_guardians WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM child_enrollments WHERE child_id=:id', { id: childId }); await connection.query('DELETE FROM children WHERE id=:id', { id: childId }); for (const guardian of guardians) await connection.query('DELETE g FROM guardians g LEFT JOIN child_guardians cg ON cg.guardian_id=g.id WHERE g.id=:id AND cg.guardian_id IS NULL AND g.user_id IS NULL', { id: guardian.guardian_id }); }); }
     catch (error) { throw mysqlError(error); }
     return null;
   }
