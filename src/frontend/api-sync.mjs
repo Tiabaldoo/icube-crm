@@ -65,8 +65,8 @@ function mapLesson(lesson) {
 }
 
 async function reload({ render = true } = {}) {
-  const [projects, directions, sites, teachers, groups, children, payments, lessons, notifications] = await Promise.all([
-    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('lessons'), api.list('notifications').catch(() => []),
+  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, notifications] = await Promise.all([
+    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('notifications').catch(() => []),
   ]);
   directories = { projects, directions };
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
@@ -79,6 +79,13 @@ async function reload({ render = true } = {}) {
     lessons: Number(payment.lessonsCredit), date: isoToRu(payment.paidOn), paidOn: payment.paidOn,
     method: paymentMethodLabel[payment.method] ?? payment.method, methodCode: payment.method,
     groupId: payment.groupId == null ? null : Number(payment.groupId), projectId: payment.projectId == null ? null : Number(payment.projectId),
+    refundedAmount: Number(payment.refundedAmount), refundableAmount: Number(payment.refundableAmount),
+  }));
+  legacy.state.refunds = refunds.map((refund) => ({
+    id: Number(refund.id), paymentId: Number(refund.paymentId), enrollmentId: Number(refund.enrollmentId), childId: Number(refund.childId),
+    direction: refund.directionName, amount: Number(refund.amount), price: Number(refund.priceSnapshot), lessons: Number(refund.lessonsDebit),
+    date: isoToRu(refund.refundedOn), refundedOn: refund.refundedOn, method: paymentMethodLabel[refund.paymentMethod] ?? refund.paymentMethod,
+    methodCode: refund.paymentMethod, groupId: refund.groupId == null ? null : Number(refund.groupId), projectId: refund.projectId == null ? null : Number(refund.projectId),
   }));
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
@@ -260,6 +267,58 @@ async function deletePayment(paymentId) {
   try {
     await api.delete('payments', paymentId); await reload({ render: false });
     legacy.state.selectedChild = payment.childId; legacy.state.childTab = 'payments'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
+}
+
+function refundablePayments(childId) {
+  return legacy.state.payments.filter((payment) => (childId == null || payment.childId === Number(childId)) && payment.refundableAmount > 0);
+}
+
+function refundForm(paymentId = null, childId = null) {
+  const available = refundablePayments(childId);
+  const selected = available.find((payment) => payment.id === Number(paymentId)) ?? available[0];
+  if (!selected) return window.alert('Нет оплат со свободным остатком для возврата.');
+  const today = new Date();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  legacy.state.modal = `<h3>Возврат оплаты</h3><div class="form-grid">
+    <div class="field span-2"><label>Оплата</label><select class="select" id="rf-payment" onchange="icubeApi.refreshRefundMaximum()">${available.map((payment) => `<option value="${payment.id}"${payment.id === selected.id ? ' selected' : ''}>${html(payment.date)} · ${html(payment.direction)} · ${html(payment.amount)} ₽</option>`).join('')}</select></div>
+    <div class="field"><label>Дата возврата</label><input class="input" id="rf-date" type="date" value="${todayIso}"></div>
+    <div class="field"><label>Сумма, ₽</label><input class="input" id="rf-amount" type="number" min="0.01" step="0.01" value="${html(selected.refundableAmount)}"></div>
+    </div><div class="notice" id="rf-max" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveRefund()">Сохранить возврат</button></div>`;
+  legacy.render(); setTimeout(refreshRefundMaximum, 0);
+}
+
+function refreshRefundMaximum() {
+  const payment = legacy.state.payments.find((item) => item.id === Number(value('#rf-payment')));
+  const amount = element('#rf-amount'); const box = element('#rf-max');
+  if (!payment) return;
+  if (amount) amount.max = String(payment.refundableAmount);
+  if (box) box.innerHTML = `Максимум к возврату: <b>${html(payment.refundableAmount)} ₽</b> · по исторической цене <b>${html(payment.price)} ₽/занятие</b>.`;
+}
+
+async function saveRefund() {
+  const payment = legacy.state.payments.find((item) => item.id === Number(value('#rf-payment')));
+  if (!payment) return window.alert('Выберите оплату.');
+  try {
+    const saved = await api.create('refunds', { paymentId: String(payment.id), refundedOn: value('#rf-date'), amount: value('#rf-amount') });
+    await reload({ render: false });
+    legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'refunds'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
+}
+
+function deleteRefundPrompt(refundId) {
+  const refund = legacy.state.refunds.find((item) => item.id === Number(refundId));
+  if (!refund) return;
+  legacy.state.modal = `<h3>Отменить возврат?</h3><div class="notice">Возврат <b>${html(refund.amount)} ₽</b> будет удалён, а ${html(refund.lessons)} занятия вернутся в исходную оплату и баланс.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubeApi.deleteRefund(${refund.id})">Удалить возврат</button></div>`;
+  legacy.render();
+}
+
+async function deleteRefund(refundId) {
+  const refund = legacy.state.refunds.find((item) => item.id === Number(refundId));
+  if (!refund) return;
+  try {
+    await api.delete('refunds', refundId); await reload({ render: false });
+    legacy.state.selectedChild = refund.childId; legacy.state.childTab = 'refunds'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
   } catch (error) { fail(error); }
 }
 
@@ -517,6 +576,7 @@ function installPersistentNotificationUi() {
 
 window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
+  refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
   deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload,
   openCalendarEvent, startLesson: startLessonApi, attend: attendApi, toggleExtraAttendance: toggleExtraAttendanceApi,
   toggleTrial: toggleTrialApi, addExtra: addExtraApi, removeExtra: removeExtraApi, saveQuickChild: saveQuickChildApi,
@@ -542,6 +602,13 @@ window.newChildPayment = (childId, direction) => window.icubeApi.paymentForm(chi
 window.editChildPayment = (_childId, paymentId) => window.icubeApi.paymentForm(null, null, paymentId);
 window.deleteChildPayment = window.icubeApi.deleteChildPaymentPrompt;
 window.confirmDeleteChildPayment = window.icubeApi.confirmDeleteChildPayment;
+window.refundForm = () => window.icubeApi.refundForm();
+window.refundFormForChild = (childId) => window.icubeApi.refundForm(null, childId);
+window.refundPayment = (paymentId) => window.icubeApi.refundForm(paymentId);
+window.saveRefund = window.icubeApi.saveRefund;
+window.saveRefundForChild = window.icubeApi.saveRefund;
+window.deleteRefund = window.icubeApi.deleteRefundPrompt;
+window.confirmDeleteRefund = window.icubeApi.deleteRefund;
 window.openUnifiedCalendarEvent = window.icubeApi.openCalendarEvent;
 window.startLesson = window.icubeApi.startLesson;
 window.attend = window.icubeApi.attend;
@@ -570,6 +637,7 @@ reload().catch((error) => {
   legacy.state.groups = [];
   legacy.state.children = [];
   legacy.state.payments = [];
+  legacy.state.refunds = [];
   legacy.state.lessons = [];
   legacy.state.selectedChild = null;
   legacy.state.selectedGroup = null;

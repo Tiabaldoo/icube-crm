@@ -112,6 +112,7 @@ test('фактические save handlers подключены к API namespace
       paymentForm: 'paymentForm', refreshPaymentDirections: 'refreshPaymentDirections', updatePaymentCalc: 'updatePaymentCalc',
       savePaymentV116: 'savePayment', deletePayment: 'deletePaymentPrompt', confirmDeletePayment: 'deletePayment',
       deleteChildPayment: 'deleteChildPaymentPrompt', confirmDeleteChildPayment: 'confirmDeleteChildPayment',
+      saveRefund: 'saveRefund', saveRefundForChild: 'saveRefund', confirmDeleteRefund: 'deleteRefund',
       openUnifiedCalendarEvent: 'openCalendarEvent', startLesson: 'startLesson', attend: 'attend',
       toggleExtraAttendanceV138: 'toggleExtraAttendance', toggleVisitTrialV121: 'toggleTrial',
       addExtra: 'addExtra', removeExtraFromLessonV138: 'removeExtra', saveTeacherQuickChildV121: 'saveQuickChild',
@@ -122,6 +123,8 @@ test('фактические save handlers подключены к API namespace
     for (const [legacyName, apiName] of Object.entries(aliases)) {
       assert.equal(globalThis.window[legacyName], globalThis.window.icubeApi[apiName], `${legacyName} остался legacy handler`);
     }
+    assert.equal(typeof globalThis.window.refundPayment, 'function');
+    assert.equal(typeof globalThis.window.icubeApi.refundForm, 'function');
   } finally {
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;

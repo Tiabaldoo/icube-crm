@@ -3,6 +3,7 @@ import { authenticate, requirePermission } from './auth.mjs';
 import { createMysqlCatalog } from './catalog.mjs';
 import { createDeletionService } from './deletion.mjs';
 import { createMysqlPayments } from './payments.mjs';
+import { createMysqlRefunds } from './refunds.mjs';
 import { createDirectionPriceVersions } from './price-versions.mjs';
 import { createSalaryRateVersions } from './salary-rate-versions.mjs';
 import { createPartnerAgreementVersions } from './partner-agreement-versions.mjs';
@@ -20,6 +21,7 @@ export function createApiRouter(pool, {
   catalog = createMysqlCatalog(pool),
   deletions = createDeletionService(pool),
   payments = createMysqlPayments(pool),
+  refunds = createMysqlRefunds(pool),
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
@@ -63,6 +65,12 @@ export function createApiRouter(pool, {
   })));
   router.delete('/payments/:id', requirePermission('*'), run((request) => payments.remove(request.params.id), 204));
   router.get('/balances', requirePermission('*'), run((request) => payments.balances(request.query)));
+  router.get('/refunds', requirePermission('*'), run((request) => refunds.list(request.query)));
+  router.post('/refunds', requirePermission('*'), run((request) => refunds.create(request.body, {
+    actorUserId: request.auth?.userId ?? null,
+    idempotencyKey: request.get('Idempotency-Key') ?? null,
+  }), 201));
+  router.delete('/refunds/:id', requirePermission('*'), run((request) => refunds.remove(request.params.id), 204));
 
   router.get('/price-versions', requirePermission('*'), run(() => priceVersions.list()));
   router.post('/price-versions', requirePermission('*'), run((request) => priceVersions.create(request.body, {
@@ -77,12 +85,6 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
 
-  for (const resource of ['refunds']) {
-    const permission = '*';
-    router.get(`/${resource}`, requirePermission(permission), notImplemented(resource));
-    router.get(`/${resource}/:id`, requirePermission(permission), notImplemented(`${resource}/:id`));
-    if (resource === 'refunds') router.post(`/${resource}`, requirePermission('*'), notImplemented(`POST ${resource}`));
-  }
   const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [] });
   router.get('/lessons', requirePermission('lessons:read'), run((request) => lessons.list(request.query, lessonContext(request))));
   router.get('/lessons/:id', requirePermission('lessons:read'), run((request) => lessons.get(request.params.id, lessonContext(request))));

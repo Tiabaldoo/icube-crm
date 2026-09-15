@@ -70,3 +70,10 @@ test('lesson migration сохраняет историю attendance и факт�
   assert.match(sql, /idx_balance_entries_attendance/);
   assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
 });
+
+test('refund migration разрешает API actor и фиксирует единственную ledger-запись', async () => {
+  const sql = await readFile(new URL('../database/migrations/007_refunds.sql', import.meta.url), 'utf8');
+  assert.match(sql, /MODIFY created_by_user_id BIGINT UNSIGNED NULL/);
+  assert.match(sql, /UNIQUE KEY uq_balance_entries_refund \(refund_id\)/);
+  assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
+});

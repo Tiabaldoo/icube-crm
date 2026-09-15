@@ -3125,7 +3125,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+=rows.map(function(p){
       return '<div class="row" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr 1.2fr">'+
         '<div><b>'+p.date+'</b></div><div>'+p.direction+'</div><div class="money">'+money(p.amount)+'</div><div>'+p.method+'</div><div class="positive">+'+fmt(p.lessons,4)+'</div>'+
-        '<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap"><button class="btn" onclick="editChildPayment('+c.id+','+p.id+')">Изменить</button><button class="btn danger" onclick="deleteChildPayment('+c.id+','+p.id+')">Удалить</button></div>'+
+        '<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">'+(Number(p.refundableAmount)>0?'<button class="btn soft" onclick="refundPayment('+p.id+')">Возврат</button>':'')+'<button class="btn" onclick="editChildPayment('+c.id+','+p.id+')">Изменить</button><button class="btn danger" onclick="deleteChildPayment('+c.id+','+p.id+')">Удалить</button></div>'+
       '</div>';
     }).join('');
     return html+'</div></div>';
@@ -3153,7 +3153,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!rows.length) return html+'<div class="empty">Возвратов пока нет.</div></div>';
     html+='<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Цена</div><div>Занятий</div></div>';
     html+=rows.map(function(r){
-      return '<div class="row"><div><b>'+r.date+'</b></div><div>'+r.direction+'</div><div class="money negative">−'+money(r.amount)+'</div><div>'+money(r.price)+'</div><div>−'+fmt(r.lessons,4)+'</div></div>';
+      return '<div class="row"><div><b>'+r.date+'</b></div><div>'+r.direction+'</div><div class="money negative">−'+money(r.amount)+'</div><div>'+money(r.price)+'</div><div>−'+fmt(r.lessons,4)+' <button class="btn danger" style="margin-left:8px" onclick="deleteRefund('+r.id+')">Удалить</button></div></div>';
     }).join('');
     return html+'</div></div>';
   }

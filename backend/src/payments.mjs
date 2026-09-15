@@ -1,6 +1,6 @@
 import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
-import { lessonDecimal, lessonUnits } from './lesson-rules.mjs';
+import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal } from './lesson-rules.mjs';
 
 const SCALE = 100000000n;
 const methods = new Set(['cashless', 'cash']);
@@ -24,6 +24,21 @@ export function calculateLessonsCredit(amount, price) {
   const priceCents = BigInt(normalizeMoney(price, 'priceSnapshot').replace('.', ''));
   const scaled = (amountCents * SCALE + priceCents / 2n) / priceCents;
   return `${scaled / SCALE}.${String(scaled % SCALE).padStart(8, '0')}`;
+}
+
+export function refundablePaymentAmount({ paymentAmount, refundedAmount = '0.00', remainingLessons, priceSnapshot }) {
+  const amountLeft = moneyCents(paymentAmount) - moneyCents(refundedAmount);
+  if (amountLeft <= 0n) return '0.00';
+  const remaining = lessonUnits(remainingLessons);
+  const price = moneyCents(priceSnapshot);
+  let low = 0n; let high = amountLeft;
+  while (low < high) {
+    const middle = (low + high + 1n) / 2n;
+    const credit = (middle * SCALE + price / 2n) / price;
+    if (credit <= remaining) low = middle;
+    else high = middle - 1n;
+  }
+  return moneyDecimal(low);
 }
 
 function paidOn(value) {
@@ -50,6 +65,9 @@ const mapPayment = (row) => ({
   projectId: row.project_id_snapshot == null ? null : String(row.project_id_snapshot),
   paidOn: isoDate(row.paid_on), amount: String(row.amount), priceSnapshot: String(row.price_snapshot),
   lessonsCredit: String(row.lessons_credit), method: row.method, note: row.note,
+  refundedAmount: String(row.refunded_amount ?? '0.00'),
+  refundableAmount: refundablePaymentAmount({ paymentAmount: row.amount, refundedAmount: row.refunded_amount ?? '0.00',
+    remainingLessons: row.remaining_lessons ?? '0.00000000', priceSnapshot: row.price_snapshot }),
 });
 function fundedLessons(credit, balanceBefore) {
   const creditUnits = lessonUnits(credit); const balanceUnits = lessonUnits(balanceBefore ?? '0');
@@ -59,7 +77,10 @@ function fundedLessons(credit, balanceBefore) {
 
 export function createMysqlPayments(pool) {
   const paymentSelect = `SELECT p.id,p.enrollment_id,p.child_id,c.full_name child_name,p.direction_id,d.name direction_name,
-    p.group_id_snapshot,p.project_id_snapshot,p.paid_on,p.amount,p.price_snapshot,p.lessons_credit,p.method,p.note
+    p.group_id_snapshot,p.project_id_snapshot,p.paid_on,p.amount,p.price_snapshot,p.lessons_credit,p.method,p.note,
+    (SELECT COALESCE(SUM(r.amount),0) FROM refunds r WHERE r.payment_id=p.id AND r.deleted_at IS NULL) refunded_amount,
+    (SELECT bl.remaining_lessons FROM balance_entries be JOIN balance_lots bl ON bl.source_balance_entry_id=be.id
+      WHERE be.payment_id=p.id AND be.entry_type='payment' LIMIT 1) remaining_lessons
     FROM payments p JOIN children c ON c.id=p.child_id JOIN directions d ON d.id=p.direction_id`;
   async function queryRows(sql, params = {}) { const [rows] = await pool.query(sql, params); return rows; }
   async function list(filters = {}) {
@@ -129,6 +150,8 @@ export function createMysqlPayments(pool) {
         const [payments] = await connection.query('SELECT * FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: paymentId });
         if (!payments.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
         const old = payments[0];
+        const [refunds] = await connection.query('SELECT id FROM refunds WHERE payment_id=:id AND deleted_at IS NULL LIMIT 1', { id: paymentId });
+        if (refunds.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплату с возвратом изменить нельзя');
         const date = paidOn(body.paidOn ?? isoDate(old.paid_on));
         const oldEnrollment = await lockEnrollment(connection, old.enrollment_id, { requirePrice: false, priceDate: date });
         const targetId = identifier(body.enrollmentId ?? old.enrollment_id, 'enrollmentId');
@@ -184,7 +207,7 @@ export function createMysqlPayments(pool) {
         const [payments] = await connection.query('SELECT * FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: paymentId });
         if (!payments.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
         const payment = payments[0]; await lockEnrollment(connection, payment.enrollment_id, { requirePrice: false });
-        const [refunds] = await connection.query('SELECT id FROM refunds WHERE payment_id=:id LIMIT 1', { id: paymentId });
+        const [refunds] = await connection.query('SELECT id FROM refunds WHERE payment_id=:id AND deleted_at IS NULL LIMIT 1', { id: paymentId });
         if (refunds.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплату с возвратом удалить нельзя');
         const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:id AND entry_type='payment' FOR UPDATE`, { id: paymentId });
         if (entries.length !== 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Не найдена единственная запись баланса для оплаты');
