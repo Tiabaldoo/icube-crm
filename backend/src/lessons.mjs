@@ -51,6 +51,7 @@ export function createMysqlLessons(pool) {
 
   async function teacherForContext(connection, context) {
     if (!hasRole(context, 'teacher') || hasRole(context, 'director')) return null;
+    if (context.teacherId) return identifier(context.teacherId, 'teacherId');
     if (!context.userId) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не связан с пользователем');
     const [rows] = await connection.query('SELECT id FROM teachers WHERE user_id=:userId AND deleted_at IS NULL AND active=TRUE', { userId: context.userId });
     if (!rows.length) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не найден');
@@ -75,7 +76,8 @@ export function createMysqlLessons(pool) {
       const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({
         id: String(item.id), childId: String(item.child_id), enrollmentId: item.enrollment_id == null ? null : String(item.enrollment_id),
         type: item.attendance_type, present: bool(item.present), trial: bool(item.is_trial),
-        priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons), markedAt: isoDateTime(item.marked_at),
+        ...(hasRole(context, 'director') ? { priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons) } : {}),
+        markedAt: isoDateTime(item.marked_at),
       }));
       const salary = salaryRows.find((item) => String(item.lesson_id) === String(row.id));
       return {
@@ -177,8 +179,11 @@ export function createMysqlLessons(pool) {
     return get(rows[0].id, context);
   }
 
-  async function deletedOccurrences() {
-    const [rows] = await pool.query('SELECT group_id,scheduled_starts_at FROM lessons WHERE deleted_at IS NOT NULL ORDER BY scheduled_starts_at,id');
+  async function deletedOccurrences(context = {}) {
+    const actorTeacherId = await teacherForContext(pool, context);
+    const scope = actorTeacherId ? ' AND (planned_teacher_id=:actorTeacherId OR actual_teacher_id=:actorTeacherId)' : '';
+    const [rows] = await pool.query(`SELECT group_id,scheduled_starts_at FROM lessons
+      WHERE deleted_at IS NOT NULL${scope} ORDER BY scheduled_starts_at,id`, { actorTeacherId });
     return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at) }));
   }
 

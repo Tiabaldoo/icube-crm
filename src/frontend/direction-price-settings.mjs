@@ -1,5 +1,7 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 
+const authenticatedUser = await (window.icubeAuthReady ?? Promise.resolve(null));
+if (authenticatedUser?.roles?.includes('director')) {
 const legacy = window.icubeLegacy;
 const api = new ApiClient();
 const state = legacy.state;
@@ -298,3 +300,4 @@ refreshServerSettings()
     legacy.render();
   })
   .catch(fail);
+}

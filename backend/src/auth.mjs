@@ -28,8 +28,10 @@ export function requirePermission(permission) {
 }
 
 export function authenticate(request, response, next) {
-  // Точка расширения для проверки короткоживущего access token и token_version.
-  // До реализации входа сервер намеренно не принимает поддельную роль из заголовка.
-  if (!request.auth) return response.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Требуется вход' } });
-  next();
+  if (request.auth) return next();
+  const service = request.authService;
+  if (!service) return response.status(401).json({ error: { code: 'UNAUTHENTICATED', message: 'Требуется вход' } });
+  return service.authenticateToken(request.sessionToken)
+    .then((auth) => { request.auth = auth; next(); })
+    .catch(next);
 }

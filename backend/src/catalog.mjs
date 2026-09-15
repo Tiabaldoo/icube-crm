@@ -43,40 +43,60 @@ function mysqlError(error) {
 export function createMysqlCatalog(pool) {
   async function rows(sql, params = {}) { const [result] = await pool.query(sql, params); return result; }
   async function one(sql, params = {}) { return (await rows(sql, params))[0] ?? null; }
+  function scopedTeacherId(context = {}) {
+    if (!(context.roles ?? []).includes('teacher') || (context.roles ?? []).includes('director')) return null;
+    if (!context.teacherId) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не связан с пользователем');
+    return String(context.teacherId);
+  }
 
   async function projects() { return (await rows('SELECT id, code, name, partner_id, active FROM projects ORDER BY name')).map(mapProject); }
   async function directions() { return (await rows('SELECT id, code, name, active FROM directions ORDER BY name')).map(mapDirection); }
   async function sites() { return (await rows('SELECT id, name, short_name, type, address, note, active FROM sites WHERE deleted_at IS NULL ORDER BY name')).map(mapSite); }
 
   async function teachers() {
-    const teacherRows = await rows(`SELECT id, full_name, phone, active FROM teachers WHERE deleted_at IS NULL ORDER BY full_name`);
+    const teacherRows = await rows(`SELECT t.id,t.full_name,t.phone,t.active,u.email access_login,u.status access_status
+      FROM teachers t LEFT JOIN users u ON u.id=t.user_id WHERE t.deleted_at IS NULL ORDER BY t.full_name`);
     const directionRows = await rows(`SELECT td.teacher_id, d.id, d.name FROM teacher_directions td JOIN directions d ON d.id=td.direction_id ORDER BY d.name`);
     return teacherRows.map((row) => ({
       id: rowId(row), name: row.full_name, phone: row.phone, active: Boolean(row.active),
       directions: directionRows.filter((item) => String(item.teacher_id) === String(row.id)).map((item) => ({ id: String(item.id), name: item.name })),
+      access: row.access_login == null ? null : { login: row.access_login, status: row.access_status },
     }));
   }
 
-  async function groups() {
+  async function groups(context = {}) {
+    const actorTeacherId = scopedTeacherId(context);
     const groupRows = await rows(`SELECT g.id, g.name, g.direction_id, d.name direction_name, g.site_id, s.name site_name,
       g.project_id, p.name project_name, g.default_teacher_id teacher_id, t.full_name teacher_name,
       g.weekday, g.start_time, g.end_time, g.starts_on, g.ends_on, g.active,
       (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=g.id AND pv.valid_to IS NULL ORDER BY pv.valid_from DESC, pv.id DESC LIMIT 1) price
       FROM study_groups g JOIN directions d ON d.id=g.direction_id JOIN sites s ON s.id=g.site_id
       JOIN projects p ON p.id=g.project_id JOIN teachers t ON t.id=g.default_teacher_id
-      WHERE g.deleted_at IS NULL ORDER BY g.name`);
+      WHERE g.deleted_at IS NULL AND (:actorTeacherId IS NULL OR g.default_teacher_id=:actorTeacherId
+        OR EXISTS (SELECT 1 FROM lessons sl WHERE sl.group_id=g.id AND sl.deleted_at IS NULL
+          AND (sl.planned_teacher_id=:actorTeacherId OR sl.actual_teacher_id=:actorTeacherId))) ORDER BY g.name`, { actorTeacherId });
     return groupRows.map((row) => ({ id: rowId(row), name: row.name, directionId: String(row.direction_id), directionName: row.direction_name,
       siteId: String(row.site_id), siteName: row.site_name, projectId: String(row.project_id), projectName: row.project_name,
       teacherId: String(row.teacher_id), teacherName: row.teacher_name, weekday: Number(row.weekday), startTime: String(row.start_time).slice(0, 5),
       endTime: String(row.end_time).slice(0, 5), startsOn: isoDate(row.starts_on), endsOn: isoDate(row.ends_on), active: Boolean(row.active),
-      price: row.price == null ? null : String(row.price) }));
+      price: actorTeacherId == null && row.price != null ? String(row.price) : null }));
   }
 
-  async function children() {
+  async function children(context = {}) {
+    const actorTeacherId = scopedTeacherId(context);
     const childRows = await rows(`SELECT c.id, c.full_name, c.birth_date, c.school, c.grade, c.status, c.note, c.needs_director_review,
       g.full_name guardian_name, g.phone guardian_phone
       FROM children c LEFT JOIN child_guardians cg ON cg.child_id=c.id AND cg.is_primary=TRUE
-      LEFT JOIN guardians g ON g.id=cg.guardian_id WHERE c.deleted_at IS NULL ORDER BY c.full_name`);
+      LEFT JOIN guardians g ON g.id=cg.guardian_id WHERE c.deleted_at IS NULL AND (:actorTeacherId IS NULL
+        OR EXISTS (SELECT 1 FROM child_enrollments se JOIN group_memberships gm ON gm.enrollment_id=se.id
+          JOIN study_groups sg ON sg.id=gm.group_id WHERE se.child_id=c.id AND gm.ended_on IS NULL AND sg.default_teacher_id=:actorTeacherId)
+        OR EXISTS (SELECT 1 FROM lesson_roster_members lrm JOIN lessons l ON l.id=lrm.lesson_id
+          WHERE lrm.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId))
+        OR EXISTS (SELECT 1 FROM attendances a JOIN lessons l ON l.id=a.lesson_id
+          WHERE a.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)))
+      ORDER BY c.full_name`, { actorTeacherId });
+    if (!childRows.length) return [];
+    const visibleIds = childRows.map((row) => String(row.id));
     const enrollmentRows = await rows(`SELECT e.id, e.child_id, e.direction_id, d.name direction_name, e.status, e.individual_price, e.balance_lessons,
       e.started_on, e.ended_on, gm.group_id,
       COALESCE(e.individual_price,
@@ -85,18 +105,19 @@ export function createMysqlCatalog(pool) {
       ) current_price
       FROM child_enrollments e JOIN directions d ON d.id=e.direction_id
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.ended_on IS NULL ORDER BY gm2.started_on DESC, gm2.id DESC LIMIT 1)
-      ORDER BY e.child_id, e.id`);
+      WHERE e.child_id IN (${visibleIds.join(',')}) ORDER BY e.child_id, e.id`);
     return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
       status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
       enrollments: enrollmentRows.filter((item) => String(item.child_id) === String(row.id)).map((item) => ({ id: String(item.id), directionId: String(item.direction_id),
         directionName: item.direction_name, groupId: item.group_id == null ? null : String(item.group_id), status: item.status,
-        individualPrice: item.individual_price == null ? null : String(item.individual_price), currentPrice: item.current_price == null ? null : String(item.current_price), balanceLessons: String(item.balance_lessons),
+        ...(actorTeacherId == null ? { individualPrice: item.individual_price == null ? null : String(item.individual_price),
+          currentPrice: item.current_price == null ? null : String(item.current_price), balanceLessons: String(item.balance_lessons) } : {}),
         startedOn: isoDate(item.started_on), endedOn: isoDate(item.ended_on) })) }));
   }
 
   const collection = { projects, directions, sites, teachers, groups, children };
-  async function get(resource, resourceId) {
-    const found = (await collection[resource]()).find((item) => item.id === id(resourceId));
+  async function get(resource, resourceId, context = {}) {
+    const found = (await collection[resource](context)).find((item) => item.id === id(resourceId));
     if (!found) throw new ApiProblem(404, 'NOT_FOUND', 'Запись не найдена');
     return found;
   }
@@ -126,7 +147,11 @@ export function createMysqlCatalog(pool) {
     const directionIds = body.directionIds === undefined ? current.directionIds : body.directionIds.map((value) => id(value, 'directionIds'));
     if (!directionIds?.length) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Нужно выбрать хотя бы одно направление');
     await assertIds(connection, 'directions', directionIds, 'directionIds');
-    if (teacherId) await connection.query('UPDATE teachers SET full_name=:name,phone=:phone,active=:active WHERE id=:id', { id: teacherId, name: body.name === undefined ? current.name : text(body.name, 'name'), phone: body.phone === undefined ? current.phone : nullable(body.phone), active: body.active === undefined ? current.active : Boolean(body.active) });
+    if (teacherId) {
+      const nextName = body.name === undefined ? current.name : text(body.name, 'name');
+      await connection.query('UPDATE teachers SET full_name=:name,phone=:phone,active=:active WHERE id=:id', { id: teacherId, name: nextName, phone: body.phone === undefined ? current.phone : nullable(body.phone), active: body.active === undefined ? current.active : Boolean(body.active) });
+      await connection.query('UPDATE users u JOIN teachers t ON t.user_id=u.id SET u.display_name=:name WHERE t.id=:id', { id: teacherId, name: nextName });
+    }
     else { const [result] = await connection.query('INSERT INTO teachers (full_name,phone,active) VALUES (:name,:phone,:active)', { name: text(body.name, 'name'), phone: nullable(body.phone), active: active(body.active) }); teacherId = result.insertId; }
     await connection.query('DELETE FROM teacher_directions WHERE teacher_id=:id', { id: teacherId });
     for (const directionId of directionIds) await connection.query('INSERT INTO teacher_directions (teacher_id,direction_id) VALUES (:teacherId,:directionId)', { teacherId, directionId });
@@ -250,7 +275,7 @@ export function createMysqlCatalog(pool) {
   }
 
   return {
-    list: (resource) => collection[resource](), get,
+    list: (resource, context = {}) => collection[resource](context), get,
     create: (resource, body) => ({ directions: createDirection, sites: createSite, teachers: createTeacher, groups: createGroup, children: createChild }[resource])(body),
     update: (resource, resourceId, body) => ({ directions: updateDirection, sites: updateSite, teachers: updateTeacher, groups: updateGroup, children: updateChild }[resource])(resourceId, body),
     createEnrollment, updateEnrollment, deleteChild,

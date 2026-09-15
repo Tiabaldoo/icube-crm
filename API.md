@@ -4,16 +4,17 @@ Backend — единственный компонент с доступом к M
 
 ## Авторизация и роли
 
-На первом test-срезе настоящая авторизация ещё не реализована: в `test` и `development` backend сам назначает запросу роль `director`. В `production` этот временный режим отключён. Заголовки или поля роли из браузера не используются.
+Auth v1 использует серверные сессии. Временного назначения роли `director` для test/development больше нет: все среды требуют вход. Заголовки, query/body-поля и frontend-state с ролью или `teacherId` источником прав не являются.
 
-- `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
+- `POST /auth/login` принимает `{ "login": "user@example.com", "password": "..." }`, нормализует email через trim/lowercase и при успехе устанавливает 30-дневную session cookie.
+- `GET /auth/me` возвращает `{ "id", "displayName", "roles", "teacherId" }`.
+- `POST /auth/logout` отзывает текущую сессию и очищает cookie.
+- `POST /auth/refresh` в Auth v1 не используется и пока возвращает `501`.
 - `director`: полный доступ к рабочим сущностям и настройкам.
 - `teacher`: чтение назначенных групп/детей/занятий; отдельные permissions на старт, посещаемость, завершение, фотографии, quick child, изменение даты/времени и фактического преподавателя, отмену занятия.
-- `partner`: только проекты и расчёты, связанные с аккаунтом через `partner_users`.
-- `parent`: в будущем чтение связанных детей, посещений и оплат.
-- `child`: в будущем собственный профиль и разрешённые игровые/учебные данные.
+- `partner`, `parent`, `child`: заложены в permission-модели, но вход и кабинеты этих ролей в Auth v1 не реализованы.
 
-Роль не принимается из формы или произвольного заголовка. Сервер получает user id из проверенного access token и загружает актуальные роли из БД/кеша с учётом `token_version`.
+Cookie содержит случайный непрозрачный token; в `auth_sessions` хранится только его SHA-256 hash. Middleware на каждом запросе проверяет срок, `revoked_at`, активный статус user и совпадение session/user `token_version`, после чего загружает роли и связанную запись `teachers.user_id`. Cookie имеет `HttpOnly`, `Secure`, `SameSite=Lax` и недоступна JavaScript.
 
 Permission преподавателя не даёт доступ к любому занятию. Service-layer для каждого teacher-маршрута проверяет, что авторизованный преподаватель назначен на конкретное занятие или иначе связан с ним по разрешённому правилу. Нельзя доверять `teacherId` или роли из браузера. Аналогично роль `partner` недостаточна: сервер фильтрует данные через `partner_users → partners → projects` и отклоняет подстановку чужого `projectId`.
 
@@ -26,6 +27,7 @@ Permission преподавателя не даёт доступ к любому
 | Перенос | `GET /balance-transfers`, `GET /balance-transfers/preview`, `POST /balance-transfers`, `DELETE /balance-transfers/:id` |
 | Группы | `GET/POST /groups`, `GET/PATCH /groups/:id`, `POST /groups/:id/memberships` |
 | Справочники | `/directions`, `/sites`, `/teachers`, `/projects` |
+| Доступ преподавателя | директорские `GET/POST/DELETE /teachers/:id/access`, `POST /teachers/:id/access/reset-password` |
 | Версии настроек | `GET/POST /price-versions`, `GET/POST /salary-rate-versions`, `GET/POST /partner-agreement-versions` |
 | Календарь | `GET /lessons?from=&to=&teacherId=&projectId=` |
 | Занятие | `GET /lessons/:id`, директорские `PATCH/DELETE /lessons/:id`, teacher `PATCH /lessons/:id/teacher-details`, `POST /lessons/:id/start`, `POST /lessons/:id/cancel`, директорский `POST /lessons/:id/empty-trip` |
@@ -56,13 +58,12 @@ Permission преподавателя не даёт доступ к любому
 
 ## Командные операции
 
-Start, finish и повторная одинаковая отметка attendance идемпотентны по текущему состоянию строки, которое проверяется под `SELECT ... FOR UPDATE`. Уникальные связи ledger/reversal дополнительно защищают финансовый эффект. Сохранение и повторная выдача результата по `Idempotency-Key` через таблицу `idempotency_keys` будет подключено вместе с настоящей авторизацией, поскольку ключ привязан к проверенному `user_id`.
+Start, finish и повторная одинаковая отметка attendance идемпотентны по текущему состоянию строки, которое проверяется под `SELECT ... FOR UPDATE`. Уникальные связи ledger/reversal дополнительно защищают финансовый эффект. Проверенный session user id уже передаётся финансовым и lesson-операциям как actor; полный replay сохранённого результата по `Idempotency-Key` остаётся отдельной задачей.
 
 Пример завершения:
 
 ```http
 POST /api/v1/lessons/847/finish
-Authorization: Bearer …
 Idempotency-Key: 03f04370-98aa-42c8-bbc0-b0efb94dbca2
 Content-Type: application/json
 
@@ -73,7 +74,9 @@ Content-Type: application/json
 
 ## Валидация и безопасность
 
-Все входные DTO используют allowlist полей. SQL только параметризованный. Ограничиваются размер JSON, число записей на страницу и размер фотографий. Пароли хешируются Argon2id или bcrypt с актуальными параметрами; refresh token хранится только как хеш и передаётся в `HttpOnly Secure SameSite` cookie. Access token короткоживущий. Изменения финансов и ролей пишутся в `audit_log`.
+Все входные DTO используют allowlist полей. SQL только параметризованный. Пароли хешируются bcrypt с cost 12. Session token хранится в БД только как SHA-256 hash и передаётся в `HttpOnly Secure SameSite=Lax` cookie. Сброс пароля и отключение teacher-доступа увеличивают `token_version` и отзывают все сессии пользователя.
+
+Teacher видит только группы, где он текущий основной преподаватель, и детей из текущего состава этих групп либо frozen roster/extras доступных ему занятий. Lesson service дополнительно ограничивает каждое чтение и изменение по `planned_teacher_id`/`actual_teacher_id`. Ответы teacher не содержат цены, балансы и зарплату. Директорское «Открыть как преподаватель» меняет только представление страницы; session actor и роль запроса остаются директорскими.
 
 Quick child создаётся транзакционно с `needs_director_review=true`, `created_from_lesson_id` и текущим `created_by_user_id`. Guardian и связь `child_guardians` создаются только если преподаватель указал контакт; имя guardian не обязательно. Изменения статусов записываются одновременно с основной сущностью в `child_status_history` или `enrollment_status_history`.
 

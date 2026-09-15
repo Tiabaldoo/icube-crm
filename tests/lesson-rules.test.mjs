@@ -88,12 +88,56 @@ test('teacher DTO реального lesson service не раскрывает sa
       roster_frozen_at: null, attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 1,
     }]];
     if (sql.includes('lesson_roster_members')) return [[]];
-    if (sql.includes('FROM attendances')) return [[]];
+    if (sql.includes('FROM attendances')) return [[{ id: 11, lesson_id: 1, child_id: 12, enrollment_id: 13,
+      attendance_type: 'main', present: 1, is_trial: 0, price_snapshot: '1025.00', charged_lessons: '1.00000000', marked_at: null }]];
     throw new Error(`Неожиданный SQL: ${sql}`);
   } };
   const lesson = await createMysqlLessons(pool).get(1, { roles: ['teacher'], userId: 10 });
   assert.equal(lesson.actualTeacherId, '5');
   assert.equal('salary' in lesson, false);
+  assert.equal('priceSnapshot' in lesson.attendances[0], false);
+});
+
+test('teacher не читает и не изменяет чужой lesson id', async () => {
+  let scopedTeacher;
+  const foreign = { id: 50, planned_teacher_id: 9, actual_teacher_id: null, deleted_at: null, status: 'scheduled' };
+  const handler = async (sql, params = {}) => {
+    if (sql.includes('FROM lessons l JOIN study_groups')) { scopedTeacher = params.actorTeacherId; return [[]]; }
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[foreign]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const service = createMysqlLessons(transactionPool(handler));
+  await assert.rejects(service.get(50, { roles: ['teacher'], userId: '2', teacherId: '5' }), (error) => error.status === 404);
+  assert.equal(scopedTeacher, '5');
+  await assert.rejects(service.start(50, { actualTeacherId: 9 }, { roles: ['teacher'], userId: '2', teacherId: '5' }), (error) => error.status === 403);
+});
+
+test('teacher start игнорирует чужой actualTeacherId, director teacher-mode сохраняет actor director', async () => {
+  const makeHandler = (lesson, captured) => async (sql, params = {}) => {
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT id FROM teachers WHERE id=')) return [[{ id: params.id }]];
+    if (sql.includes('FROM group_memberships gm')) return [[{ child_id: 8, enrollment_id: 10 }]];
+    if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) { captured.actorId = params.actorId; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('SELECT a.id FROM attendances a JOIN lessons')) return [[]];
+    if (sql.startsWith('INSERT IGNORE INTO attendances')) return [{ affectedRows: 1 }];
+    if (sql.startsWith("UPDATE lessons SET status='in_progress'")) { captured.actualTeacherId = String(params.teacherId); lesson.status = 'in_progress'; lesson.actual_teacher_id = params.teacherId; return [{ affectedRows: 1 }]; }
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника',
+      project_id_snapshot: 2, project_name: 'iCubeRobots', site_id_snapshot: 3, site_name: 'Площадка', planned_teacher_name: 'Учитель', actual_teacher_name: 'Учитель',
+      scheduled_starts_at: lesson.starts_at, scheduled_ends_at: lesson.ends_at, actual_starts_at: lesson.starts_at, actual_ends_at: null,
+      topic: null, is_intro_group: 0, is_empty_trip: 0, roster_frozen_at: lesson.starts_at, attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 2 }]];
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN') || sql.includes('FROM attendances WHERE lesson_id IN') || sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const teacherLesson = { id: 51, group_id: 4, direction_id_snapshot: 1, planned_teacher_id: 5, actual_teacher_id: null,
+    starts_at: '2026-09-15 10:00:00', ends_at: '2026-09-15 11:00:00', status: 'scheduled' };
+  const teacherCaptured = {};
+  await createMysqlLessons(transactionPool(makeHandler(teacherLesson, teacherCaptured))).start(51, { actualTeacherId: 99 }, { roles: ['teacher'], userId: '2', teacherId: '5' });
+  assert.equal(teacherCaptured.actualTeacherId, '5'); assert.equal(teacherCaptured.actorId, '2');
+
+  const directorLesson = { ...teacherLesson, id: 52, planned_teacher_id: 6, actual_teacher_id: null, status: 'scheduled' };
+  const directorCaptured = {};
+  await createMysqlLessons(transactionPool(makeHandler(directorLesson, directorCaptured))).start(52, { actualTeacherId: 6 }, { roles: ['director'], userId: '1' });
+  assert.equal(directorCaptured.actualTeacherId, '6'); assert.equal(directorCaptured.actorId, '1');
 });
 
 function transactionPool(handler) {

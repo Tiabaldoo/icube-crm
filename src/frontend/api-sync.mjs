@@ -12,6 +12,8 @@ let directories = { projects: [], directions: [] };
 let groupSavePending = false;
 let balanceTransferPending = false;
 let balanceTransferKey = null;
+let authProfile = null;
+let resolveAuthReady = null;
 
 export function partnerDefaultPeriod(now = new Date()) {
   const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -35,6 +37,7 @@ function value(selector) { return element(selector)?.value ?? ''; }
 function checked(selector) { return Boolean(element(selector)?.checked); }
 function byName(items, name) { return items.find((item) => item.name === name || item.code === name); }
 function fail(error) {
+  if (error instanceof ApiError && error.status === 401) { showLogin(); return; }
   const message = error instanceof ApiError ? error.message : 'Не удалось сохранить данные на сервере';
   window.alert(message);
   console.error(error);
@@ -58,7 +61,7 @@ function mapChild(child) {
     enrollments: child.enrollments.map((enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
       direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId), status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
       individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
-      balance: Number(enrollment.balanceLessons) })) };
+      balance: enrollment.balanceLessons == null ? 0 : Number(enrollment.balanceLessons) })) };
 }
 
 function mapLesson(lesson) {
@@ -84,6 +87,7 @@ function mapLesson(lesson) {
 }
 
 async function reload({ render = true } = {}) {
+  if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) return reloadTeacher({ render });
   const statisticsQuery = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
   const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics] = await Promise.all([
     api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
@@ -117,6 +121,30 @@ async function reload({ render = true } = {}) {
   legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
+  if (render) legacy.render();
+}
+
+async function reloadTeacher({ render = true } = {}) {
+  const [groups, children, lessons, lessonDeletions] = await Promise.all([
+    api.list('groups'), api.list('children'), api.list('lessons'), api.list('lesson-deletions'),
+  ]);
+  const mappedGroups = groups.map(mapGroup);
+  directories = {
+    projects: [...new Map(groups.map((group) => [String(group.projectId), { id: String(group.projectId), name: group.projectName }])).values()],
+    directions: [...new Map(groups.map((group) => [String(group.directionId), { id: String(group.directionId), name: group.directionName }])).values()],
+  };
+  legacy.state.sites = [...new Map(groups.map((group) => [String(group.siteId), { id: Number(group.siteId), name: group.siteName }])).values()];
+  legacy.state.teachers = [{ id: Number(authProfile.teacherId), name: authProfile.displayName, active: true, directions: directories.directions.map((item) => item.name) }];
+  legacy.state.groups = mappedGroups;
+  legacy.state.children = children.map(mapChild);
+  legacy.state.payments = [];
+  legacy.state.refunds = [];
+  legacy.state.balanceTransfers = [];
+  legacy.state.statistics = null;
+  legacy.state.lessons = lessons.map(mapLesson);
+  legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
+  legacy.state.notifications = [];
+  legacy.state.prototypeTeacherId = Number(authProfile.teacherId);
   if (render) legacy.render();
 }
 
@@ -526,6 +554,7 @@ async function openCalendarEvent(key, role) {
       legacy.state.lessons.push(lesson);
     }
     if (!lesson) return;
+    if (role === 'teacher' && authProfile?.roles?.includes('director') && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
     legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson'; legacy.render();
   } catch (error) { fail(error); }
 }
@@ -772,6 +801,153 @@ function installPersistentNotificationUi() {
   };
 }
 
+function showLogin(message = '') {
+  authProfile = null;
+  legacy.state.authUser = null;
+  const app = element('#app');
+  if (!app) return;
+  app.style.visibility = 'visible';
+  app.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:20px;background:#f8fafc"><form class="card pad" style="width:min(100%,420px)" onsubmit="event.preventDefault();icubeAuthLogin()">
+    <div class="brand" style="color:#111827;margin-bottom:22px"><div class="brand-mark">iC</div><div>iCube CRM</div></div>
+    <h1 style="margin:0 0 6px">Вход</h1><div class="muted" style="margin-bottom:18px">Введите логин и пароль</div>
+    ${message ? `<div class="notice" style="margin-bottom:14px">${html(message)}</div>` : ''}
+    <div class="field"><label>Логин</label><input class="input" id="auth-login" type="email" autocomplete="username" required></div>
+    <div class="field" style="margin-top:12px"><label>Пароль</label><input class="input" id="auth-password" type="password" autocomplete="current-password" required></div>
+    <button class="btn primary" id="auth-submit" type="submit" style="width:100%;margin-top:18px">Войти</button>
+  </form></div>`;
+}
+
+function applyAuthProfile(profile) {
+  authProfile = profile;
+  legacy.state.authUser = profile;
+  const director = profile.roles.includes('director');
+  legacy.state.role = director ? 'director' : 'teacher';
+  legacy.state.page = director ? 'dashboard' : 'teacherToday';
+  if (profile.teacherId) legacy.state.prototypeTeacherId = Number(profile.teacherId);
+  const app = element('#app');
+  if (app) app.style.visibility = 'visible';
+}
+
+async function loginFromForm() {
+  const submit = element('#auth-submit');
+  if (submit) submit.disabled = true;
+  try {
+    const profile = await api.request('/auth/login', { method: 'POST', body: { login: value('#auth-login'), password: value('#auth-password') } });
+    applyAuthProfile(profile);
+    await reload();
+    resolveAuthReady?.(profile);
+    resolveAuthReady = null;
+    return profile;
+  } catch (error) {
+    showLogin(error instanceof ApiError ? error.message : 'Не удалось войти');
+    return null;
+  }
+}
+
+async function logout() {
+  try { await api.request('/auth/logout', { method: 'POST' }); }
+  catch (error) { if (!(error instanceof ApiError) || error.status !== 401) console.error(error); }
+  showLogin();
+}
+
+function teacherNameForShell() {
+  if (!authProfile?.roles?.includes('director')) return authProfile?.displayName ?? 'Преподаватель';
+  const lesson = legacy.state.lessons?.find((item) => item.id === Number(legacy.state.selectedLesson));
+  return legacy.state.teachers?.find((item) => item.id === Number(lesson?.teacherId))?.name ?? 'Интерфейс преподавателя';
+}
+
+function installAuthenticatedShells() {
+  const originalShell = window.shell;
+  if (typeof originalShell === 'function') {
+    window.shell = function (...args) {
+      const result = originalShell.apply(this, args);
+      if (!authProfile) return result;
+      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">Директор</div></div><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
+      return result.replace(/<div><select class="role-switch"[\s\S]*?<\/select><div class="muted mini">Режим прототипа<\/div><\/div>/, account);
+    };
+  }
+  window.teacherShell = function (content) {
+    const directorMode = authProfile?.roles?.includes('director');
+    const right = directorMode
+      ? '<button class="btn" onclick="icubeReturnToDirector()">Вернуться в режим директора</button>'
+      : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
+    return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>${html(teacherNameForShell())}</b></div><div>${right}</div></div>
+      <div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn ${legacy.state.page === 'teacherToday' ? 'soft' : ''}" onclick="state.page='teacherToday';render()">Сегодня</button><button class="btn ${legacy.state.page === 'teacherCalendar' ? 'soft' : ''}" onclick="state.page='teacherCalendar';render()">Календарь</button></div></div>
+      <div class="teacher-content">${content}</div></div>`;
+  };
+  const originalOpenLesson = window.openLesson;
+  if (typeof originalOpenLesson === 'function') {
+    window.openLesson = function (lessonId, teacherMode) {
+      if (teacherMode && authProfile?.roles?.includes('director')) {
+        const lesson = legacy.state.lessons?.find((item) => item.id === Number(lessonId));
+        if (lesson?.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
+      }
+      return originalOpenLesson.apply(this, arguments);
+    };
+  }
+}
+
+function accessBlock(teacherId) {
+  const teacher = legacy.state.teachers.find((item) => item.id === Number(teacherId));
+  const access = teacher?.access;
+  if (!access) return `<div class="field span-2" style="border-top:1px solid var(--line);padding-top:14px"><label>Доступ в CRM</label>
+    <input class="input" id="teacher-access-login" type="email" autocomplete="off" placeholder="teacher@example.com">
+    <input class="input" id="teacher-access-password" type="password" autocomplete="new-password" placeholder="Новый пароль" style="margin-top:8px">
+    <button class="btn soft" type="button" style="margin-top:8px" onclick="icubeCreateTeacherAccess(${teacherId})">Создать доступ</button></div>`;
+  const active = access.status === 'active';
+  return `<div class="field span-2" style="border-top:1px solid var(--line);padding-top:14px"><label>Доступ в CRM</label>
+    <div class="info-line"><span>Логин</span><b>${html(access.login)}</b></div><div class="info-line"><span>Статус</span><b>${active ? 'Активен' : 'Отключён'}</b></div>
+    ${active ? `<input class="input" id="teacher-access-password" type="password" autocomplete="new-password" placeholder="Новый пароль" style="margin-top:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn soft" type="button" onclick="icubeResetTeacherPassword(${teacherId})">Сбросить пароль</button><button class="btn danger" type="button" onclick="icubeDisableTeacherAccess(${teacherId})">Отключить доступ</button></div>`
+      : `<input class="input" id="teacher-access-login" type="email" autocomplete="off" value="${html(access.login)}" style="margin-top:8px"><input class="input" id="teacher-access-password" type="password" autocomplete="new-password" placeholder="Новый пароль" style="margin-top:8px"><button class="btn soft" type="button" style="margin-top:8px" onclick="icubeCreateTeacherAccess(${teacherId})">Включить с новым паролем</button>`}</div>`;
+}
+
+function installTeacherAccessUi() {
+  const original = window.teacherForm;
+  if (typeof original !== 'function') return;
+  window.teacherForm = function (...args) {
+    const result = original.apply(this, args); const teacherId = args[0];
+    if (!teacherId || !legacy.state.modal) return result;
+    legacy.state.modal = legacy.state.modal.replace('<div class="modal-actions">', `${accessBlock(teacherId)}<div class="modal-actions">`);
+    legacy.render();
+    return result;
+  };
+}
+
+async function refreshTeacherAccess(teacherId, operation) {
+  try {
+    await operation();
+    await reload({ render: false });
+    window.teacherForm(Number(teacherId), false);
+  } catch (error) { fail(error); }
+}
+
+async function createTeacherAccess(teacherId) {
+  return refreshTeacherAccess(teacherId, () => api.request(`/teachers/${teacherId}/access`, { method: 'POST', body: { login: value('#teacher-access-login'), password: value('#teacher-access-password') } }));
+}
+async function resetTeacherPassword(teacherId) {
+  return refreshTeacherAccess(teacherId, () => api.request(`/teachers/${teacherId}/access/reset-password`, { method: 'POST', body: { password: value('#teacher-access-password') } }));
+}
+async function disableTeacherAccess(teacherId) {
+  if (!window.confirm('Отключить доступ преподавателя к CRM?')) return;
+  return refreshTeacherAccess(teacherId, () => api.request(`/teachers/${teacherId}/access`, { method: 'DELETE' }));
+}
+
+async function bootstrapAuth() {
+  try {
+    const profile = await api.request('/auth/me');
+    applyAuthProfile(profile);
+    await reload();
+    resolveAuthReady?.(profile);
+    resolveAuthReady = null;
+    return profile;
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) showLogin();
+    else showLogin('Не удалось проверить сессию. Обновите страницу.');
+    return null;
+  }
+}
+
 window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
@@ -839,22 +1015,19 @@ window.saveLessonEdit = window.icubeApi.saveLessonEdit;
 window.lToggle = window.icubeApi.lessonToggle;
 window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;
 window.salaryCalculation = window.icubeApi.salaryCalculation;
+window.icubeAuthLogin = loginFromForm;
+window.icubeAuthLogout = logout;
+window.icubeReturnToDirector = () => { legacy.state.role = 'director'; legacy.state.page = 'dashboard'; legacy.state.modal = null; legacy.render(); };
+window.icubeCreateTeacherAccess = createTeacherAccess;
+window.icubeResetTeacherPassword = resetTeacherPassword;
+window.icubeDisableTeacherAccess = disableTeacherAccess;
 
 installDeletionUi();
 installPersistentCalendarBridge();
 installPersistentNotificationUi();
-reload().catch((error) => {
-  console.error('Первичная загрузка CRM API не выполнена', error);
-  legacy.state.sites = [];
-  legacy.state.teachers = [];
-  legacy.state.groups = [];
-  legacy.state.children = [];
-  legacy.state.payments = [];
-  legacy.state.refunds = [];
-  legacy.state.lessons = [];
-  legacy.state.selectedChild = null;
-  legacy.state.selectedGroup = null;
-  legacy.state.page = 'children';
-  legacy.render();
-  window.alert('Не удалось загрузить справочники CRM с сервера. Обновите страницу после проверки API.');
-});
+installAuthenticatedShells();
+installTeacherAccessUi();
+if (element('#app')) {
+  window.icubeAuthReady = new Promise((resolve) => { resolveAuthReady = resolve; });
+  bootstrapAuth();
+} else window.icubeAuthReady = Promise.resolve(null);

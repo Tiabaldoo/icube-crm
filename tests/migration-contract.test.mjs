@@ -98,3 +98,11 @@ test('transfer reversal migration сохраняет точные изменен
   assert.match(sql, /remaining_before DECIMAL\(16,8\)/); assert.match(sql, /remaining_after DECIMAL\(16,8\)/);
   assert.doesNotMatch(sql, /DROP DATABASE|TRUNCATE/i);
 });
+
+test('auth migration привязывает существующие и новые sessions к token_version без destructive reset', async () => {
+  const sql = await readFile(new URL('../database/migrations/011_auth_sessions_token_version.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD COLUMN token_version INT UNSIGNED NULL/);
+  assert.match(sql, /UPDATE auth_sessions s JOIN users u/);
+  assert.match(sql, /MODIFY token_version INT UNSIGNED NOT NULL/);
+  assert.doesNotMatch(sql, /DROP DATABASE|DROP TABLE|TRUNCATE|DELETE FROM/i);
+});

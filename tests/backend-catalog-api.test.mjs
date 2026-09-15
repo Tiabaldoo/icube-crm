@@ -100,7 +100,8 @@ const paymentStore = memoryPayments(catalog);
 let server;
 let baseUrl;
 before(async () => {
-  const app = express(); app.use(express.json()); app.use('/api/v1', createApiRouter({ query: async () => [[]] }, { catalog, payments: paymentStore, allowUnauthenticated: true }));
+  const testAuth = (request, _response, next) => { request.auth = { userId: '1', displayName: 'Тестовый директор', roles: ['director'], teacherId: null, sessionId: 'test' }; next(); };
+  const app = express(); app.use(express.json()); app.use('/api/v1', createApiRouter({ query: async () => [[]] }, { catalog, payments: paymentStore, testAuth }));
   app.use((error, _request, response, _next) => response.status(error.status ?? 500).json({ error: { code: error.code ?? 'INTERNAL_ERROR', message: error.message } }));
   await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
   baseUrl = `http://127.0.0.1:${server.address().port}/api/v1`;

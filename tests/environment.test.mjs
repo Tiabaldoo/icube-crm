@@ -7,7 +7,6 @@ const base = {
   DB_HOST: '127.0.0.1',
   DB_USER: 'app',
   DB_PASSWORD: 'secret',
-  AUTH_ACCESS_TOKEN_SECRET: '01234567890123456789012345678901',
 };
 
 test('test и production не могут случайно использовать базу другой среды', () => {
@@ -20,9 +19,8 @@ test('test и production не могут случайно использоват
   assert.equal(loadConfig({ ...base, APP_ENV: 'development', DB_NAME: 'icube_dev' }).database.database, 'icube_dev');
 });
 
-test('production отклоняет placeholder-секреты', () => {
+test('production отклоняет placeholder пароля БД', () => {
   assert.throws(() => loadConfig({ ...base, APP_ENV: 'production', DB_NAME: 'icube_prod', DB_PASSWORD: 'replace_me' }), /DB_PASSWORD/);
-  assert.throws(() => loadConfig({ ...base, APP_ENV: 'production', DB_NAME: 'icube_prod', AUTH_ACCESS_TOKEN_SECRET: 'replace_with_at_least_32_random_bytes' }), /AUTH_ACCESS_TOKEN_SECRET/);
 });
 
 test('модель ролей содержит текущие и будущие роли', () => {

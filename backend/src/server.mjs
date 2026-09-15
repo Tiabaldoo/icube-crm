@@ -10,9 +10,7 @@ export function createApp({ config, pool }) {
   app.set('trust proxy', config.trustProxy);
   app.use(helmet());
   app.use(express.json({ limit: '1mb' }));
-  // Авторизация — следующий срез. Test/development временно получают права директора;
-  // production остаётся закрыт до появления настоящих access token.
-  app.use('/api/v1', createApiRouter(pool, { allowUnauthenticated: config.appEnv !== 'production' }));
+  app.use('/api/v1', createApiRouter(pool));
   app.use((error, _request, response, _next) => {
     if (!error.status) console.error(error);
     response.status(error.status ?? 500).json({ error: {

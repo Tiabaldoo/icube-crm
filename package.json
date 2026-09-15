@@ -7,12 +7,14 @@
     "test": "node --test",
     "check": "node scripts/check-syntax.mjs",
     "migrate": "node database/migrate.mjs",
+    "create-director": "node scripts/create-director.mjs",
     "start:api": "node backend/src/server.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.2",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
     "mysql2": "^3.14.4"

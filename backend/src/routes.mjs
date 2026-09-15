@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
+import { clearSessionCookieOptions, createAuthService, parseSessionCookie, SESSION_COOKIE, sessionCookieOptions } from './auth-service.mjs';
 import { createMysqlCatalog } from './catalog.mjs';
 import { createDeletionService } from './deletion.mjs';
 import { createMysqlPayments } from './payments.mjs';
@@ -32,21 +33,40 @@ export function createApiRouter(pool, {
   balanceTransfers = createBalanceTransfers(pool),
   partnerSettlements = createPartnerSettlements(pool),
   statistics = createStatistics(pool),
-  allowUnauthenticated = false,
+  authService = createAuthService(pool),
+  testAuth = null,
 } = {}) {
   const router = Router();
   router.get('/health', async (_request, response, next) => { try { await pool.query('SELECT 1'); response.json({ data: { status: 'ok' } }); } catch (error) { next(error); } });
-  router.post('/auth/login', notImplemented('auth/login'));
+  router.post('/auth/login', async (request, response, next) => {
+    try {
+      const result = await authService.login(request.body, { userAgent: request.get('user-agent') });
+      response.cookie(SESSION_COOKIE, result.sessionToken, sessionCookieOptions({ expires: result.expiresAt }));
+      response.json({ data: result.profile });
+    } catch (error) { next(error); }
+  });
   router.post('/auth/refresh', notImplemented('auth/refresh'));
-  router.post('/auth/logout', notImplemented('auth/logout'));
 
-  if (allowUnauthenticated) router.use((request, _response, next) => { request.auth = { roles: ['director'] }; next(); });
-  router.use(authenticate);
+  if (testAuth) router.use(testAuth);
+  else router.use((request, _response, next) => {
+    request.authService = authService;
+    request.sessionToken = parseSessionCookie(request.get('cookie'));
+    next();
+  }, authenticate);
+  router.get('/auth/me', run((request) => ({ id: request.auth.userId, displayName: request.auth.displayName,
+    roles: request.auth.roles, teacherId: request.auth.teacherId ?? null })));
+  router.post('/auth/logout', async (request, response, next) => {
+    try {
+      await authService.logout(request.auth.sessionId);
+      response.clearCookie(SESSION_COOKIE, clearSessionCookieOptions());
+      response.status(204).end();
+    } catch (error) { next(error); }
+  });
 
   for (const resource of ['projects', 'directions', 'sites', 'teachers', 'groups', 'children']) {
     const permission = resource === 'projects' ? 'projects:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : '*';
-    router.get(`/${resource}`, requirePermission(permission), run(() => catalog.list(resource)));
-    router.get(`/${resource}/:id`, requirePermission(permission), run((request) => catalog.get(resource, request.params.id)));
+    router.get(`/${resource}`, requirePermission(permission), run((request) => catalog.list(resource, request.auth)));
+    router.get(`/${resource}/:id`, requirePermission(permission), run((request) => catalog.get(resource, request.params.id, request.auth)));
     if (resource !== 'projects') {
       router.post(`/${resource}`, requirePermission('*'), run((request) => catalog.create(resource, request.body), 201));
       router.patch(`/${resource}/:id`, requirePermission('*'), run((request) => catalog.update(resource, request.params.id, request.body)));
@@ -59,6 +79,10 @@ export function createApiRouter(pool, {
   router.post('/children/:id/enrollments', requirePermission('*'), run((request) => catalog.createEnrollment(request.params.id, request.body), 201));
   router.patch('/enrollments/:id', requirePermission('*'), run((request) => catalog.updateEnrollment(request.params.id, request.body)));
   router.delete('/enrollments/:id', requirePermission('*'), run((request) => deletions.deleteEnrollment(request.params.id), 204));
+  router.get('/teachers/:id/access', requirePermission('*'), run((request) => authService.getTeacherAccess(request.params.id)));
+  router.post('/teachers/:id/access', requirePermission('*'), run((request) => authService.createTeacherAccess(request.params.id, request.body, request.auth.userId), 201));
+  router.post('/teachers/:id/access/reset-password', requirePermission('*'), run((request) => authService.resetTeacherPassword(request.params.id, request.body)));
+  router.delete('/teachers/:id/access', requirePermission('*'), run((request) => authService.disableTeacherAccess(request.params.id)));
 
   router.get('/payments', requirePermission('*'), run((request) => payments.list(request.query)));
   router.get('/payments/:id', requirePermission('*'), run((request) => payments.get(request.params.id)));
@@ -91,9 +115,9 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
 
-  const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [] });
+  const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [], teacherId: request.auth?.teacherId ?? null });
   router.get('/lessons', requirePermission('lessons:read'), run((request) => lessons.list(request.query, lessonContext(request))));
-  router.get('/lesson-deletions', requirePermission('lessons:read'), run(() => lessons.deletedOccurrences()));
+  router.get('/lesson-deletions', requirePermission('lessons:read'), run((request) => lessons.deletedOccurrences(lessonContext(request))));
   router.get('/lessons/:id', requirePermission('lessons:read'), run((request) => lessons.get(request.params.id, lessonContext(request))));
   router.post('/lessons', requirePermission('*'), run((request) => lessons.create(request.body, lessonContext(request)), 201));
   router.patch('/lessons/:id', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
