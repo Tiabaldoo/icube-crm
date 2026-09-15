@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { calculateTransferPlan, createBalanceTransfers } from '../backend/src/balance-transfers.mjs';
+import { calculateTransferPlan, createBalanceTransfers, fundedTransferLessons } from '../backend/src/balance-transfers.mjs';
 import { createMysqlCatalog } from '../backend/src/catalog.mjs';
 
 test('3 × 1025 ₽ переносятся как 3075 ₽ и 2.73333333 занятия по 1125 ₽', () => {
@@ -30,6 +30,19 @@ test('долг поглощает старые lots по FIFO до расчёт�
   assert.equal(plan.debtAdjustments[0].lotId, '1'); assert.equal(plan.amount, '2250.00');
 });
 
+test('target -1 + 2.73333333 создаёт lot с остатком 1.73333333', () => {
+  assert.equal(fundedTransferLessons('2.73333333', '-1.00000000'), '1.73333333');
+});
+
+test('target -3 + 2 оставляет balance -1 и lot remaining 0', () => {
+  assert.equal(fundedTransferLessons('2.00000000', '-3.00000000'), '0.00000000');
+});
+
+test('target с нулевым или положительным балансом сохраняет весь transfer credit в lot', () => {
+  assert.equal(fundedTransferLessons('2.73333333', '0.00000000'), '2.73333333');
+  assert.equal(fundedTransferLessons('2.73333333', '1.00000000'), '2.73333333');
+});
+
 function fixture(overrides = {}) {
   const state = {
     source: { id: 9, child_id: 8, direction_id: 1, status: 'finished', balance_lessons: '3.00000000', current_price: '9999.00' },
@@ -38,6 +51,8 @@ function fixture(overrides = {}) {
     ...overrides,
   };
   let nextEntry = 80;
+  const units = (value) => { const [whole, fraction = ''] = String(value).split('.'); return BigInt(whole) * 100000000n + BigInt(`${whole.startsWith('-') ? '-' : ''}${fraction.padEnd(8, '0')}`); };
+  const decimal = (value) => `${value < 0n ? '-' : ''}${(value < 0n ? -value : value) / 100000000n}.${String((value < 0n ? -value : value) % 100000000n).padStart(8, '0')}`;
   const query = async (sql, params = {}) => {
     state.calls.push({ sql, params });
     if (sql.includes('FROM balance_entries be JOIN balance_transfers bt')) {
@@ -59,7 +74,7 @@ function fixture(overrides = {}) {
     if (sql.startsWith('UPDATE balance_lots')) { state.lots.find((item) => String(item.id) === String(params.id)).remaining_lessons = '0.00000000'; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('INSERT INTO balance_lot_consumptions')) return [{ insertId: 90 }];
     if (sql === 'UPDATE child_enrollments SET balance_lessons=0 WHERE id=:id') { state.source.balance_lessons = '0.00000000'; return [{ affectedRows: 1 }]; }
-    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+')) { state.target.balance_lessons = '3.73333333'; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+')) { state.target.balance_lessons = decimal(units(state.target.balance_lessons) + units(params.lessons)); return [{ affectedRows: 1 }]; }
     if (sql.startsWith('INSERT INTO balance_lots')) { state.targetLot = params; return [{ insertId: 61 }]; }
     if (sql.startsWith('SELECT * FROM balance_transfers WHERE')) return [[state.transfers[0]]];
     throw new Error(`Неожиданный SQL: ${sql}`);
@@ -73,11 +88,29 @@ test('transfer одной транзакцией обнуляет source, поп
   const result = await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 }, { idempotencyKey: 'transfer-1' });
   assert.equal(result.transferredAmount, '3075.00'); assert.equal(result.targetPriceSnapshot, '1125.00');
   assert.equal(state.source.balance_lessons, '0.00000000'); assert.equal(state.target.balance_lessons, '3.73333333');
-  assert.equal(state.targetLot.lessons, '2.73333333'); assert.equal(state.targetLot.price, '1125.00');
+  assert.equal(state.targetLot.lessons, '2.73333333'); assert.equal(state.targetLot.remainingLessons, '2.73333333'); assert.equal(state.targetLot.price, '1125.00');
   assert.deepEqual(state.entries.map((item) => item.type), ['out', 'in']);
   assert.equal(state.calls.some(({ sql }) => /UPDATE (?:payments|refunds|attendances)/.test(sql)), false);
   await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 }, { idempotencyKey: 'transfer-1' });
   assert.equal(state.transfers.length, 1); assert.equal(state.entries.length, 2);
+});
+
+test('target debt -1 поглощает часть transfer credit в новом lot', async () => {
+  const { state, service } = fixture({ target: { id: 10, child_id: 8, direction_id: 2, status: 'active', balance_lessons: '-1.00000000', current_price: '1125.00' } });
+  await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 });
+  assert.equal(state.target.balance_lessons, '1.73333333'); assert.equal(state.targetLot.lessons, '2.73333333');
+  assert.equal(state.targetLot.remainingLessons, '1.73333333');
+});
+
+test('target debt больше transfer credit оставляет отрицательный balance и пустой lot', async () => {
+  const { state, service } = fixture({
+    source: { id: 9, child_id: 8, direction_id: 1, status: 'finished', balance_lessons: '2.00000000', current_price: '9999.00' },
+    target: { id: 10, child_id: 8, direction_id: 2, status: 'active', balance_lessons: '-3.00000000', current_price: '1000.00' },
+    lots: [{ id: 60, remaining_lessons: '2.00000000', unit_price: '1000.00' }],
+  });
+  await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 });
+  assert.equal(state.target.balance_lessons, '-1.00000000'); assert.equal(state.targetLot.lessons, '2.00000000');
+  assert.equal(state.targetLot.remainingLessons, '0.00000000');
 });
 
 for (const [name, overrides, code] of [

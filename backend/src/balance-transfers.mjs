@@ -45,6 +45,12 @@ export function calculateTransferPlan(balanceLessons, lots, targetPrice) {
     targetCredit: calculateLessonsCredit(amount, price), debtAdjustments, consumptions: consumption.consumptions };
 }
 
+export function fundedTransferLessons(credit, balanceBefore) {
+  const creditUnits = lessonUnits(credit); const balanceUnits = lessonUnits(balanceBefore ?? '0');
+  const funded = balanceUnits < 0n ? creditUnits + balanceUnits : creditUnits;
+  return lessonDecimal(funded > 0n ? funded : 0n);
+}
+
 export function createBalanceTransfers(pool) {
   const enrollmentSql = `SELECT e.id,e.child_id,e.direction_id,e.status,e.balance_lessons,
     COALESCE(
@@ -123,11 +129,12 @@ export function createBalanceTransfers(pool) {
           targetId: plan.target.id, lessons: plan.targetCredit, amount: plan.amount, price: plan.targetPrice,
           transferId: transfer.insertId, actorId: context.actorUserId ?? null,
         });
+        const targetLotLessons = fundedTransferLessons(plan.targetCredit, plan.target.balance_lessons);
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: plan.target.id, lessons: plan.targetCredit });
         await connection.query(`INSERT INTO balance_lots
           (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
-          VALUES (:targetId,:entryId,:lessons,:lessons,:price)`, {
-          targetId: plan.target.id, entryId: inEntry.insertId, lessons: plan.targetCredit, price: plan.targetPrice,
+          VALUES (:targetId,:entryId,:lessons,:remainingLessons,:price)`, {
+          targetId: plan.target.id, entryId: inEntry.insertId, lessons: plan.targetCredit, remainingLessons: targetLotLessons, price: plan.targetPrice,
         });
         return String(transfer.insertId);
       });
