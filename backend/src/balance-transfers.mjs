@@ -210,6 +210,9 @@ export function createBalanceTransfers(pool) {
           throw new ApiProblem(409, 'TRANSFER_ALREADY_USED', 'Нельзя отменить перенос: перенесённый остаток уже использован.');
         }
         for (const change of sourceChanges) {
+          if (lessonUnits(String(change.remaining_lessons)) !== lessonUnits(String(change.remaining_after))) {
+            throw new ApiProblem(409, 'TRANSFER_ALREADY_USED', 'Нельзя отменить перенос: после переноса изменилась финансовая история исходного направления.');
+          }
           const restored = lessonUnits(String(change.remaining_lessons)) + lessonUnits(String(change.lessons_delta));
           if (restored > lessonUnits(String(change.original_lessons))) throw new ApiProblem(409, 'TRANSFER_LEDGER_INCONSISTENT', 'Исходная партия не может быть восстановлена точно');
         }

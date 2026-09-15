@@ -221,6 +221,17 @@ test('target lot, уменьшенный следующим transfer, блоки
   assert.notEqual(targetChange.transfer, null);
 });
 
+test('изменённый после transfer source lot блокирует отмену без частичного rollback', async () => {
+  const blocked = reversalFixture({ sourceLots: [
+    { id: 60, original_lessons: '3.00000000', remaining_lessons: '1.00000000', source_balance_entry_id: 40 },
+  ] });
+  await assert.rejects(blocked.service.remove(70), (error) => error.status === 409 && error.code === 'TRANSFER_ALREADY_USED'
+    && error.message === 'Нельзя отменить перенос: после переноса изменилась финансовая история исходного направления.');
+  assert.equal(blocked.state.balances[9], '0.00000000'); assert.equal(blocked.state.balances[10], '2.73333333');
+  assert.equal(blocked.state.lots[0].remaining_lessons, '1.00000000'); assert.notEqual(blocked.state.targetLot, null);
+  assert.equal(blocked.state.deletedConsumptions, false); assert.notEqual(blocked.state.transfer, null);
+});
+
 test('повторная отмена не меняет ledger', async () => {
   const completed = reversalFixture(); await completed.service.remove(70);
   await assert.rejects(completed.service.remove(70), (error) => error.code === 'NOT_FOUND');
