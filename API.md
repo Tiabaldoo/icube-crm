@@ -23,7 +23,7 @@ Permission преподавателя не даёт доступ к любому
 | --- | --- |
 | Дети | `GET/POST /children`, `GET/PATCH/DELETE /children/:id` |
 | Направления ребёнка | `POST /children/:id/enrollments`, `PATCH /enrollments/:id` |
-| Перенос | `GET /balance-transfers/preview`, `POST /balance-transfers` |
+| Перенос | `GET /balance-transfers`, `GET /balance-transfers/preview`, `POST /balance-transfers`, `DELETE /balance-transfers/:id` |
 | Группы | `GET/POST /groups`, `GET/PATCH /groups/:id`, `POST /groups/:id/memberships` |
 | Справочники | `/directions`, `/sites`, `/teachers`, `/projects` |
 | Версии настроек | `GET/POST /price-versions`, `GET/POST /salary-rate-versions`, `GET/POST /partner-agreement-versions` |
@@ -39,16 +39,18 @@ Permission преподавателя не даёт доступ к любому
 | Балансы | `GET /balances`, `GET /children/:id/ledger` |
 | Зарплата | `GET /salary-accruals?teacherId=&from=&to=` |
 | Партнёр | live calculation `GET /partner-settlements?projectId=&from=&to=`; фиксация `POST /partner-settlements` пока не реализована |
-| Статистика | `GET /statistics?...` |
+| Статистика | `GET /statistics?from=&to=&projectId=all&directionId=all` |
 | Уведомления | `GET /notifications`, `POST /notifications/:id/read` |
 
 Реально подключённый каталоговый срез: чтение проектов; чтение и изменение направлений, площадок, преподавателей, групп и детей; создание/изменение направлений ребёнка.
 
-Финансовый срез реализует `GET/POST/PATCH/DELETE /payments`, `GET /balances`, `GET/POST/DELETE /refunds` и перенос всего положительного остатка между направлениями через `GET /balance-transfers/preview` и `POST /balance-transfers`. Возврат всегда связан с исходной оплатой, уменьшает её свободный lot по исторической цене и меняет баланс enrollment в одной транзакции. Оплату нельзя изменить или удалить при активном возврате; после удаления всех возвратов действуют обычные ограничения по активным consumptions. Перенос считает рублёвую стоимость реальных FIFO-lots исходного enrollment и создаёт отдельные `transfer_out`/`transfer_in`; старые оплаты и посещения не меняются.
+Финансовый срез реализует `GET/POST/PATCH/DELETE /payments`, `GET /balances`, `GET/POST/DELETE /refunds` и перенос всего положительного остатка между направлениями. `DELETE /balance-transfers/:id` отменяет перенос одной транзакцией только пока созданный target lot не использован. Исходные lots восстанавливаются по сохранённым фактическим изменениям, включая поглощение старого долга; старые переносы без этой истории безопасно отклоняются.
 
 Срез занятий реализует материализацию occurrence из расписания групп, `GET/POST/PATCH/DELETE /lessons`, start/cancel/empty-trip/finish, attendance, extras, quick child и чтение `salary-accruals`. `POST /lessons` создаёт только один явно выбранный occurrence, в том числе в прошлом, после проверки даты по расписанию группы; остальные пропущенные занятия не материализуются. Start фиксирует основной roster в `lesson_roster_members`; последующие изменения группы его не меняют. Finish обычного или ознакомительного занятия требует хотя бы одного реально присутствующего ребёнка; при пустом составе используются cancel или директорский empty-trip. Обычное присутствие списывает один урок по FIFO из `balance_lots`, а нехватка оплаченных lots оставляет разрешённый отрицательный баланс. Исправление проведённого attendance создаёт reversal исходного ledger effect, восстанавливает те же lots и создаёт новый эффект при необходимости. Директорское удаление ошибочного attendance после reversal физически очищает его технический ledger; явно отмеченное отсутствие остаётся историей. Директорское удаление занятия обращает активные списания, очищает attendance, roster, фотографии и зарплату, затем сохраняет tombstone, поэтому occurrence не материализуется повторно. Зарплата начисляется фактическому преподавателю по versioned rate; прежнее начисление помечается `reversed_at`, новое ссылается на него через `supersedes_accrual_id`.
 
-`GET /partner-settlements` агрегирует оплаты, возвраты, наличные и актуальную зарплату по историческому `project_id_snapshot` и возвращает live calculation без записи в `partner_settlements`. Маршруты фотографий, фиксации партнёрского расчёта через `POST /partner-settlements` и статистики пока возвращают `501 NOT_IMPLEMENTED`.
+`GET /partner-settlements` агрегирует оплаты, возвраты, наличные и актуальную зарплату по историческому `project_id_snapshot` и возвращает live calculation без записи в `partner_settlements`. Маршруты фотографий и фиксации партнёрского расчёта через `POST /partner-settlements` пока возвращают `501 NOT_IMPLEMENTED`.
+
+`GET /statistics` возвращает директорский read model за период: проведённые занятия, обычные посещения и явные пропуски, первых обычных посетителей, последние события pause/finish, текущих активных детей и заполненность активных групп. Исторические показатели фильтруются по snapshots занятия или статусного события; current-state показатели — по текущей активной membership.
 
 `DELETE /children/:id` доступен только директору и удаляет карточку лишь при отсутствии активных оплат, возвратов, отмеченных посещений, transfers, ненулевого баланса и невозмещённого ledger effect. Полностью reversed технические строки очищаются транзакционно. При наличии активной истории сервер возвращает conflict/validation error. Версии цен, ставок зарплаты и партнёрских условий также не имеют обычного `PATCH`: изменение транзакционно закрывает прежнюю версию и создаёт новую с новым `valid_from`.
 

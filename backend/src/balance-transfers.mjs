@@ -14,6 +14,7 @@ const mapTransfer = (row) => ({
   targetEnrollmentId: String(row.target_enrollment_id), transferredAmount: String(row.transferred_amount),
   targetPriceSnapshot: String(row.target_price_snapshot), targetLessonsCredit: String(row.target_lessons_credit),
   transferredAt: typeof row.transferred_at === 'string' ? row.transferred_at : row.transferred_at.toISOString(),
+  sourceDirectionName: row.source_direction_name ?? null, targetDirectionName: row.target_direction_name ?? null,
 });
 
 function mysqlError(error) {
@@ -78,7 +79,7 @@ export function createBalanceTransfers(pool) {
     if (target.current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для нового направления не настроена цена занятия');
     const [lots] = await connection.query(`SELECT id,remaining_lessons,unit_price FROM balance_lots
       WHERE enrollment_id=:sourceId AND remaining_lessons>0 ORDER BY created_at,id FOR UPDATE`, { sourceId });
-    return { source, target, ...calculateTransferPlan(lessonDecimal(sourceBalance), lots, target.current_price) };
+    return { source, target, lots, ...calculateTransferPlan(lessonDecimal(sourceBalance), lots, target.current_price) };
   }
 
   async function preview(sourceId, targetId) {
@@ -87,6 +88,17 @@ export function createBalanceTransfers(pool) {
       return { sourceEnrollmentId: String(plan.source.id), targetEnrollmentId: String(plan.target.id),
         transferableAmount: plan.amount, targetPriceSnapshot: plan.targetPrice, targetLessonsCredit: plan.targetCredit };
     }); } catch (error) { throw mysqlError(error); }
+  }
+
+  async function list(filters = {}) {
+    const conditions = []; const params = {};
+    if (filters.childId != null && filters.childId !== '') { conditions.push('bt.child_id=:childId'); params.childId = identifier(filters.childId, 'childId'); }
+    const [rows] = await pool.query(`SELECT bt.*,sd.name source_direction_name,td.name target_direction_name
+      FROM balance_transfers bt
+      JOIN child_enrollments se ON se.id=bt.source_enrollment_id JOIN directions sd ON sd.id=se.direction_id
+      JOIN child_enrollments te ON te.id=bt.target_enrollment_id JOIN directions td ON td.id=te.direction_id
+      ${conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''} ORDER BY bt.transferred_at DESC,bt.id DESC`, params);
+    return rows.map(mapTransfer);
   }
 
   async function getByIdempotencyKey(key) {
@@ -114,6 +126,10 @@ export function createBalanceTransfers(pool) {
           sourceId: plan.source.id, lessons: lessonDecimal(-lessonUnits(plan.sourceBalance)), amount: moneyDecimal(-moneyCents(plan.amount)),
           transferId: transfer.insertId, idempotencyKey, actorId: context.actorUserId ?? null,
         });
+        const reductions = new Map();
+        for (const item of [...plan.debtAdjustments, ...plan.consumptions]) {
+          reductions.set(String(item.lotId), (reductions.get(String(item.lotId)) ?? 0n) + lessonUnits(item.lessons));
+        }
         for (const item of plan.debtAdjustments) {
           await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', { id: item.lotId, lessons: item.lessons });
         }
@@ -131,10 +147,24 @@ export function createBalanceTransfers(pool) {
         });
         const targetLotLessons = fundedTransferLessons(plan.targetCredit, plan.target.balance_lessons);
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: plan.target.id, lessons: plan.targetCredit });
-        await connection.query(`INSERT INTO balance_lots
+        const [targetLot] = await connection.query(`INSERT INTO balance_lots
           (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
           VALUES (:targetId,:entryId,:lessons,:remainingLessons,:price)`, {
           targetId: plan.target.id, entryId: inEntry.insertId, lessons: plan.targetCredit, remainingLessons: targetLotLessons, price: plan.targetPrice,
+        });
+        const lotById = new Map(plan.lots.map((lot) => [String(lot.id), lot]));
+        for (const [lotId, reducedUnits] of reductions) {
+          const before = lessonUnits(String(lotById.get(lotId).remaining_lessons));
+          await connection.query(`INSERT INTO balance_transfer_lot_changes
+            (transfer_id,balance_lot_id,change_type,lessons_delta,remaining_before,remaining_after)
+            VALUES (:transferId,:lotId,'source_reduction',:lessons,:before,:after)`, {
+            transferId: transfer.insertId, lotId, lessons: lessonDecimal(reducedUnits), before: lessonDecimal(before), after: lessonDecimal(before - reducedUnits),
+          });
+        }
+        await connection.query(`INSERT INTO balance_transfer_lot_changes
+          (transfer_id,balance_lot_id,change_type,lessons_delta,remaining_before,remaining_after)
+          VALUES (:transferId,:lotId,'target_created',:lessons,'0.00000000',:remainingAfter)`, {
+          transferId: transfer.insertId, lotId: targetLot.insertId, lessons: plan.targetCredit, remainingAfter: targetLotLessons,
         });
         return String(transfer.insertId);
       });
@@ -149,5 +179,54 @@ export function createBalanceTransfers(pool) {
     }
   }
 
-  return { preview, create };
+  async function remove(rawTransferId) {
+    const transferId = identifier(rawTransferId);
+    try {
+      await inTransaction(pool, async (connection) => {
+        const [transfers] = await connection.query('SELECT * FROM balance_transfers WHERE id=:id FOR UPDATE', { id: transferId });
+        if (!transfers.length) throw new ApiProblem(404, 'NOT_FOUND', 'Перенос не найден или уже отменён');
+        const transfer = transfers[0];
+        await connection.query('SELECT id FROM child_enrollments WHERE id IN (:sourceId,:targetId) ORDER BY id FOR UPDATE', {
+          sourceId: transfer.source_enrollment_id, targetId: transfer.target_enrollment_id,
+        });
+        const [entries] = await connection.query(`SELECT id,enrollment_id,entry_type,lessons_delta FROM balance_entries
+          WHERE transfer_id=:id AND entry_type IN ('transfer_out','transfer_in') ORDER BY id FOR UPDATE`, { id: transferId });
+        const outEntry = entries.find((entry) => entry.entry_type === 'transfer_out');
+        const inEntry = entries.find((entry) => entry.entry_type === 'transfer_in');
+        if (!outEntry || !inEntry || entries.length !== 2) throw new ApiProblem(409, 'TRANSFER_LEDGER_INCONSISTENT', 'Перенос нельзя восстановить однозначно');
+        const [changes] = await connection.query(`SELECT c.*,bl.original_lessons,bl.remaining_lessons,bl.source_balance_entry_id
+          FROM balance_transfer_lot_changes c JOIN balance_lots bl ON bl.id=c.balance_lot_id
+          WHERE c.transfer_id=:id ORDER BY c.id FOR UPDATE`, { id: transferId });
+        const targetChange = changes.find((change) => change.change_type === 'target_created');
+        const sourceChanges = changes.filter((change) => change.change_type === 'source_reduction');
+        if (!targetChange || !sourceChanges.length || String(targetChange.source_balance_entry_id) !== String(inEntry.id)) {
+          throw new ApiProblem(409, 'TRANSFER_REVERSAL_UNAVAILABLE', 'Нельзя отменить перенос: для него нет полной истории изменения остатка.');
+        }
+        const [dependencies] = await connection.query(`SELECT 1 FROM balance_lot_consumptions
+          WHERE balance_lot_id=:lotId LIMIT 1 FOR UPDATE`, { lotId: targetChange.balance_lot_id });
+        const [entryDependencies] = await connection.query(`SELECT 1 FROM balance_entries
+          WHERE reversal_of_entry_id IN (:outEntryId,:inEntryId) LIMIT 1 FOR UPDATE`, { outEntryId: outEntry.id, inEntryId: inEntry.id });
+        if (dependencies.length || entryDependencies.length || lessonUnits(String(targetChange.remaining_lessons)) !== lessonUnits(String(targetChange.remaining_after))) {
+          throw new ApiProblem(409, 'TRANSFER_ALREADY_USED', 'Нельзя отменить перенос: перенесённый остаток уже использован.');
+        }
+        for (const change of sourceChanges) {
+          const restored = lessonUnits(String(change.remaining_lessons)) + lessonUnits(String(change.lessons_delta));
+          if (restored > lessonUnits(String(change.original_lessons))) throw new ApiProblem(409, 'TRANSFER_LEDGER_INCONSISTENT', 'Исходная партия не может быть восстановлена точно');
+        }
+        for (const change of sourceChanges) {
+          await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: change.balance_lot_id, lessons: String(change.lessons_delta) });
+        }
+        await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: transfer.target_enrollment_id, lessons: String(inEntry.lessons_delta) });
+        await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: transfer.source_enrollment_id, lessons: lessonDecimal(-lessonUnits(String(outEntry.lessons_delta))) });
+        await connection.query('DELETE FROM balance_lot_consumptions WHERE balance_entry_id=:entryId', { entryId: outEntry.id });
+        await connection.query('DELETE FROM balance_transfer_lot_changes WHERE transfer_id=:id', { id: transferId });
+        await connection.query('DELETE FROM balance_lots WHERE id=:id', { id: targetChange.balance_lot_id });
+        await connection.query('DELETE FROM balance_entries WHERE transfer_id=:id', { id: transferId });
+        await connection.query('DELETE FROM balance_transfers WHERE id=:id', { id: transferId });
+      });
+      return null;
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  return { list, preview, create, remove };
 }

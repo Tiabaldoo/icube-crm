@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { calculateTransferPlan, createBalanceTransfers, fundedTransferLessons } from '../backend/src/balance-transfers.mjs';
 import { createMysqlCatalog } from '../backend/src/catalog.mjs';
+import { lessonDecimal, lessonUnits } from '../backend/src/lesson-rules.mjs';
 
 test('3 × 1025 ₽ переносятся как 3075 ₽ и 2.73333333 занятия по 1125 ₽', () => {
   const plan = calculateTransferPlan('3.00000000', [{ id: 1, remaining_lessons: '3.00000000', unit_price: '1025.00' }], '1125.00');
@@ -47,7 +48,7 @@ function fixture(overrides = {}) {
   const state = {
     source: { id: 9, child_id: 8, direction_id: 1, status: 'finished', balance_lessons: '3.00000000', current_price: '9999.00' },
     target: { id: 10, child_id: 8, direction_id: 2, status: 'active', balance_lessons: '1.00000000', current_price: '1125.00' },
-    lots: [{ id: 60, remaining_lessons: '3.00000000', unit_price: '1025.00' }], transfers: [], entries: [], calls: [],
+    lots: [{ id: 60, remaining_lessons: '3.00000000', unit_price: '1025.00' }], transfers: [], entries: [], lotChanges: [], calls: [],
     ...overrides,
   };
   let nextEntry = 80;
@@ -76,6 +77,7 @@ function fixture(overrides = {}) {
     if (sql === 'UPDATE child_enrollments SET balance_lessons=0 WHERE id=:id') { state.source.balance_lessons = '0.00000000'; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+')) { state.target.balance_lessons = decimal(units(state.target.balance_lessons) + units(params.lessons)); return [{ affectedRows: 1 }]; }
     if (sql.startsWith('INSERT INTO balance_lots')) { state.targetLot = params; return [{ insertId: 61 }]; }
+    if (sql.startsWith('INSERT INTO balance_transfer_lot_changes')) { state.lotChanges.push(params); return [{ insertId: 100 + state.lotChanges.length }]; }
     if (sql.startsWith('SELECT * FROM balance_transfers WHERE')) return [[state.transfers[0]]];
     throw new Error(`Неожиданный SQL: ${sql}`);
   };
@@ -139,5 +141,88 @@ test('router подключает preview и POST переноса к реаль
   const routes = await readFile(new URL('../backend/src/routes.mjs', import.meta.url), 'utf8');
   assert.match(routes, /router\.get\('\/balance-transfers\/preview'[\s\S]*?balanceTransfers\.preview/);
   assert.match(routes, /router\.post\('\/balance-transfers'[\s\S]*?balanceTransfers\.create/);
+  assert.match(routes, /router\.delete\('\/balance-transfers\/:id'[\s\S]*?balanceTransfers\.remove/);
   assert.doesNotMatch(routes, /notImplemented\('balance-transfers'\)/);
+});
+
+function reversalFixture({ sourceBalance = '0.00000000', sourceDebit = '-3.00000000', targetBalance = '2.73333333', sourceLots, targetRemaining = '2.73333333', targetCurrentRemaining = targetRemaining, targetUsed = false } = {}) {
+  const state = {
+    transfer: { id: 70, source_enrollment_id: 9, target_enrollment_id: 10 },
+    balances: { 9: sourceBalance, 10: targetBalance },
+    lots: sourceLots ?? [{ id: 60, original_lessons: '3.00000000', remaining_lessons: '0.00000000', source_balance_entry_id: 40 }],
+    targetLot: { id: 61, original_lessons: '2.73333333', remaining_lessons: targetCurrentRemaining, source_balance_entry_id: 81 },
+    deletedConsumptions: false,
+  };
+  const units = (value) => lessonUnits(String(value));
+  const decimal = (value) => lessonDecimal(value);
+  const changes = [
+    ...state.lots.map((lot) => ({ transfer_id: 70, balance_lot_id: lot.id, change_type: 'source_reduction', lessons_delta: lot.original_lessons,
+      remaining_before: lot.original_lessons, remaining_after: '0.00000000', ...lot })),
+    { transfer_id: 70, balance_lot_id: 61, change_type: 'target_created', lessons_delta: '2.73333333', remaining_before: '0.00000000', ...state.targetLot, remaining_after: targetRemaining },
+  ];
+  const query = async (sql, params = {}) => {
+    if (sql === 'SELECT * FROM balance_transfers WHERE id=:id FOR UPDATE') return [state.transfer ? [state.transfer] : []];
+    if (sql.startsWith('SELECT id,enrollment_id,entry_type,lessons_delta FROM balance_entries')) return [[
+      { id: 80, enrollment_id: 9, entry_type: 'transfer_out', lessons_delta: sourceDebit },
+      { id: 81, enrollment_id: 10, entry_type: 'transfer_in', lessons_delta: '2.73333333' },
+    ]];
+    if (sql.startsWith('SELECT c.*,bl.original_lessons')) return [[...changes]];
+    if (sql.startsWith('SELECT 1 FROM balance_lot_consumptions')) return [targetUsed ? [{ id: 1 }] : []];
+    if (sql.startsWith('SELECT 1 FROM balance_entries')) return [[]];
+    if (sql.startsWith('SELECT id FROM child_enrollments')) return [[{ id: 9 }, { id: 10 }]];
+    if (sql.startsWith('UPDATE balance_lots SET remaining_lessons=remaining_lessons+')) {
+      const lot = state.lots.find((item) => String(item.id) === String(params.id)); lot.remaining_lessons = decimal(units(lot.remaining_lessons) + units(params.lessons)); return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons-')) { state.balances[10] = decimal(units(state.balances[10]) - units(params.lessons)); return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+')) { state.balances[9] = decimal(units(state.balances[9]) + units(params.lessons)); return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('DELETE FROM balance_lot_consumptions')) { state.deletedConsumptions = true; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('DELETE FROM balance_transfer_lot_changes')) return [{ affectedRows: changes.length }];
+    if (sql.startsWith('DELETE FROM balance_lots')) { state.targetLot = null; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('DELETE FROM balance_entries')) return [{ affectedRows: 2 }];
+    if (sql.startsWith('DELETE FROM balance_transfers')) { state.transfer = null; return [{ affectedRows: 1 }]; }
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+  return { state, service: createBalanceTransfers({ query, getConnection: async () => connection }) };
+}
+
+test('отмена transfer точно восстанавливает balances, source lots и удаляет target lot', async () => {
+  const { state, service } = reversalFixture(); await service.remove(70);
+  assert.equal(state.balances[9], '3.00000000'); assert.equal(state.balances[10], '0.00000000');
+  assert.equal(state.lots[0].remaining_lessons, '3.00000000'); assert.equal(state.targetLot, null);
+  assert.equal(state.deletedConsumptions, true); assert.equal(state.transfer, null);
+});
+
+test('mixed historical lots и поглощённый source debt восстанавливаются фактическими lot changes', async () => {
+  const sourceLots = [
+    { id: 60, original_lessons: '1.00000000', remaining_lessons: '0.00000000', source_balance_entry_id: 40 },
+    { id: 62, original_lessons: '2.00000000', remaining_lessons: '0.00000000', source_balance_entry_id: 41 },
+  ];
+  const { state, service } = reversalFixture({ sourceLots, sourceDebit: '-2.00000000' }); await service.remove(70);
+  assert.deepEqual(state.lots.map((lot) => lot.remaining_lessons), ['1.00000000', '2.00000000']);
+  assert.equal(state.balances[9], '2.00000000');
+});
+
+test('старый долг target полностью возвращается после отмены transfer', async () => {
+  const { state, service } = reversalFixture({ targetBalance: '1.73333333', targetRemaining: '1.73333333' }); await service.remove(70);
+  assert.equal(state.balances[10], '-1.00000000');
+});
+
+test('target lot, consumed посещением, блокирует отмену', async () => {
+  const blocked = reversalFixture({ targetUsed: true });
+  await assert.rejects(blocked.service.remove(70), (error) => error.code === 'TRANSFER_ALREADY_USED');
+  assert.notEqual(blocked.state.transfer, null);
+});
+
+test('target lot, уменьшенный следующим transfer, блокирует отмену', async () => {
+  const blocked = reversalFixture({ targetCurrentRemaining: '1.00000000' });
+  const targetChange = blocked.state;
+  await assert.rejects(blocked.service.remove(70), (error) => error.code === 'TRANSFER_ALREADY_USED');
+  assert.notEqual(targetChange.transfer, null);
+});
+
+test('повторная отмена не меняет ledger', async () => {
+  const completed = reversalFixture(); await completed.service.remove(70);
+  await assert.rejects(completed.service.remove(70), (error) => error.code === 'NOT_FOUND');
+  assert.equal(completed.state.balances[9], '3.00000000');
 });

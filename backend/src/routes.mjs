@@ -10,6 +10,7 @@ import { createPartnerAgreementVersions } from './partner-agreement-versions.mjs
 import { createMysqlLessons } from './lessons.mjs';
 import { createBalanceTransfers } from './balance-transfers.mjs';
 import { createPartnerSettlements } from './partner-settlements.mjs';
+import { createStatistics } from './statistics.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -30,6 +31,7 @@ export function createApiRouter(pool, {
   lessons = createMysqlLessons(pool),
   balanceTransfers = createBalanceTransfers(pool),
   partnerSettlements = createPartnerSettlements(pool),
+  statistics = createStatistics(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -110,10 +112,12 @@ export function createApiRouter(pool, {
   router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
   router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
   router.get('/balance-transfers/preview', requirePermission('*'), run((request) => balanceTransfers.preview(request.query.sourceEnrollmentId, request.query.targetEnrollmentId)));
+  router.get('/balance-transfers', requirePermission('*'), run((request) => balanceTransfers.list(request.query)));
   router.post('/balance-transfers', requirePermission('*'), run((request) => balanceTransfers.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
     idempotencyKey: request.get('Idempotency-Key') ?? null,
   }), 201));
+  router.delete('/balance-transfers/:id', requirePermission('*'), run((request) => balanceTransfers.remove(request.params.id), 204));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));
@@ -122,7 +126,7 @@ export function createApiRouter(pool, {
   router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(request.query)));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
-  router.get('/statistics', requirePermission('*'), notImplemented('statistics'));
+  router.get('/statistics', requirePermission('*'), run((request) => statistics.get(request.query)));
   router.post('/notifications/:id/read', requirePermission('*'), notImplemented('notification read'));
   return router;
 }

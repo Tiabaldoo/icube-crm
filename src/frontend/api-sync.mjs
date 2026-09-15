@@ -17,9 +17,18 @@ export function partnerDefaultPeriod(now = new Date()) {
   const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   return { from: localIso(new Date(now.getFullYear(), now.getMonth() - 1, 26)), to: localIso(new Date(now.getFullYear(), now.getMonth(), 25)) };
 }
+export function statisticsDefaultPeriod(now = new Date()) {
+  const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  return { from: localIso(new Date(now.getFullYear(), now.getMonth(), 1)), to: localIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
+}
 const initialPartnerPeriod = partnerDefaultPeriod();
 legacy.state.partnerDateFrom ||= initialPartnerPeriod.from;
 legacy.state.partnerDateTo ||= initialPartnerPeriod.to;
+const initialStatisticsPeriod = statisticsDefaultPeriod();
+legacy.state.statisticsDateFrom ||= initialStatisticsPeriod.from;
+legacy.state.statisticsDateTo ||= initialStatisticsPeriod.to;
+legacy.state.statisticsProjectId ||= 'all';
+legacy.state.statisticsDirectionId ||= 'all';
 
 function element(selector) { return document.querySelector(selector); }
 function value(selector) { return element(selector)?.value ?? ''; }
@@ -75,8 +84,10 @@ function mapLesson(lesson) {
 }
 
 async function reload({ render = true } = {}) {
-  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications] = await Promise.all([
+  const statisticsQuery = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
+  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics] = await Promise.all([
     api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
+    api.list('balance-transfers'), api.list('statistics', statisticsQuery),
   ]);
   directories = { projects, directions };
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
@@ -97,6 +108,9 @@ async function reload({ render = true } = {}) {
     date: isoToRu(refund.refundedOn), refundedOn: refund.refundedOn, method: paymentMethodLabel[refund.paymentMethod] ?? refund.paymentMethod,
     methodCode: refund.paymentMethod, groupId: refund.groupId == null ? null : Number(refund.groupId), projectId: refund.projectId == null ? null : Number(refund.projectId),
   }));
+  legacy.state.balanceTransfers = balanceTransfers.map((transfer) => ({ ...transfer, id: Number(transfer.id), childId: Number(transfer.childId),
+    sourceEnrollmentId: Number(transfer.sourceEnrollmentId), targetEnrollmentId: Number(transfer.targetEnrollmentId) }));
+  legacy.state.statistics = statistics;
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
@@ -254,6 +268,60 @@ async function confirmBalanceTransfer(sourceEnrollmentId) {
     await reload({ render: false }); legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; legacy.render();
   } catch (error) { fail(error); }
   finally { balanceTransferPending = false; if (button?.isConnected !== false) button.disabled = false; }
+}
+
+function cancelBalanceTransferPrompt(transferId) {
+  legacy.state.modal = `<h3>Отменить перенос остатка?</h3><div class="notice">Остаток будет возвращён в исходное направление.<br><br>Это возможно только если перенесённые средства ещё не использованы.</div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Не отменять</button><button class="btn danger" onclick="icubeApi.cancelBalanceTransfer(${Number(transferId)})">Отменить перенос</button></div>`;
+  legacy.render();
+}
+async function cancelBalanceTransfer(transferId) {
+  try {
+    await api.delete('balance-transfers', transferId); await reload({ render: false });
+    legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
+}
+
+async function loadStatistics() {
+  legacy.state.statisticsDateFrom = value('#stats-from') || legacy.state.statisticsDateFrom;
+  legacy.state.statisticsDateTo = value('#stats-to') || legacy.state.statisticsDateTo;
+  legacy.state.statisticsProjectId = value('#stats-project') || 'all';
+  legacy.state.statisticsDirectionId = value('#stats-direction') || 'all';
+  const query = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
+  try { legacy.state.statistics = await api.list('statistics', query); legacy.render(); }
+  catch (error) { fail(error); }
+}
+function statisticsPage() {
+  const result = legacy.state.statistics;
+  const summary = result?.summary ?? { completedLessons: 0, visits: 0, absences: 0, attendancePercent: '0.0', newChildren: 0, leftChildren: 0, activeChildren: 0, averageOccupancyPercent: '0.0' };
+  const option = (item, selected) => `<option value="${item.id}"${String(item.id) === String(selected) ? ' selected' : ''}>${html(item.name)}</option>`;
+  const metrics = [
+    ['Проведено занятий', summary.completedLessons], ['Посещений', summary.visits], ['Пропусков', summary.absences],
+    ['Средняя посещаемость', `${summary.attendancePercent}%`], ['Новых детей', summary.newChildren], ['Ушли / пауза', summary.leftChildren],
+    ['Активные дети сейчас', summary.activeChildren], ['Средняя заполненность', `${summary.averageOccupancyPercent}%`],
+  ];
+  const rows = (result?.groups ?? []).map((group) => `<div class="row" style="grid-template-columns:2fr 1.2fr 1.3fr .8fr .8fr 1fr .8fr .8fr 1fr .7fr .7fr;min-width:1120px">
+    <div><b>${html(group.name)}</b></div><div>${html(group.projectName)}</div><div>${html(group.directionName)}</div><div>${group.currentMembers}</div><div>${group.capacity}</div>
+    <div>${group.currentMembers} / ${group.capacity} · ${group.occupancyPercent}%</div><div>${group.completedLessons}</div><div>${group.visits}</div><div>${group.absences} · ${group.attendancePercent}%</div><div>${group.newChildren}</div><div>${group.leftChildren}</div></div>`).join('');
+  return `${legacy.pageHead('Статистика', 'Посещаемость, движение детей и заполненность групп по данным CRM.')}<div class="toolbar" style="align-items:end;flex-wrap:wrap">
+    <div class="field"><label>Дата от</label><input class="input" id="stats-from" type="date" value="${html(legacy.state.statisticsDateFrom)}"></div>
+    <div class="field"><label>Дата до</label><input class="input" id="stats-to" type="date" value="${html(legacy.state.statisticsDateTo)}"></div>
+    <div class="field"><label>Проект</label><select class="select" id="stats-project"><option value="all">Все</option>${directories.projects.map((item) => option(item, legacy.state.statisticsProjectId)).join('')}</select></div>
+    <div class="field"><label>Направление</label><select class="select" id="stats-direction"><option value="all">Все</option>${directories.directions.map((item) => option(item, legacy.state.statisticsDirectionId)).join('')}</select></div>
+    <button class="btn primary" onclick="icubeApi.loadStatistics()">Применить</button></div>
+    <div class="grid cols-4">${metrics.map(([label, metric]) => `<div class="card metric"><div class="label">${label}</div><div class="value">${metric}</div></div>`).join('')}</div>
+    <div class="card child-ledger-card" style="margin-top:16px"><div class="child-ledger-head"><div><h2>Группы</h2><div class="muted mini">Номинальная вместимость — 8 детей</div></div></div>
+      <div style="overflow-x:auto"><div class="list"><div class="row header" style="grid-template-columns:2fr 1.2fr 1.3fr .8fr .8fr 1fr .8fr .8fr 1fr .7fr .7fr;min-width:1120px"><div>Группа</div><div>Проект</div><div>Направление</div><div>Активных</div><div>Вместимость</div><div>Заполненность</div><div>Занятий</div><div>Посещений</div><div>Пропуски</div><div>Новых</div><div>Ушли</div></div>${rows || '<div class="empty">За выбранный период данных нет.</div>'}</div></div></div>`;
+}
+
+const legacyChildPage = window.child;
+function childPageWithTransferHistory() {
+  const output = typeof legacyChildPage === 'function' ? legacyChildPage() : '';
+  const child = legacy.state.children.find((item) => item.id === Number(legacy.state.selectedChild));
+  const transfers = (legacy.state.balanceTransfers ?? []).filter((item) => item.childId === child?.id);
+  if (!child || legacy.state.childTab !== 'overview' || !transfers.length) return output;
+  const block = `<div class="card child-ledger-card" style="margin-top:16px"><div class="child-ledger-head"><div><h2>Переносы остатка</h2><div class="muted mini">${transfers.length} операций</div></div></div><div class="list">${transfers.map((item) => `<div class="kpi-line"><div><b>${html(item.sourceDirectionName)} → ${html(item.targetDirectionName)}</b><div class="muted mini">${isoToRu(timestampDate(item.transferredAt))} · ${displayMoney(item.transferredAmount)} · зачислено ${Number(item.targetLessonsCredit).toFixed(4)} занятия</div></div><button class="btn danger" onclick="icubeApi.cancelBalanceTransferPrompt(${item.id})">Отменить перенос</button></div>`).join('')}</div></div>`;
+  return `${output}${block}`;
 }
 
 function partnerProjects() { return directories.projects.filter((project) => project.partnerId != null); }
@@ -715,6 +783,7 @@ window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment,
   cancelCurrentLesson: cancelCurrentLessonApi, markCurrentLessonEmptyTrip: markCurrentLessonEmptyTripApi,
   confirmAddChildren: confirmAddChildrenApi, deleteLesson: deleteLessonApi,
   transferDirectionBalanceForm, refreshBalanceTransferPreview, confirmBalanceTransfer,
+  cancelBalanceTransferPrompt, cancelBalanceTransfer, loadStatistics,
   calculatePartnerSettlement,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
@@ -761,6 +830,9 @@ window.deleteLessonConfirmed = window.icubeApi.deleteLesson;
 window.transferDirectionBalanceFormV142 = window.icubeApi.transferDirectionBalanceForm;
 window.refreshTransferPreviewV142 = window.icubeApi.refreshBalanceTransferPreview;
 window.confirmTransferDirectionBalanceV142 = window.icubeApi.confirmBalanceTransfer;
+window.child = childPageWithTransferHistory;
+window.stats = statisticsPage;
+window.applyStatsFiltersV125 = window.icubeApi.loadStatistics;
 window.partner = partnerPage;
 window.applyPartnerFiltersV123 = window.icubeApi.calculatePartnerSettlement;
 window.saveLessonEdit = window.icubeApi.saveLessonEdit;

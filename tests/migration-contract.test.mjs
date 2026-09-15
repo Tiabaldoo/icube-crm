@@ -91,3 +91,10 @@ test('balance transfer migration разрешает API actor без destructive
   assert.match(sql, /MODIFY created_by_user_id BIGINT UNSIGNED NULL/);
   assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
 });
+
+test('transfer reversal migration сохраняет точные изменения lots без destructive reset', async () => {
+  const sql = await readFile(new URL('../database/migrations/010_balance_transfer_reversal.sql', import.meta.url), 'utf8');
+  assert.match(sql, /CREATE TABLE balance_transfer_lot_changes/);
+  assert.match(sql, /remaining_before DECIMAL\(16,8\)/); assert.match(sql, /remaining_after DECIMAL\(16,8\)/);
+  assert.doesNotMatch(sql, /DROP DATABASE|TRUNCATE/i);
+});
