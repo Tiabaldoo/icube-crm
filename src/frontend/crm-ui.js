@@ -1569,7 +1569,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   window.deleteLessonPrompt=function(id){
     const l=byId(state.lessons,id); if(!l)return;
-    modal('<h3>Удалить занятие?</h3><div class="notice">Занятие исчезнет из календаря директора, календаря преподавателя, блока «Сегодня» и списков ближайших занятий. Это удаляет только конкретное занятие, а не расписание группы.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="deleteLessonConfirmed('+id+')">Удалить занятие</button></div>');
+    const presentIds=new Set(Object.entries(l.attendance||{}).filter(function(x){return x[1];}).map(function(x){return Number(x[0]);}));
+    (l.extras||[]).filter(function(x){return x.present;}).forEach(function(x){presentIds.add(Number(x.childId));});
+    const warning=presentIds.size?'<div class="notice" style="margin-bottom:12px">На занятии отмечено присутствующих: <b>'+presentIds.size+'</b>. При удалении будут удалены их посещения, восстановлен баланс и отменено начисление зарплаты. Удалить занятие?</div>':'';
+    modal('<h3>Удалить занятие?</h3>'+warning+'<div class="notice">Занятие исчезнет из календаря директора, календаря преподавателя, блока «Сегодня» и списков ближайших занятий. Это удаляет только конкретное занятие, а не расписание группы.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="deleteLessonConfirmed('+id+')">Удалить занятие</button></div>');
   };
 
   window.deleteLessonConfirmed=function(id){
@@ -7416,27 +7419,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   window.confirmTransferDirectionBalanceV142=function(childId,direction){
     const child=byId(state.children,Number(childId));
     const source=currentEnrollment(child,direction);
-    const target=currentEnrollment(child,document.querySelector('#tb-target')?.value);
-    if(!canTransfer(child,source)||!target) return;
-    ensureLots(source); ensureLots(target);
-    const amount=lotMoney(source),targetPrice=effective(target);
-    if(!(amount>EPS)||!(targetPrice>0)) return;
-    const lessons=amount/targetPrice;
-
-    source.balance=0;
-    source.balanceLotsV142=[];
-    target.balance=Number(target.balance||0)+lessons;
-    target.balanceLotsV142.push({lessons:lessons,price:targetPrice,source:'transfer'});
-
-    state.balanceTransfersV142=state.balanceTransfersV142||[];
-    state.balanceTransfersV142.unshift({
-      id:Date.now()+Math.random(),childId:Number(child.id),from:source.direction,to:target.direction,
-      amount:amount,lessons:lessons,targetPrice:targetPrice,date:isoToday()
-    });
-    state.modal=null;
-    state.childTab='overview';
-    state.page='child';
-    render();
+    if(window.icubeApi?.confirmBalanceTransfer&&source) return window.icubeApi.confirmBalanceTransfer(source.id);
+    alert('Серверный API ещё не загружен. Повторите действие через несколько секунд.');
   };
 
   const childBeforeV142=window.child;

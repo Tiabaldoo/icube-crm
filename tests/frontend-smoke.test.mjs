@@ -119,6 +119,7 @@ test('фактические save handlers подключены к API namespace
       confirmTeacherCreatedChild: 'confirmTeacherCreatedChild',
       finishLesson: 'finishLesson', confirmFinish: 'confirmFinishLesson', saveLessonEdit: 'saveLessonEdit',
       confirmAddChildren: 'confirmAddChildren', deleteLessonConfirmed: 'deleteLesson',
+      transferDirectionBalanceFormV142: 'transferDirectionBalanceForm', confirmTransferDirectionBalanceV142: 'confirmBalanceTransfer',
       lToggle: 'lessonToggle', confirmDeleteVisitV121: 'deleteVisit', salaryCalculation: 'salaryCalculation',
     };
     for (const [legacyName, apiName] of Object.entries(aliases)) {
@@ -272,6 +273,43 @@ test('добавление ребёнка из карточки группы с�
     assert.equal(globalThis.window.icubeLegacy.state.children[0].enrollments[0].groupId, 4);
     assert.equal(globalThis.window.icubeLegacy.state.page, 'group'); assert.ok(renders > 0);
   } finally { globalThis.window = originalWindow; globalThis.document = originalDocument; globalThis.fetch = originalFetch; }
+});
+
+test('перенос остатка вызывает API и не меняет локальный баланс до серверного reload', async () => {
+  const originalWindow = globalThis.window; const originalDocument = globalThis.document; const originalFetch = globalThis.fetch;
+  const source = { id: '9', directionId: '1', directionName: 'Робототехника', groupId: null, status: 'finished', individualPrice: null, currentPrice: '1025.00', balanceLessons: '3.00000000' };
+  const target = { id: '10', directionId: '2', directionName: 'Программирование', groupId: null, status: 'active', individualPrice: null, currentPrice: '1125.00', balanceLessons: '0.00000000' };
+  const child = { id: '8', name: 'Иван', status: 'active', guardian: null, enrollments: [source, target] };
+  const resources = { projects: [], directions: [], sites: [], teachers: [], groups: [], children: [child], payments: [], refunds: [], lessons: [], 'lesson-deletions': [], notifications: [] };
+  const controls = { '#tb-target': { value: '10' }, '#tb-preview': { dataset: {}, innerHTML: '', textContent: '' }, '#tb-submit': { disabled: false, isConnected: true } };
+  let posted; let localBalanceAtPost;
+  globalThis.window = { icubeLegacy: { state: { sites: [], teachers: [], groups: [], children: [], payments: [], refunds: [], lessons: [] }, render() {} }, alert() {} };
+  globalThis.document = { querySelector(selector) { return controls[selector] ?? null; } };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url).replace('/api/v1/', '');
+    if (path.startsWith('balance-transfers/preview')) return { ok: true, status: 200, async json() { return { data: { transferableAmount: '3075.00', targetPriceSnapshot: '1125.00', targetLessonsCredit: '2.73333333' } }; } };
+    if (path === 'balance-transfers' && options.method === 'POST') {
+      posted = JSON.parse(options.body); localBalanceAtPost = globalThis.window.icubeLegacy.state.children[0].enrollments[0].balance;
+      source.balanceLessons = '0.00000000'; target.balanceLessons = '2.73333333';
+      return { ok: true, status: 201, async json() { return { data: { id: '1' } }; } };
+    }
+    const resource = path.split('?')[0]; return { ok: true, status: 200, async json() { return { data: resources[resource] ?? [] }; } };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?balance-transfer=${Date.now()}`); await globalThis.window.icubeApi.reload();
+    await globalThis.window.icubeApi.transferDirectionBalanceForm(8, 'Робототехника');
+    assert.equal(globalThis.window.icubeLegacy.state.children[0].enrollments[0].balance, 3);
+    await globalThis.window.icubeApi.confirmBalanceTransfer(9);
+    assert.deepEqual(posted, { sourceEnrollmentId: 9, targetEnrollmentId: '10' }); assert.equal(localBalanceAtPost, 3);
+    assert.equal(globalThis.window.icubeLegacy.state.children[0].enrollments[0].balance, 0);
+  } finally { globalThis.window = originalWindow; globalThis.document = originalDocument; globalThis.fetch = originalFetch; }
+});
+
+test('подтверждение удаления занятия предупреждает о числе присутствующих', async () => {
+  const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+  assert.match(source, /На занятии отмечено присутствующих: <b>'\+presentIds\.size/);
+  assert.match(source, /восстановлен баланс и отменено начисление зарплаты/);
+  assert.doesNotMatch(source, /source\.balance=0;[\s\S]*?target\.balance=/);
 });
 
 test('общая кнопка настроек сохраняет цены и зарплату, управляет dirty-state и показывает успех', async () => {

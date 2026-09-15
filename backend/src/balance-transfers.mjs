@@ -1,0 +1,146 @@
+import { inTransaction } from './db.mjs';
+import { ApiProblem } from './catalog.mjs';
+import { calculateLessonsCredit, normalizeMoney } from './payments.mjs';
+import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal, planFifoConsumption } from './lesson-rules.mjs';
+
+const identifier = (value, field = 'id') => {
+  const result = String(value ?? '').trim();
+  if (!/^[1-9]\d*$/.test(result)) throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректное поле ${field}`);
+  return result;
+};
+
+const mapTransfer = (row) => ({
+  id: String(row.id), childId: String(row.child_id), sourceEnrollmentId: String(row.source_enrollment_id),
+  targetEnrollmentId: String(row.target_enrollment_id), transferredAmount: String(row.transferred_amount),
+  targetPriceSnapshot: String(row.target_price_snapshot), targetLessonsCredit: String(row.target_lessons_credit),
+  transferredAt: typeof row.transferred_at === 'string' ? row.transferred_at : row.transferred_at.toISOString(),
+});
+
+function mysqlError(error) {
+  if (error instanceof ApiProblem) return error;
+  if (error?.code === 'ER_DUP_ENTRY') return new ApiProblem(409, 'TRANSFER_ALREADY_EXISTS', 'Этот перенос уже выполнен');
+  if (error?.code === 'ER_NO_REFERENCED_ROW_2') return new ApiProblem(400, 'INVALID_REFERENCE', 'Связанная запись не найдена');
+  return error;
+}
+
+export function calculateTransferPlan(balanceLessons, lots, targetPrice) {
+  const balance = lessonUnits(balanceLessons);
+  if (balance <= 0n) throw new ApiProblem(409, 'NO_TRANSFERABLE_BALANCE', 'У старого направления нет положительного остатка');
+  const totalLots = lots.reduce((sum, lot) => sum + lessonUnits(lot.remainingLessons ?? lot.remaining_lessons), 0n);
+  if (totalLots < balance) throw new ApiProblem(409, 'BALANCE_LEDGER_INCONSISTENT', 'Положительный баланс не подтверждён историческими лотами');
+  let debt = totalLots - balance; const debtAdjustments = []; const transferableLots = [];
+  for (const lot of lots) {
+    const available = lessonUnits(lot.remainingLessons ?? lot.remaining_lessons);
+    const absorbed = debt < available ? debt : available; debt -= absorbed;
+    if (absorbed > 0n) debtAdjustments.push({ lotId: String(lot.id), lessons: lessonDecimal(absorbed) });
+    const transferable = available - absorbed;
+    if (transferable > 0n) transferableLots.push({ ...lot, remaining_lessons: lessonDecimal(transferable) });
+  }
+  const consumption = planFifoConsumption(transferableLots, lessonDecimal(balance), '0.00');
+  if (lessonUnits(consumption.uncoveredLessons) !== 0n) throw new ApiProblem(409, 'BALANCE_LEDGER_INCONSISTENT', 'Положительный баланс не подтверждён историческими лотами');
+  const amount = moneyDecimal(moneyCents(consumption.amount));
+  if (moneyCents(amount) <= 0n) throw new ApiProblem(409, 'NO_TRANSFERABLE_BALANCE', 'У старого направления нет денежного остатка для переноса');
+  const price = normalizeMoney(targetPrice, 'targetPrice');
+  return { sourceBalance: lessonDecimal(balance), amount, targetPrice: price,
+    targetCredit: calculateLessonsCredit(amount, price), debtAdjustments, consumptions: consumption.consumptions };
+}
+
+export function createBalanceTransfers(pool) {
+  const enrollmentSql = `SELECT e.id,e.child_id,e.direction_id,e.status,e.balance_lessons,
+    COALESCE(
+      (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+      CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
+      (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+      (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+    ) current_price
+    FROM child_enrollments e
+    LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=CURDATE() AND (gm2.ended_on IS NULL OR gm2.ended_on>=CURDATE()) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
+    WHERE e.id IN (:sourceId,:targetId) ORDER BY e.id FOR UPDATE`;
+
+  async function loadPlan(connection, sourceId, targetId) {
+    sourceId = identifier(sourceId, 'sourceEnrollmentId'); targetId = identifier(targetId, 'targetEnrollmentId');
+    if (sourceId === targetId) throw new ApiProblem(400, 'SAME_ENROLLMENT', 'Направления переноса должны отличаться');
+    const [rows] = await connection.query(enrollmentSql, { sourceId, targetId });
+    const source = rows.find((row) => String(row.id) === sourceId); const target = rows.find((row) => String(row.id) === targetId);
+    if (!source || !target) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
+    if (String(source.child_id) !== String(target.child_id)) throw new ApiProblem(409, 'DIFFERENT_CHILDREN', 'Перенос возможен только между направлениями одного ребёнка');
+    if (String(source.direction_id) === String(target.direction_id)) throw new ApiProblem(409, 'SAME_DIRECTION', 'Перенос между одинаковыми направлениями невозможен');
+    if (source.status !== 'finished') throw new ApiProblem(409, 'SOURCE_NOT_FINISHED', 'Старое направление должно иметь статус «Закончил»');
+    if (target.status === 'finished') throw new ApiProblem(409, 'TARGET_FINISHED', 'Новое направление не должно иметь статус «Закончил»');
+    const sourceBalance = lessonUnits(String(source.balance_lessons));
+    if (sourceBalance <= 0n) throw new ApiProblem(409, 'NO_TRANSFERABLE_BALANCE', 'У старого направления нет положительного остатка');
+    if (target.current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для нового направления не настроена цена занятия');
+    const [lots] = await connection.query(`SELECT id,remaining_lessons,unit_price FROM balance_lots
+      WHERE enrollment_id=:sourceId AND remaining_lessons>0 ORDER BY created_at,id FOR UPDATE`, { sourceId });
+    return { source, target, ...calculateTransferPlan(lessonDecimal(sourceBalance), lots, target.current_price) };
+  }
+
+  async function preview(sourceId, targetId) {
+    try { return await inTransaction(pool, async (connection) => {
+      const plan = await loadPlan(connection, sourceId, targetId);
+      return { sourceEnrollmentId: String(plan.source.id), targetEnrollmentId: String(plan.target.id),
+        transferableAmount: plan.amount, targetPriceSnapshot: plan.targetPrice, targetLessonsCredit: plan.targetCredit };
+    }); } catch (error) { throw mysqlError(error); }
+  }
+
+  async function getByIdempotencyKey(key) {
+    if (!key) return null;
+    const [rows] = await pool.query(`SELECT bt.* FROM balance_entries be JOIN balance_transfers bt ON bt.id=be.transfer_id
+      WHERE be.idempotency_key=:key AND be.entry_type='transfer_out' LIMIT 1`, { key });
+    return rows[0] ? mapTransfer(rows[0]) : null;
+  }
+
+  async function create(body, context = {}) {
+    const idempotencyKey = context.idempotencyKey == null ? null : String(context.idempotencyKey).slice(0, 128);
+    const existing = await getByIdempotencyKey(idempotencyKey); if (existing) return existing;
+    try {
+      const transferId = await inTransaction(pool, async (connection) => {
+        const plan = await loadPlan(connection, body.sourceEnrollmentId, body.targetEnrollmentId);
+        const [transfer] = await connection.query(`INSERT INTO balance_transfers
+          (child_id,source_enrollment_id,target_enrollment_id,transferred_amount,target_price_snapshot,target_lessons_credit,created_by_user_id)
+          VALUES (:childId,:sourceId,:targetId,:amount,:targetPrice,:targetCredit,:actorId)`, {
+          childId: plan.source.child_id, sourceId: plan.source.id, targetId: plan.target.id, amount: plan.amount,
+          targetPrice: plan.targetPrice, targetCredit: plan.targetCredit, actorId: context.actorUserId ?? null,
+        });
+        const [outEntry] = await connection.query(`INSERT INTO balance_entries
+          (enrollment_id,entry_type,lessons_delta,amount_delta,transfer_id,idempotency_key,occurred_at,created_by_user_id)
+          VALUES (:sourceId,'transfer_out',:lessons,:amount,:transferId,:idempotencyKey,NOW(6),:actorId)`, {
+          sourceId: plan.source.id, lessons: lessonDecimal(-lessonUnits(plan.sourceBalance)), amount: moneyDecimal(-moneyCents(plan.amount)),
+          transferId: transfer.insertId, idempotencyKey, actorId: context.actorUserId ?? null,
+        });
+        for (const item of plan.debtAdjustments) {
+          await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', { id: item.lotId, lessons: item.lessons });
+        }
+        for (const item of plan.consumptions) {
+          await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', { id: item.lotId, lessons: item.lessons });
+          await connection.query(`INSERT INTO balance_lot_consumptions (balance_lot_id,balance_entry_id,lessons,amount)
+            VALUES (:lotId,:entryId,:lessons,:amount)`, { lotId: item.lotId, entryId: outEntry.insertId, lessons: item.lessons, amount: item.amount });
+        }
+        await connection.query('UPDATE child_enrollments SET balance_lessons=0 WHERE id=:id', { id: plan.source.id });
+        const [inEntry] = await connection.query(`INSERT INTO balance_entries
+          (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,transfer_id,occurred_at,created_by_user_id)
+          VALUES (:targetId,'transfer_in',:lessons,:amount,:price,:transferId,NOW(6),:actorId)`, {
+          targetId: plan.target.id, lessons: plan.targetCredit, amount: plan.amount, price: plan.targetPrice,
+          transferId: transfer.insertId, actorId: context.actorUserId ?? null,
+        });
+        await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: plan.target.id, lessons: plan.targetCredit });
+        await connection.query(`INSERT INTO balance_lots
+          (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
+          VALUES (:targetId,:entryId,:lessons,:lessons,:price)`, {
+          targetId: plan.target.id, entryId: inEntry.insertId, lessons: plan.targetCredit, price: plan.targetPrice,
+        });
+        return String(transfer.insertId);
+      });
+      const [rows] = await pool.query('SELECT * FROM balance_transfers WHERE id=:id', { id: transferId });
+      return mapTransfer(rows[0]);
+    } catch (error) {
+      if (error?.code === 'ER_DUP_ENTRY' && idempotencyKey) {
+        const repeated = await getByIdempotencyKey(idempotencyKey);
+        if (repeated) return repeated;
+      }
+      throw mysqlError(error);
+    }
+  }
+
+  return { preview, create };
+}

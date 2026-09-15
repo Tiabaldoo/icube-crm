@@ -8,6 +8,7 @@ import { createDirectionPriceVersions } from './price-versions.mjs';
 import { createSalaryRateVersions } from './salary-rate-versions.mjs';
 import { createPartnerAgreementVersions } from './partner-agreement-versions.mjs';
 import { createMysqlLessons } from './lessons.mjs';
+import { createBalanceTransfers } from './balance-transfers.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -26,6 +27,7 @@ export function createApiRouter(pool, {
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
   lessons = createMysqlLessons(pool),
+  balanceTransfers = createBalanceTransfers(pool),
   allowUnauthenticated = false,
 } = {}) {
   const router = Router();
@@ -105,7 +107,11 @@ export function createApiRouter(pool, {
   router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), run((request) => lessons.removeExtra(request.params.id, request.params.childId, lessonContext(request)), 200));
   router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
   router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
-  router.post('/balance-transfers', requirePermission('*'), notImplemented('balance-transfers'));
+  router.get('/balance-transfers/preview', requirePermission('*'), run((request) => balanceTransfers.preview(request.query.sourceEnrollmentId, request.query.targetEnrollmentId)));
+  router.post('/balance-transfers', requirePermission('*'), run((request) => balanceTransfers.create(request.body, {
+    actorUserId: request.auth?.userId ?? null,
+    idempotencyKey: request.get('Idempotency-Key') ?? null,
+  }), 201));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));

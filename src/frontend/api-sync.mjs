@@ -10,6 +10,8 @@ const enrollmentStatusFromApi = { active: 'Активный', paused: 'Пауз�
 const enrollmentStatusToApi = { 'Активный': 'active', 'Пауза': 'paused', 'Закончил': 'finished' };
 let directories = { projects: [], directions: [] };
 let groupSavePending = false;
+let balanceTransferPending = false;
+let balanceTransferKey = null;
 
 function element(selector) { return document.querySelector(selector); }
 function value(selector) { return element(selector)?.value ?? ''; }
@@ -174,8 +176,17 @@ async function saveEnrollment(childId, oldDirection) {
     if (!enrollment || !direction) return;
     const individual = value('#md-price-mode') === 'individual'; const packagePrice = Number(value('#md-individual-package') || 0);
     if (individual && !(packagePrice > 0)) return window.alert('Укажите индивидуальную цену абонемента за 4 занятия.');
-    await api.updateEnrollment(enrollment.id, { directionId: direction.id, groupId: value('#md-group') ? Number(value('#md-group')) : null,
-      status: enrollmentStatusToApi[value('#md-enrollment-status')] ?? enrollmentStatusToApi[enrollment.status] ?? 'active', individualPrice: individual ? packagePrice / 4 : null });
+    const targetValues = { groupId: value('#md-group') ? Number(value('#md-group')) : null,
+      status: enrollmentStatusToApi[value('#md-enrollment-status')] ?? enrollmentStatusToApi[enrollment.status] ?? 'active', individualPrice: individual ? packagePrice / 4 : null };
+    if (String(direction.id) !== String(enrollment.directionId)) {
+      const existingTarget = child.enrollments.find((item) => item.directionId === Number(direction.id));
+      const newTargetValues = { ...targetValues, status: targetValues.status === 'finished' ? 'active' : targetValues.status };
+      if (existingTarget) await api.updateEnrollment(existingTarget.id, newTargetValues);
+      else await api.createEnrollment(child.id, { directionId: direction.id, ...newTargetValues });
+      await api.updateEnrollment(enrollment.id, { groupId: null, status: 'finished' });
+    } else {
+      await api.updateEnrollment(enrollment.id, { directionId: direction.id, ...targetValues });
+    }
     legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; await reload();
   } catch (error) { fail(error); }
 }
@@ -195,6 +206,46 @@ async function addEnrollment() {
 async function deleteChild(childId) {
   try { await api.delete('children', childId); legacy.state.selectedChild = null; legacy.state.modal = null; legacy.state.page = 'children'; await reload(); }
   catch (error) { fail(error); }
+}
+
+const displayMoney = (amount) => `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number(amount))} ₽`;
+async function balanceTransferPreview(sourceEnrollmentId, targetEnrollmentId) {
+  return api.request(`/balance-transfers/preview?sourceEnrollmentId=${encodeURIComponent(sourceEnrollmentId)}&targetEnrollmentId=${encodeURIComponent(targetEnrollmentId)}`);
+}
+async function transferDirectionBalanceForm(childId, direction) {
+  const child = legacy.state.children.find((item) => item.id === Number(childId));
+  const source = child?.enrollments.find((item) => item.direction === direction);
+  const targets = child?.enrollments.filter((item) => item.id !== source?.id && item.status !== 'Закончил') ?? [];
+  if (!source || source.status !== 'Закончил' || !(source.balance > 0) || !targets.length) return;
+  balanceTransferKey = globalThis.crypto?.randomUUID?.() ?? `transfer-${Date.now()}-${Math.random()}`;
+  legacy.state.modal = `<h3>Перенести остаток</h3><div class="notice">Направление <b>«${html(source.direction)}»</b> закрыто. Денежный остаток будет рассчитан сервером по историческим оплатам.</div>
+    <div class="field" style="margin-top:14px"><label>Перенести на направление</label><select class="select" id="tb-target" onchange="icubeApi.refreshBalanceTransferPreview(${source.id})">${targets.map((item) => `<option value="${item.id}">${html(item.direction)}</option>`).join('')}</select></div>
+    <div id="tb-preview" class="card pad" style="margin-top:14px">Расчёт остатка…</div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="tb-submit" onclick="icubeApi.confirmBalanceTransfer(${source.id})">Перенести остаток</button></div>`;
+  legacy.render();
+  await refreshBalanceTransferPreview(source.id);
+}
+async function refreshBalanceTransferPreview(sourceEnrollmentId) {
+  const targetEnrollmentId = value('#tb-target'); const box = element('#tb-preview');
+  if (!targetEnrollmentId || !box) return;
+  try {
+    const preview = await balanceTransferPreview(sourceEnrollmentId, targetEnrollmentId);
+    box.dataset.transferableAmount = preview.transferableAmount;
+    box.innerHTML = `<div class="info-list"><div class="info-line"><span>Остаток старого направления</span><b>${displayMoney(preview.transferableAmount)}</b></div>
+      <div class="info-line"><span>Цена нового направления</span><b>${displayMoney(preview.targetPriceSnapshot)} / занятие</b></div>
+      <div class="info-line"><span>Будет зачислено</span><b>${Number(preview.targetLessonsCredit).toFixed(4)} занятия</b></div></div>
+      <div class="muted mini" style="margin-top:10px">Оплаты и посещения старого направления остаются в его истории.</div>`;
+  } catch (error) { box.textContent = error.message; }
+}
+async function confirmBalanceTransfer(sourceEnrollmentId) {
+  if (balanceTransferPending) return;
+  const targetEnrollmentId = value('#tb-target'); if (!targetEnrollmentId) return;
+  const button = element('#tb-submit'); balanceTransferPending = true; if (button) button.disabled = true;
+  try {
+    await api.create('balance-transfers', { sourceEnrollmentId, targetEnrollmentId }, balanceTransferKey);
+    await reload({ render: false }); legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; legacy.render();
+  } catch (error) { fail(error); }
+  finally { balanceTransferPending = false; if (button?.isConnected !== false) button.disabled = false; }
 }
 
 function paymentEnrollment(childId, enrollmentId) {
@@ -616,6 +667,7 @@ window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment,
   finishLesson: finishLessonApi, confirmFinishLesson: confirmFinishLessonApi, saveLessonEdit: saveLessonEditApi,
   cancelCurrentLesson: cancelCurrentLessonApi, markCurrentLessonEmptyTrip: markCurrentLessonEmptyTripApi,
   confirmAddChildren: confirmAddChildrenApi, deleteLesson: deleteLessonApi,
+  transferDirectionBalanceForm, refreshBalanceTransferPreview, confirmBalanceTransfer,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
@@ -658,6 +710,9 @@ window.finishLesson = window.icubeApi.finishLesson;
 window.confirmFinish = window.icubeApi.confirmFinishLesson;
 window.confirmAddChildren = window.icubeApi.confirmAddChildren;
 window.deleteLessonConfirmed = window.icubeApi.deleteLesson;
+window.transferDirectionBalanceFormV142 = window.icubeApi.transferDirectionBalanceForm;
+window.refreshTransferPreviewV142 = window.icubeApi.refreshBalanceTransferPreview;
+window.confirmTransferDirectionBalanceV142 = window.icubeApi.confirmBalanceTransfer;
 window.saveLessonEdit = window.icubeApi.saveLessonEdit;
 window.lToggle = window.icubeApi.lessonToggle;
 window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;

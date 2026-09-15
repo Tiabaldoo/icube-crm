@@ -84,3 +84,10 @@ test('lesson deletion migration добавляет persistent tombstone без d
   assert.match(sql, /idx_lessons_deleted_occurrence/);
   assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
 });
+
+test('balance transfer migration разрешает API actor без destructive reset', async () => {
+  const sql = await readFile(new URL('../database/migrations/009_balance_transfers.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ALTER TABLE balance_transfers/);
+  assert.match(sql, /MODIFY created_by_user_id BIGINT UNSIGNED NULL/);
+  assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
+});
