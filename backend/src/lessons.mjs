@@ -60,7 +60,7 @@ export function createMysqlLessons(pool) {
   async function loadRows(where, params, context, connection = pool) {
     const teacherId = await teacherForContext(connection, context);
     const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)` : '';
-    const [lessonRows] = await connection.query(`${baseSelect} WHERE ${where}${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
+    const [lessonRows] = await connection.query(`${baseSelect} WHERE (${where}) AND l.deleted_at IS NULL${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
     if (!lessonRows.length) return [];
     const ids = lessonRows.map((row) => String(row.id)).join(',');
     const [[rosterRows], [attendanceRows], [salaryRows]] = await Promise.all([
@@ -104,7 +104,7 @@ export function createMysqlLessons(pool) {
     const cleanupGroupFilter = groupId == null ? '' : ' AND l.group_id=:groupId';
     if (groupId != null) params.groupId = identifier(groupId, 'groupId');
     await pool.query(`DELETE l FROM lessons l JOIN study_groups g ON g.id=l.group_id
-      WHERE l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
+      WHERE l.deleted_at IS NULL AND l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
         AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
         AND l.lock_version=1
         AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id)
@@ -142,7 +142,8 @@ export function createMysqlLessons(pool) {
     const from = filters.from ? dateOnly(filters.from, 'from') : new Date(today.getTime() - 120 * DAY).toISOString().slice(0, 10);
     const to = filters.to ? dateOnly(filters.to, 'to') : new Date(today.getTime() + 90 * DAY).toISOString().slice(0, 10);
     await materialize(from, to);
-    const conditions = ['l.starts_at>=CONCAT(:from,\' 00:00:00\')', 'l.starts_at<DATE_ADD(:to,INTERVAL 1 DAY)']; const params = { from, to };
+    const conditions = [`((l.starts_at>=CONCAT(:from,' 00:00:00') AND l.starts_at<DATE_ADD(:to,INTERVAL 1 DAY))
+      OR (l.scheduled_starts_at>=CONCAT(:from,' 00:00:00') AND l.scheduled_starts_at<DATE_ADD(:to,INTERVAL 1 DAY)))`]; const params = { from, to };
     if (filters.teacherId) { conditions.push('(l.planned_teacher_id=:teacherId OR l.actual_teacher_id=:teacherId)'); params.teacherId = identifier(filters.teacherId, 'teacherId'); }
     if (filters.projectId) { conditions.push('l.project_id_snapshot=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
     return loadRows(conditions.join(' AND '), params, context);
@@ -155,16 +156,35 @@ export function createMysqlLessons(pool) {
   }
 
   async function create(body, context = {}) {
+    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Историческое занятие может создать только директор');
     const groupId = identifier(body.groupId, 'groupId'); const scheduledDate = dateOnly(body.scheduledDate, 'scheduledDate');
-    await materialize(scheduledDate, scheduledDate, groupId);
-    const [rows] = await pool.query(`SELECT l.id FROM lessons l WHERE l.group_id=:groupId AND DATE(l.scheduled_starts_at)=:scheduledDate`, { groupId, scheduledDate });
-    if (!rows.length) throw new ApiProblem(409, 'OCCURRENCE_OUTSIDE_SCHEDULE', 'На эту дату занятие группы не запланировано');
+    const [groups] = await pool.query(`SELECT id,direction_id,project_id,site_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on
+      FROM study_groups WHERE id=:groupId AND deleted_at IS NULL`, { groupId });
+    const group = groups[0];
+    if (!group || occurrenceDates(group, scheduledDate, scheduledDate).length !== 1) {
+      throw new ApiProblem(409, 'OCCURRENCE_OUTSIDE_SCHEDULE', 'На эту дату занятие группы не запланировано');
+    }
+    const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
+    await pool.query(`INSERT IGNORE INTO lessons
+      (group_id,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
+      VALUES (:groupId,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
+      groupId: group.id, directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
+      date: scheduledDate, start, end, teacherId: group.default_teacher_id,
+    });
+    const [rows] = await pool.query(`SELECT l.id FROM lessons l WHERE l.group_id=:groupId
+      AND DATE(l.scheduled_starts_at)=:scheduledDate AND l.deleted_at IS NULL`, { groupId, scheduledDate });
+    if (!rows.length) throw new ApiProblem(409, 'LESSON_DELETED', 'Это занятие было явно удалено и не может быть создано повторно');
     return get(rows[0].id, context);
+  }
+
+  async function deletedOccurrences() {
+    const [rows] = await pool.query('SELECT group_id,scheduled_starts_at FROM lessons WHERE deleted_at IS NOT NULL ORDER BY scheduled_starts_at,id');
+    return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at) }));
   }
 
   async function lockLesson(connection, lessonId) {
     const [rows] = await connection.query('SELECT * FROM lessons WHERE id=:id FOR UPDATE', { id: identifier(lessonId) });
-    if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Занятие не найдено');
+    if (!rows.length || rows[0].deleted_at != null) throw new ApiProblem(404, 'NOT_FOUND', 'Занятие не найдено');
     return rows[0];
   }
 
@@ -338,8 +358,12 @@ export function createMysqlLessons(pool) {
       return;
     }
     if (lesson.status !== 'completed') return;
-    const rate = await salaryRate(connection, lesson);
     const [countRows] = await connection.query('SELECT COUNT(*) present_count FROM attendances WHERE lesson_id=:lessonId AND present=TRUE', { lessonId: lesson.id });
+    if (!bool(lesson.is_empty_trip) && Number(countRows[0].present_count) === 0) {
+      if (old) await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE id=:id', { id: old.id });
+      return;
+    }
+    const rate = await salaryRate(connection, lesson);
     const salary = calculateSalary(lessonKind(lesson), Number(countRows[0].present_count), rate);
     const teacherId = lesson.actual_teacher_id ?? lesson.planned_teacher_id;
     if (old && String(old.teacher_id) === String(teacherId) && String(old.rate_version_id) === String(rate.id) && old.accrual_type === salary.kind && Number(old.present_children) === salary.presentCount && String(old.total_amount) === salary.total) return;
@@ -391,8 +415,8 @@ export function createMysqlLessons(pool) {
         if (bool(lesson.is_empty_trip)) {
           await connection.query('UPDATE attendances SET present=FALSE,charged_lessons=0 WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         } else {
-          if (!attendances.some((attendance) => attendance.marked_at != null)) {
-            throw new ApiProblem(409, 'ATTENDANCE_REQUIRED', 'Отметьте посещаемость хотя бы одного ребёнка или отмените занятие');
+          if (!attendances.some((attendance) => bool(attendance.present))) {
+            throw new ApiProblem(409, 'ATTENDANCE_REQUIRED', 'Нельзя завершить занятие без присутствующих. Отмените занятие или используйте «Пустой выезд»');
           }
           for (const attendance of attendances) {
             if (!bool(attendance.present) || bool(attendance.is_trial)) continue;
@@ -425,12 +449,7 @@ export function createMysqlLessons(pool) {
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
         }
         if (lesson.status === 'completed') {
-          const [markedRows] = await connection.query('SELECT COUNT(*) marked_count FROM attendances WHERE lesson_id=:lessonId AND marked_at IS NOT NULL', { lessonId: lesson.id });
-          if (!bool(lesson.is_empty_trip) && Number(markedRows[0]?.marked_count ?? 0) === 0) {
-            await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE lesson_id=:lessonId AND reversed_at IS NULL', { lessonId: lesson.id });
-          } else {
-            await recalculateSalary(connection, lesson);
-          }
+          await recalculateSalary(connection, lesson);
         }
       });
       return get(lessonId, context);
@@ -465,6 +484,27 @@ export function createMysqlLessons(pool) {
         await recalculateSalary(connection, lesson);
       });
       return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  async function remove(lessonId, context = {}) {
+    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить занятие может только директор');
+    try {
+      await inTransaction(pool, async (connection) => {
+        const lesson = await lockLesson(connection, lessonId);
+        const [attendances] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId FOR UPDATE', { lessonId: lesson.id });
+        for (const attendance of attendances) {
+          await reverseAttendanceDebit(connection, attendance, context);
+          await purgeAttendanceLedger(connection, attendance.id);
+        }
+        await connection.query('UPDATE salary_accruals SET supersedes_accrual_id=NULL WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        await connection.query('DELETE FROM salary_accruals WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        await connection.query('DELETE FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        await connection.query('DELETE FROM attendances WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        await connection.query(`UPDATE lessons SET deleted_at=NOW(6),lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
+      });
+      return null;
     } catch (error) { throw mysqlError(error); }
   }
 
@@ -610,5 +650,5 @@ export function createMysqlLessons(pool) {
     }));
   }
 
-  return { list, get, create, update, start, putAttendance, finish, removeAttendance, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
+  return { list, get, create, deletedOccurrences, update, start, putAttendance, finish, remove, removeAttendance, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
 }

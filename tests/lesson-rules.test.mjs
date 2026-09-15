@@ -73,6 +73,7 @@ test('lesson service содержит транзакционные guards для
   assert.match(service, /supersedes_accrual_id/);
   assert.match(service, /hasRole\(context, 'director'\)[\s\S]*?salaryRows/);
   for (const route of ["'/lessons'", "'/lessons/:id/start'", "'/lessons/:id/finish'", "'/lessons/:id/attendance/:childId'", "'/lessons/:id/extras'", "'/lessons/:id/quick-child'", "'/salary-accruals'"]) assert.match(routes, new RegExp(route.replaceAll('/', '\\/')));
+  assert.match(routes, /router\.delete\('\/lessons\/:id'/);
 });
 
 test('teacher DTO реального lesson service не раскрывает salary', async () => {
@@ -187,25 +188,24 @@ test('обычное занятие нельзя завершить без яв�
   );
 });
 
-test('явно отмеченное отсутствие позволяет завершить обычное занятие', async () => {
+test('явно отмеченное отсутствие не позволяет завершить занятие и не создаёт зарплату', async () => {
   const { pool, captured } = historicalFinishFixture({ present: 0 });
-  const lesson = await createMysqlLessons(pool).finish(50, {}, { roles: ['director'] });
-  assert.equal(lesson.status, 'completed');
-  assert.equal(captured.salary.present, 0);
+  await assert.rejects(createMysqlLessons(pool).finish(50, {}, { roles: ['director'] }), (error) => error.code === 'ATTENDANCE_REQUIRED' && error.status === 409);
+  assert.equal(captured.salary, undefined);
 });
 
-test('более позднее посещение не отменяет trial у первого исторического занятия', async () => {
+test('активный group membership попадает во frozen roster, а поздний визит не отменяет trial', async () => {
   const lesson = {
     id: 10, group_id: 4, direction_id_snapshot: 1, planned_teacher_id: 6, actual_teacher_id: null,
     starts_at: '2026-09-14 10:00:00.000000', status: 'scheduled',
   };
-  let insertedTrial;
+  let insertedTrial; let rosterChild;
   const laterVisits = [{ lessonId: 20, startsAt: '2026-09-21 10:00:00.000000' }];
   const handler = async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
     if (sql.startsWith('SELECT id FROM teachers')) return [[{ id: 6 }]];
     if (sql.includes('FROM group_memberships gm')) return [[{ child_id: 8, enrollment_id: 9 }]];
-    if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) { rosterChild = params.childId; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('SELECT a.id FROM attendances a JOIN lessons')) {
       assert.match(sql, /l\.starts_at<:startsAt OR \(l\.starts_at=:startsAt AND l\.id<:lessonId\)/);
       assert.equal(params.startsAt, lesson.starts_at);
@@ -227,6 +227,7 @@ test('более позднее посещение не отменяет trial �
     throw new Error(`Неожиданный SQL: ${sql}`);
   };
   await createMysqlLessons(transactionPool(handler)).start(10, {}, { roles: ['director'] });
+  assert.equal(rosterChild, '8');
   assert.equal(insertedTrial, true);
 });
 

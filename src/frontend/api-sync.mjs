@@ -65,8 +65,8 @@ function mapLesson(lesson) {
 }
 
 async function reload({ render = true } = {}) {
-  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, notifications] = await Promise.all([
-    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('notifications').catch(() => []),
+  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications] = await Promise.all([
+    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
   ]);
   directories = { projects, directions };
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
@@ -89,6 +89,7 @@ async function reload({ render = true } = {}) {
   }));
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
+  legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
   legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
@@ -352,6 +353,12 @@ async function openCalendarEvent(key, role) {
         legacy.state.lessons.push(lesson);
       }
     }
+    if (!lesson && role === 'director') {
+      const [groupId, ...dateParts] = String(key).split('|');
+      const date = ruToIso(dateParts.join('|'));
+      lesson = mapLesson(await api.create('lessons', { groupId, scheduledDate: date }));
+      legacy.state.lessons.push(lesson);
+    }
     if (!lesson) return;
     legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson'; legacy.render();
   } catch (error) { fail(error); }
@@ -416,12 +423,37 @@ async function finishLessonApi() {
   const lesson = currentLesson(); if (!lesson) return;
   const present = Object.entries(lesson.attendance ?? {}).filter(([, value]) => value).map(([id]) => Number(id))
     .concat(lesson.extras.filter((extra) => extra.present).map((extra) => extra.childId));
+  if (!lesson.emptyTrip && present.length === 0) {
+    legacy.state.modal = `<h3>Нет присутствующих</h3><div class="notice">Обычное или ознакомительное занятие нельзя завершить без присутствующих детей. Отмените занятие${legacy.state.role === 'director' ? ' или оформите «Пустой выезд»' : ''}.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn danger" onclick="icubeApi.cancelCurrentLesson()">Отменить занятие</button>${legacy.state.role === 'director' ? '<button class="btn primary" onclick="icubeApi.markCurrentLessonEmptyTrip()">Пустой выезд</button>' : ''}</div>`;
+    legacy.render(); return;
+  }
   const missing = present.filter((id) => !lesson.photos?.[id]).length;
   if (missing) {
     legacy.state.modal = `<h3>Не у всех есть фотографии</h3><div class="notice">У ${missing} детей отсутствуют фотографии. Всё равно завершить занятие?</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn primary" onclick="icubeApi.confirmFinishLesson()">Завершить всё равно</button></div>`;
     legacy.render(); return;
   }
   await confirmFinishLessonApi();
+}
+async function cancelCurrentLessonApi() { await lessonCommand('cancel', {}, legacy.state.role === 'teacher' ? 'teacherLesson' : 'lesson'); }
+async function markCurrentLessonEmptyTripApi() { await lessonCommand('empty-trip', {}, 'lesson'); }
+
+async function confirmAddChildrenApi() {
+  const group = legacy.state.groups.find((item) => item.id === Number(legacy.state.addChildrenGroupId));
+  if (!group) return;
+  const childIds = Array.from(document.querySelectorAll('.ac-check:checked')).map((input) => Number(input.value));
+  const enrollments = childIds.map((childId) => legacy.state.children.find((child) => child.id === childId)?.enrollments.find((enrollment) => enrollment.direction === group.direction)).filter(Boolean);
+  try {
+    await Promise.all(enrollments.map((enrollment) => api.updateEnrollment(enrollment.id, { groupId: group.id })));
+    await reload({ render: false });
+    legacy.state.selectedGroup = group.id; legacy.state.modal = null; legacy.state.page = 'group'; legacy.render();
+  } catch (error) { fail(error); }
+}
+
+async function deleteLessonApi(lessonId) {
+  try {
+    await api.delete('lessons', lessonId); await reload({ render: false });
+    legacy.state.selectedLesson = null; legacy.state.modal = null; legacy.state.page = 'calendar'; legacy.render();
+  } catch (error) { fail(error); }
 }
 async function confirmFinishLessonApi() {
   const lesson = currentLesson(); if (!lesson) return;
@@ -582,6 +614,8 @@ window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment,
   toggleTrial: toggleTrialApi, addExtra: addExtraApi, removeExtra: removeExtraApi, saveQuickChild: saveQuickChildApi,
   confirmTeacherCreatedChild: confirmTeacherCreatedChildApi,
   finishLesson: finishLessonApi, confirmFinishLesson: confirmFinishLessonApi, saveLessonEdit: saveLessonEditApi,
+  cancelCurrentLesson: cancelCurrentLessonApi, markCurrentLessonEmptyTrip: markCurrentLessonEmptyTripApi,
+  confirmAddChildren: confirmAddChildrenApi, deleteLesson: deleteLessonApi,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
@@ -622,6 +656,8 @@ window.saveTeacherQuickChildV121 = window.icubeApi.saveQuickChild;
 window.confirmTeacherCreatedChild = window.icubeApi.confirmTeacherCreatedChild;
 window.finishLesson = window.icubeApi.finishLesson;
 window.confirmFinish = window.icubeApi.confirmFinishLesson;
+window.confirmAddChildren = window.icubeApi.confirmAddChildren;
+window.deleteLessonConfirmed = window.icubeApi.deleteLesson;
 window.saveLessonEdit = window.icubeApi.saveLessonEdit;
 window.lToggle = window.icubeApi.lessonToggle;
 window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;

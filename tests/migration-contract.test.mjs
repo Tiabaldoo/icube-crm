@@ -77,3 +77,10 @@ test('refund migration разрешает API actor и фиксирует еди
   assert.match(sql, /UNIQUE KEY uq_balance_entries_refund \(refund_id\)/);
   assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
 });
+
+test('lesson deletion migration добавляет persistent tombstone без destructive reset', async () => {
+  const sql = await readFile(new URL('../database/migrations/008_lesson_deletion.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD COLUMN deleted_at DATETIME\(6\) NULL/);
+  assert.match(sql, /idx_lessons_deleted_occurrence/);
+  assert.doesNotMatch(sql, /\b(?:DROP\s+(?:DATABASE|TABLE)|TRUNCATE|DELETE\s+FROM)\b/i);
+});

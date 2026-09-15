@@ -24,6 +24,7 @@ function groupHandler(handler) {
   return async (sql, params) => {
     if (sql.startsWith('SELECT l.id FROM lessons l WHERE')) return [];
     if (sql.startsWith('DELETE FROM group_memberships WHERE group_id=')) return { affectedRows: 0 };
+    if (sql.startsWith('DELETE FROM lessons WHERE group_id=')) return { affectedRows: 0 };
     return handler(sql, params);
   };
 }
@@ -99,7 +100,7 @@ test('не удаляет группу при наличии бизнес-зав
   await assert.rejects(() => service.deleteGroup(11), (error) => {
     assert.equal(error.status, 409);
     assert.equal(error.code, 'GROUP_HAS_DEPENDENCIES');
-    assert.match(error.message, /участники|история/);
+    assert.match(error.message, /dependencies|зависимости/);
     return true;
   });
   assert.equal(deleted, false);
@@ -126,6 +127,24 @@ test('безопасные будущие materialized lessons не блокир
   })));
   await service.deleteGroup(12);
   assert.deepEqual(order, ['lessons', 'prices', 'group']);
+});
+
+test('после очистки истории удаление группы снимает текущие memberships и удаляет tombstones', async () => {
+  let memberships = 1; let tombstonesDeleted = false; let groupDeleted = false;
+  const service = createDeletionService(fakePool(async (sql) => {
+    if (sql.startsWith('SELECT id FROM study_groups')) return [{ id: 15 }];
+    if (sql.startsWith('DELETE l FROM lessons')) return { affectedRows: 0 };
+    if (sql.startsWith('SELECT l.id FROM lessons l WHERE')) return [];
+    if (sql.startsWith('DELETE FROM group_memberships')) { memberships = 0; return { affectedRows: 1 }; }
+    if (sql.includes('FROM group_memberships WHERE group_id')) return [{ memberships, lessons: 0, attendances: 0, quickChildren: 0,
+      childStatusHistory: 0, enrollmentStatusHistory: 0, payments: 0, refunds: 0 }];
+    if (sql.startsWith('DELETE FROM lessons WHERE group_id=')) { tombstonesDeleted = true; return { affectedRows: 1 }; }
+    if (sql.startsWith('DELETE FROM price_versions')) return { affectedRows: 0 };
+    if (sql.startsWith('DELETE FROM study_groups')) { groupDeleted = true; return { affectedRows: 1 }; }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  }));
+  await service.deleteGroup(15);
+  assert.equal(memberships, 0); assert.equal(tombstonesDeleted, true); assert.equal(groupDeleted, true);
 });
 
 test('проведённое занятие остаётся реальной историей и блокирует удаление группы', async () => {

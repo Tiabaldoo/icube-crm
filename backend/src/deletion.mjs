@@ -7,6 +7,11 @@ const numericId = (value, field = 'id') => {
   return result;
 };
 const hasAny = (dependencies) => Object.values(dependencies).some((value) => Number(value) > 0);
+const dependencyLabels = { memberships: 'участники', lessons: 'занятия', attendances: 'посещения', quickChildren: 'дети из занятия',
+  childStatusHistory: 'история статусов детей', enrollmentStatusHistory: 'история направлений', payments: 'оплаты', refunds: 'возвраты',
+  balanceTransfers: 'переносы баланса', balanceEffects: 'операции баланса', balance: 'ненулевой баланс' };
+const dependencyNames = (dependencies) => Object.entries(dependencies).filter(([, value]) => Number(value) > 0)
+  .map(([name, value]) => `${dependencyLabels[name] ?? name}: ${value}`).join(', ');
 
 export function createDeletionService(pool) {
   async function rows(sql, params = {}) { const [result] = await pool.query(sql, params); return result; }
@@ -32,7 +37,7 @@ export function createDeletionService(pool) {
     await ensureExists('sites', siteId, 'Площадка');
     const dependencies = await one(`SELECT
       (SELECT COUNT(*) FROM study_groups WHERE site_id=:id) groupCount,
-      (SELECT COUNT(*) FROM lessons WHERE site_id_snapshot=:id) lessons`, { id: siteId });
+      (SELECT COUNT(*) FROM lessons WHERE site_id_snapshot=:id AND deleted_at IS NULL) lessons`, { id: siteId });
     if (hasAny(dependencies)) throw new ApiProblem(409, 'SITE_HAS_DEPENDENCIES', 'Нельзя удалить площадку, потому что есть связанные группы или занятия/история.', dependencies);
     try { await pool.query('DELETE FROM sites WHERE id=:id', { id: siteId }); }
     catch (error) {
@@ -47,7 +52,7 @@ export function createDeletionService(pool) {
     await ensureExists('teachers', teacherId, 'Преподаватель');
     const dependencies = await one(`SELECT
       (SELECT COUNT(*) FROM study_groups WHERE default_teacher_id=:id) groupCount,
-      (SELECT COUNT(*) FROM lessons WHERE planned_teacher_id=:id OR actual_teacher_id=:id) lessons,
+      (SELECT COUNT(*) FROM lessons WHERE deleted_at IS NULL AND (planned_teacher_id=:id OR actual_teacher_id=:id)) lessons,
       (SELECT COUNT(*) FROM salary_rate_versions WHERE teacher_id=:id) salaryRateVersions,
       (SELECT COUNT(*) FROM salary_accruals WHERE teacher_id=:id) salaryAccruals,
       (SELECT COUNT(*) FROM teachers WHERE id=:id AND user_id IS NOT NULL) userAccounts`, { id: teacherId });
@@ -78,7 +83,7 @@ export function createDeletionService(pool) {
           AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id)
           AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
           AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)`, { id: groupId });
-        const [safeLessons] = await connection.query(`SELECT l.id FROM lessons l WHERE l.group_id=:id
+        const [safeLessons] = await connection.query(`SELECT l.id FROM lessons l WHERE l.group_id=:id AND l.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id AND a.marked_at IS NOT NULL)
           AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id AND ph.deleted_at IS NULL)
           AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id AND sa.reversed_at IS NULL AND sa.total_amount<>0)
@@ -103,17 +108,19 @@ export function createDeletionService(pool) {
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId', { lessonId: lesson.id });
           await connection.query('DELETE FROM lessons WHERE id=:lessonId', { lessonId: lesson.id });
         }
-        await connection.query('DELETE FROM group_memberships WHERE group_id=:id AND ended_on IS NOT NULL', { id: groupId });
+        await connection.query('DELETE FROM group_memberships WHERE group_id=:id', { id: groupId });
         const [dependencyRows] = await connection.query(`SELECT
-          (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id AND ended_on IS NULL) memberships,
-          (SELECT COUNT(*) FROM lessons WHERE group_id=:id) lessons,
-          (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id AND a.marked_at IS NOT NULL) attendances,
+          (SELECT COUNT(*) FROM group_memberships WHERE group_id=:id) memberships,
+          (SELECT COUNT(*) FROM lessons WHERE group_id=:id AND deleted_at IS NULL) lessons,
+          (SELECT COUNT(*) FROM attendances a JOIN lessons l ON l.id=a.lesson_id WHERE l.group_id=:id AND l.deleted_at IS NULL AND a.marked_at IS NOT NULL) attendances,
+          (SELECT COUNT(*) FROM children c JOIN lessons l ON l.id=c.created_from_lesson_id WHERE l.group_id=:id) quickChildren,
           (SELECT COUNT(*) FROM child_status_history WHERE group_id_snapshot=:id) childStatusHistory,
           (SELECT COUNT(*) FROM enrollment_status_history WHERE group_id_snapshot=:id) enrollmentStatusHistory,
           (SELECT COUNT(*) FROM payments WHERE group_id_snapshot=:id AND deleted_at IS NULL) payments,
           (SELECT COUNT(*) FROM refunds WHERE group_id_snapshot=:id AND deleted_at IS NULL) refunds`, { id: groupId });
         const dependencies = dependencyRows[0] ?? {};
-        if (hasAny(dependencies)) throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.', dependencies);
+        if (hasAny(dependencies)) throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', `Нельзя удалить группу. Остались зависимости: ${dependencyNames(dependencies)}.`, dependencies);
+        await connection.query('DELETE FROM lessons WHERE group_id=:id AND deleted_at IS NOT NULL', { id: groupId });
         await connection.query('DELETE FROM price_versions WHERE group_id=:id', { id: groupId });
         await connection.query('DELETE FROM study_groups WHERE id=:id', { id: groupId });
       });
@@ -147,7 +154,7 @@ export function createDeletionService(pool) {
               AND (original.lessons_delta<>0 OR original.amount_delta<>0)) balanceEffects`, { id: enrollmentId });
         const dependencies = dependencyRows[0] ?? {};
         dependencies.balance = Number(enrollment.balance_lessons) === 0 ? 0 : 1;
-        if (hasAny(dependencies)) throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', 'Нельзя удалить направление ребёнка, потому что по нему уже есть оплаты, посещения или другая история.', dependencies);
+        if (hasAny(dependencies)) throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', `Нельзя удалить направление. Остались зависимости: ${dependencyNames(dependencies)}.`, dependencies);
 
         await purgeEnrollmentLedger(connection, enrollmentId);
         await connection.query('DELETE FROM attendances WHERE enrollment_id=:id AND marked_at IS NULL', { id: enrollmentId });

@@ -118,6 +118,7 @@ test('фактические save handlers подключены к API namespace
       addExtra: 'addExtra', removeExtraFromLessonV138: 'removeExtra', saveTeacherQuickChildV121: 'saveQuickChild',
       confirmTeacherCreatedChild: 'confirmTeacherCreatedChild',
       finishLesson: 'finishLesson', confirmFinish: 'confirmFinishLesson', saveLessonEdit: 'saveLessonEdit',
+      confirmAddChildren: 'confirmAddChildren', deleteLessonConfirmed: 'deleteLesson',
       lToggle: 'lessonToggle', confirmDeleteVisitV121: 'deleteVisit', salaryCalculation: 'salaryCalculation',
     };
     for (const [legacyName, apiName] of Object.entries(aliases)) {
@@ -243,6 +244,34 @@ test('кнопка удаления посещения вызывает отде
   ]);
   assert.match(frontend, /async function deleteVisitApi[\s\S]*?\/attendance\/\$\{Number\(childId\)\}`,[\s\S]*?method: 'DELETE'[\s\S]*?await reload\(\{ render: false \}\)/);
   assert.match(routes, /router\.delete\('\/lessons\/:id\/attendance\/:childId'/);
+});
+
+test('добавление ребёнка из карточки группы сохраняет membership через enrollment API и reload', async () => {
+  const originalWindow = globalThis.window; const originalDocument = globalThis.document; const originalFetch = globalThis.fetch;
+  const group = { id: '4', name: 'Группа', directionId: '1', directionName: 'Робототехника', siteId: '2', siteName: 'Площадка', projectId: '1', projectName: 'iCubeRobots', teacherId: '3', teacherName: 'Преподаватель', weekday: 1, startTime: '10:00', endTime: '11:00', startsOn: '2026-01-01', endsOn: null, active: true, price: null };
+  const child = { id: '8', name: 'Иван', status: 'active', guardian: null, enrollments: [{ id: '9', directionId: '1', directionName: 'Робототехника', groupId: null, status: 'active', individualPrice: null, currentPrice: '1025.00', balanceLessons: '0.00000000' }] };
+  const resources = { projects: [], directions: [], sites: [], teachers: [], groups: [group], children: [child], payments: [], refunds: [], lessons: [], 'lesson-deletions': [], notifications: [] };
+  let patchBody; let renders = 0;
+  globalThis.window = { icubeLegacy: { state: { sites: [], teachers: [], groups: [], children: [], payments: [], refunds: [], lessons: [], addChildrenGroupId: 4 }, render() { renders += 1; } }, alert() {} };
+  globalThis.document = { querySelector() { return null; }, querySelectorAll(selector) { return selector === '.ac-check:checked' ? [{ value: '8' }] : []; } };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = String(url).replace('/api/v1/', '');
+    if (path === 'enrollments/9' && options.method === 'PATCH') {
+      patchBody = JSON.parse(options.body); child.enrollments[0].groupId = String(patchBody.groupId);
+      return { ok: true, status: 200, async json() { return { data: child.enrollments[0] }; } };
+    }
+    const resource = path.split('?')[0];
+    return { ok: true, status: 200, async json() { return { data: resources[resource] ?? [] }; } };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?group-membership=${Date.now()}`);
+    await globalThis.window.icubeApi.reload();
+    globalThis.window.icubeLegacy.state.addChildrenGroupId = 4;
+    await globalThis.window.icubeApi.confirmAddChildren();
+    assert.deepEqual(patchBody, { groupId: 4 });
+    assert.equal(globalThis.window.icubeLegacy.state.children[0].enrollments[0].groupId, 4);
+    assert.equal(globalThis.window.icubeLegacy.state.page, 'group'); assert.ok(renders > 0);
+  } finally { globalThis.window = originalWindow; globalThis.document = originalDocument; globalThis.fetch = originalFetch; }
 });
 
 test('общая кнопка настроек сохраняет цены и зарплату, управляет dirty-state и показывает успех', async () => {

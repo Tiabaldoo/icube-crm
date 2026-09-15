@@ -87,9 +87,11 @@ export function createApiRouter(pool, {
 
   const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [] });
   router.get('/lessons', requirePermission('lessons:read'), run((request) => lessons.list(request.query, lessonContext(request))));
+  router.get('/lesson-deletions', requirePermission('lessons:read'), run(() => lessons.deletedOccurrences()));
   router.get('/lessons/:id', requirePermission('lessons:read'), run((request) => lessons.get(request.params.id, lessonContext(request))));
   router.post('/lessons', requirePermission('*'), run((request) => lessons.create(request.body, lessonContext(request)), 201));
   router.patch('/lessons/:id', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
+  router.delete('/lessons/:id', requirePermission('*'), run((request) => lessons.remove(request.params.id, lessonContext(request)), 204));
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
   router.post('/lessons/:id/start', requirePermission('lessons:start'), run((request) => lessons.start(request.params.id, request.body, lessonContext(request))));
   router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.putAttendance(request.params.id, request.params.childId, request.body, lessonContext(request))));

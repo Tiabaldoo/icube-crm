@@ -595,15 +595,8 @@ render();
   };
 
   window.confirmAddChildren = function () {
-    const g = byId(state.groups,state.addChildrenGroupId);
-    const ids = Array.from(document.querySelectorAll('.ac-check:checked')).map(function(x){return Number(x.value);});
-    ids.forEach(function(id){
-      const c = byId(state.children,id);
-      const e = c.enrollments.find(function(x){return x.direction===g.direction;});
-      if (e && e.groupId == null) e.groupId = g.id;
-    });
-    state.modal = null;
-    render();
+    if (window.icubeApi?.confirmAddChildren) return window.icubeApi.confirmAddChildren();
+    alert('Серверный API ещё не загружен. Повторите действие через несколько секунд.');
   };
 
   window.group = function () {
@@ -1579,25 +1572,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     modal('<h3>Удалить занятие?</h3><div class="notice">Занятие исчезнет из календаря директора, календаря преподавателя, блока «Сегодня» и списков ближайших занятий. Это удаляет только конкретное занятие, а не расписание группы.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="deleteLessonConfirmed('+id+')">Удалить занятие</button></div>');
   };
 
-  function rollbackAttendance(l){
-    if(!l.attendanceApplied)return;
-    const g=byId(state.groups,l.groupId); if(!g)return;
-    Object.entries(l.attendance||{}).filter(function(x){return x[1];}).forEach(function(x){
-      const c=byId(state.children,Number(x[0])),e=c?.enrollments.find(function(y){return y.direction===g.direction;});
-      if(e)e.balance+=1;
-    });
-    (l.extras||[]).filter(function(x){return !x.trial;}).forEach(function(x){
-      const c=byId(state.children,x.childId),e=c?.enrollments.find(function(y){return y.direction===g.direction;});
-      if(e)e.balance+=1;
-    });
-    l.attendanceApplied=false;
-  }
   window.deleteLessonConfirmed=function(id){
-    const l=byId(state.lessons,id); if(!l)return;
-    rollbackAttendance(l);
-    if(!state.deletedOccurrences.includes(l.occurrenceKey))state.deletedOccurrences.push(l.occurrenceKey);
-    state.lessons=state.lessons.filter(function(x){return x.id!==id;});
-    state.modal=null; state.page='calendar'; render();
+    if(window.icubeApi?.deleteLesson) return window.icubeApi.deleteLesson(id);
+    alert('Серверный API ещё не загружен. Повторите действие через несколько секунд.');
   };
 
   window.lesson=function(){

@@ -64,7 +64,8 @@ test('удаление ошибочного посещения восстана�
     if (sql.includes("be.attendance_id=:attendanceId AND be.entry_type='attendance'")) return [[{ id: 80, enrollment_id: 9, lessons_delta: '-1.00000000', amount_delta: '-1025.00', unit_price_snapshot: '1025.00' }]];
     if (sql.startsWith('SELECT balance_lot_id,lessons')) return [[{ balance_lot_id: 60, lessons: '1.00000000' }]];
     if (sql.startsWith('INSERT INTO balance_entries')) return [{ insertId: 81 }];
-    if (sql.startsWith('SELECT COUNT(*) marked_count')) return [[{ marked_count: 0 }]];
+    if (sql.startsWith('SELECT * FROM salary_accruals WHERE')) return [[{ id: 90, teacher_id: 6 }]];
+    if (sql.startsWith('SELECT COUNT(*) present_count')) return [[{ present_count: 0 }]];
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка', planned_teacher_name: 'Преподаватель', actual_teacher_name: 'Преподаватель' }]];
     if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [[{ lesson_id: 50, child_id: 8, roster_type: 'main' }]];
     if (sql.includes('FROM attendances WHERE lesson_id IN') || sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
@@ -164,5 +165,5 @@ test('после полной очистки технической истори
     throw new Error(`Неожиданный SQL: ${sql}`);
   };
   await createDeletionService(transactionPool(groupHandler)).deleteGroup(10);
-  assert.deepEqual(order, ['lesson', 'prices', 'group']);
+  assert.deepEqual(order, ['lesson', 'lesson', 'prices', 'group']);
 });
