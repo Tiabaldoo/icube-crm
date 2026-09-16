@@ -43,10 +43,11 @@ function lessonKind(row) {
 }
 
 export function createMysqlLessons(pool) {
-  const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,
+  const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
     pt.full_name planned_teacher_name,act.full_name actual_teacher_name
     FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
     JOIN projects p ON p.id=l.project_id_snapshot JOIN sites s ON s.id=l.site_id_snapshot
+    LEFT JOIN sites os ON os.id=l.site_override_id
     JOIN teachers pt ON pt.id=l.planned_teacher_id LEFT JOIN teachers act ON act.id=l.actual_teacher_id`;
 
   async function teacherForContext(connection, context) {
@@ -84,7 +85,8 @@ export function createMysqlLessons(pool) {
         id: String(row.id), groupId: String(row.group_id), groupName: row.group_name,
         directionId: String(row.direction_id_snapshot), directionName: row.direction_name,
         projectId: String(row.project_id_snapshot), projectName: row.project_name,
-        siteId: String(row.site_id_snapshot), siteName: row.site_name,
+        siteId: String(row.site_override_id ?? row.site_id_snapshot), siteName: row.site_override_name ?? row.site_name,
+        siteOverrideId: row.site_override_id == null ? null : String(row.site_override_id),
         plannedTeacherId: String(row.planned_teacher_id), plannedTeacherName: row.planned_teacher_name,
         actualTeacherId: row.actual_teacher_id == null ? null : String(row.actual_teacher_id), actualTeacherName: row.actual_teacher_name,
         scheduledStartsAt: isoDateTime(row.scheduled_starts_at), scheduledEndsAt: isoDateTime(row.scheduled_ends_at), startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at),
@@ -206,6 +208,17 @@ export function createMysqlLessons(pool) {
         if (lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя изменить этим маршрутом');
         if (lesson.status === 'completed' && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Проведённое занятие может перенести только директор');
         if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только директор');
+        const siteChanged = Object.prototype.hasOwnProperty.call(body, 'siteId');
+        if (siteChanged && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Площадку занятия меняет только директор');
+        let siteOverrideId = lesson.site_override_id;
+        if (siteChanged) {
+          if (body.siteId == null || body.siteId === '') siteOverrideId = null;
+          else {
+            siteOverrideId = identifier(body.siteId, 'siteId');
+            const [sites] = await connection.query('SELECT id FROM sites WHERE id=:id AND deleted_at IS NULL', { id: siteOverrideId });
+            if (!sites.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Площадка не найдена');
+          }
+        }
         const date = body.date === undefined ? isoDate(lesson.starts_at) : dateOnly(body.date);
         const start = body.startTime === undefined ? timeOnly(lesson.starts_at) : timeOnly(body.startTime, 'startTime');
         const end = body.endTime === undefined ? timeOnly(lesson.ends_at) : timeOnly(body.endTime, 'endTime');
@@ -219,8 +232,8 @@ export function createMysqlLessons(pool) {
           throw new ApiProblem(409, 'COMPLETED_TEACHER_LOCKED', 'При переносе проведённого занятия нельзя менять фактического преподавателя');
         }
         await connection.query(`UPDATE lessons SET starts_at=CONCAT(:date,' ',:start,':00'),ends_at=CONCAT(:date,' ',:end,':00'),
-          actual_teacher_id=:teacherId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
-          id: lesson.id, date, start, end, teacherId, topic: body.topic === undefined ? lesson.topic : nullableText(body.topic),
+          actual_teacher_id=:teacherId,site_override_id=:siteOverrideId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
+          id: lesson.id, date, start, end, teacherId, siteOverrideId, topic: body.topic === undefined ? lesson.topic : nullableText(body.topic),
           introGroup: body.introGroup === undefined ? bool(lesson.is_intro_group) : bool(body.introGroup),
           emptyTrip: body.emptyTrip === undefined ? bool(lesson.is_empty_trip) : bool(body.emptyTrip),
         });

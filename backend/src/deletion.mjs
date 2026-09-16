@@ -37,7 +37,7 @@ export function createDeletionService(pool) {
     await ensureExists('sites', siteId, 'Площадка');
     const dependencies = await one(`SELECT
       (SELECT COUNT(*) FROM study_groups WHERE site_id=:id) groupCount,
-      (SELECT COUNT(*) FROM lessons WHERE site_id_snapshot=:id AND deleted_at IS NULL) lessons`, { id: siteId });
+      (SELECT COUNT(*) FROM lessons WHERE (site_id_snapshot=:id OR site_override_id=:id) AND deleted_at IS NULL) lessons`, { id: siteId });
     if (hasAny(dependencies)) throw new ApiProblem(409, 'SITE_HAS_DEPENDENCIES', 'Нельзя удалить площадку, потому что есть связанные группы или занятия/история.', dependencies);
     try { await pool.query('DELETE FROM sites WHERE id=:id', { id: siteId }); }
     catch (error) {
