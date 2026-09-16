@@ -109,7 +109,7 @@ test('site used as a lesson override cannot be physically deleted', async () => 
 
 test('migration and frontend keep the override through reload and display the effective site', async () => {
   const [migration, sync, ui] = await Promise.all([
-    readFile(new URL('../database/migrations/010_lesson_site_override.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../database/migrations/012_lesson_site_override.sql', import.meta.url), 'utf8'),
     readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
   ]);
