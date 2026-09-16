@@ -1543,6 +1543,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<option value="'+t.id+'"'+(t.id===l.teacherId?' selected':'')+'>'+t.name+'</option>';
     });
     html+='</select><div class="muted mini" style="margin-top:5px">Замена действует только для этого занятия и не меняет основного преподавателя группы.</div></div>';
+    if(role!=='teacher'){
+      const group=byId(state.groups,l.groupId),defaultSite=group?byId(state.sites,group.siteId):null;
+      html+='<div class="field span-2"><label>Площадка</label><select class="select" id="le-site"><option value="">По умолчанию — '+(defaultSite?.name||'площадка группы')+'</option>';
+      (state.sites||[]).filter(function(site){return site.active!==false || Number(site.id)===Number(l.siteOverrideId);}).forEach(function(site){
+        html+='<option value="'+site.id+'"'+(Number(l.siteOverrideId)===Number(site.id)?' selected':'')+'>'+site.name+'</option>';
+      });
+      html+='</select><div class="muted mini" style="margin-top:5px">Меняет только место проведения этого занятия.</div></div>';
+    }
     html+='<div class="field span-2"><label>Статус</label><select class="select" id="le-cancel"><option value="active"'+(!l.cancelled?' selected':'')+'>Занятие состоится</option><option value="cancelled"'+(l.cancelled?' selected':'')+'>Отменено</option></select></div>';
     html+='</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveLessonEdit('+id+',\''+role+'\')">Сохранить</button></div>';
     modal(html);
@@ -1586,7 +1594,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const presentCount=Number(Object.values(l.attendance||{}).filter(Boolean).length)+Number((l.extras||[]).length);
     const stateBadges='<span class="badge '+(l.cancelled?'red':l.moved?'amber':l.done?'green':'blue')+'">'+(l.cancelled?'Отменено':l.moved&&!l.done?'Перенесено':l.done?'Проведено':'Запланировано')+'</span>';
     return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+
-      pageHead(l.date+' · '+g.direction,l.time+' · '+byId(state.sites,g.siteId).name,
+      pageHead(l.date+' · '+g.direction,l.time+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||''),
         '<div style="display:flex;gap:8px"><button class="btn" onclick="editLessonForm('+l.id+',\'director\')">Изменить занятие</button><button class="btn danger" onclick="deleteLessonPrompt('+l.id+')">Удалить занятие</button></div>')+
       '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+g.project+'</span></div></div>'+
       (l.moved?'<div class="notice" style="margin-bottom:12px">Перенесено с '+l.scheduledDate+' · '+l.scheduledTime+'</div>':'')+
@@ -1613,7 +1621,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const l=byId(state.lessons,state.selectedLesson); if(!l)return teacherToday();
     const g=byId(state.groups,l.groupId),kids=groupChildren(g.id);
     let html='<div style="display:flex;gap:8px;justify-content:space-between;align-items:center"><button class="btn" onclick="state.page=\'teacherToday\';render()">← Сегодня</button><button class="btn" onclick="editLessonForm('+l.id+',\'teacher\')">Изменить / отменить</button></div>';
-    html+='<div style="margin:16px 0"><div class="muted">'+l.date+' · '+l.time+'</div><h1 style="margin:4px 0">'+g.direction+'</h1><div class="muted">'+g.name+' · '+byId(state.sites,g.siteId).name+'</div>'+(l.moved?'<div style="margin-top:8px"><span class="badge amber">Перенесено</span> <span class="muted mini">с '+l.scheduledDate+' · '+l.scheduledTime+'</span></div>':'')+'</div>';
+    html+='<div style="margin:16px 0"><div class="muted">'+l.date+' · '+l.time+'</div><h1 style="margin:4px 0">'+g.direction+'</h1><div class="muted">'+g.name+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||'')+'</div>'+(l.moved?'<div style="margin-top:8px"><span class="badge amber">Перенесено</span> <span class="muted mini">с '+l.scheduledDate+' · '+l.scheduledTime+'</span></div>':'')+'</div>';
     if(l.cancelled){
       html+='<div class="teacher-card" style="background:var(--redbg)"><b style="color:var(--red);font-size:18px">Занятие отменено</b><div class="muted" style="margin-top:6px">Отмена видна в календаре преподавателя и директора.</div></div>';
       return html;
@@ -5666,7 +5674,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function eventHtml(e,role){
     const g=byId(state.groups,e.groupId); if(!g) return '';
     return '<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\''+role+'\')">'+
-      '<div class="calendar-event-top"><b>'+timeStart(e.time)+'</b><span>'+ (e.project==='Зебра'?'Зебра':'iCube') +'</span></div>'+
+      '<div class="calendar-event-top"><b>'+(e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'')+'</b><span>'+ (e.project==='Зебра'?'Зебра':'iCube') +'</span></div>'+
       '<div class="calendar-event-name">'+g.name+'</div>'+
       (statusHtml(e)?'<div class="calendar-event-status">'+statusHtml(e)+'</div>':'')+
     '</div>';
@@ -7639,9 +7647,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     const cards=events.map(function(e){
       const g=byId(state.groups,e.groupId); if(!g) return '';
-      const site=byId(state.sites,g.siteId);
+      const siteName=e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'';
       return '<div class="teacher-card" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'teacher\')">'+
-        '<div class="teacher-lesson-head"><div><div class="teacher-time">'+timeStart(e.time)+'</div><h3 style="margin:4px 0">'+g.direction+'</h3><div class="muted">'+g.name+'<br>'+(site?.name||'')+'</div></div><div>'+eventStatusHtml(e)+'</div></div>'+
+        '<div class="teacher-lesson-head"><div><div class="teacher-time">'+timeStart(e.time)+'</div><h3 style="margin:4px 0">'+g.direction+'</h3><div class="muted">'+g.name+'<br>'+siteName+'</div></div><div>'+eventStatusHtml(e)+'</div></div>'+
         '<button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
     }).join('');
 

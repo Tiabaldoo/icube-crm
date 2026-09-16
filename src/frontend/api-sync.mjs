@@ -75,7 +75,8 @@ function mapLesson(lesson) {
   const status = lesson.status === 'completed' ? 'Проведено' : lesson.status === 'in_progress' ? 'Идёт' : lesson.status === 'cancelled' ? 'Отменено' : 'Запланировано';
   return {
     id: Number(lesson.id), groupId: Number(lesson.groupId), teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
-    plannedTeacherId: Number(lesson.plannedTeacherId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
+    plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
+    siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
     date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
     extras: extras.map((item) => ({ childId: Number(item.childId), enrollmentId: Number(item.enrollmentId), trial: item.trial, present: item.present })),
     photos: {}, started: ['in_progress', 'completed'].includes(lesson.status), done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
@@ -664,7 +665,11 @@ async function saveLessonEditApi(lessonId, role) {
   const lesson = legacy.state.lessons.find((item) => item.id === Number(lessonId)); if (!lesson) return;
   try {
     if (value('#le-cancel') === 'cancelled') await api.request(`/lessons/${lesson.id}/cancel`, { method: 'POST', body: {} });
-    else await api.update('lessons', lesson.id, { date: value('#le-date'), startTime: value('#le-start'), endTime: value('#le-end'), actualTeacherId: value('#le-teacher') });
+    else {
+      const body = { date: value('#le-date'), startTime: value('#le-start'), endTime: value('#le-end'), actualTeacherId: value('#le-teacher') };
+      if (role !== 'teacher') body.siteId = value('#le-site') || null;
+      await api.update('lessons', lesson.id, body);
+    }
     await reloadLesson(lesson.id, role === 'teacher' ? 'teacherLesson' : 'lesson');
   } catch (error) { fail(error); }
 }
