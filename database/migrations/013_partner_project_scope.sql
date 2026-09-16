@@ -2,8 +2,7 @@
 ALTER TABLE child_enrollments
   ADD COLUMN project_id BIGINT UNSIGNED NULL AFTER direction_id,
   ADD COLUMN superseded_at DATETIME(6) NULL AFTER ended_on,
-  ADD KEY idx_enrollments_project (project_id,status),
-  ADD CONSTRAINT fk_enrollments_project FOREIGN KEY (project_id) REFERENCES projects(id);
+  ADD KEY idx_enrollments_project (project_id,status);
 
 UPDATE child_enrollments e
 LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2
@@ -11,6 +10,8 @@ LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm
 LEFT JOIN study_groups g ON g.id=gm.group_id
 SET e.project_id=COALESCE(g.project_id,(SELECT id FROM projects WHERE code='icube-robots' LIMIT 1));
 ALTER TABLE child_enrollments MODIFY project_id BIGINT UNSIGNED NOT NULL;
+ALTER TABLE child_enrollments
+  ADD CONSTRAINT fk_enrollments_project FOREIGN KEY (project_id) REFERENCES projects(id);
 ALTER TABLE child_enrollments
   ADD COLUMN current_direction_id BIGINT UNSIGNED
     GENERATED ALWAYS AS (CASE WHEN superseded_at IS NULL THEN direction_id ELSE NULL END) STORED,
