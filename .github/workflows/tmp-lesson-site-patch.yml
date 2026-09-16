@@ -21,6 +21,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: python3 .github/tmp-lesson-site-patch.py
+        continue-on-error: true
+      - run: python3 .github/tmp-lesson-site-finish.py
       - run: npm ci --ignore-scripts
       - run: npm test
       - run: npm run check
