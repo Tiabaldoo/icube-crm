@@ -52,9 +52,17 @@ async function rolesFor(connection, userId) {
 
 async function profileFor(connection, user) {
   const roles = await rolesFor(connection, user.id);
+  let projectIds = [];
+  if (roles.includes('partner') && !roles.includes('director')) {
+    const [projects] = await connection.query(`SELECT p.id FROM partner_users pu JOIN partners partner ON partner.id=pu.partner_id
+      JOIN projects p ON p.partner_id=partner.id
+      WHERE pu.user_id=:userId AND partner.active=TRUE AND p.active=TRUE ORDER BY p.id`, { userId: user.id });
+    projectIds = projects.map((row) => String(row.id));
+  }
   return {
     id: String(user.id), displayName: user.display_name, roles,
     teacherId: user.teacher_id == null ? null : String(user.teacher_id),
+    projectIds,
   };
 }
 
@@ -79,7 +87,8 @@ export function createAuthService(pool, {
     const passwordOk = await comparePassword(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
     if (!user || !passwordOk || user.status !== 'active') throw invalidCredentials();
     const profile = await profileFor(pool, user);
-    if (!profile.roles.some((role) => role === 'director' || role === 'teacher')) throw invalidCredentials();
+    if (!profile.roles.some((role) => role === 'director' || role === 'teacher' || role === 'partner')
+      || (profile.roles.includes('partner') && !profile.roles.includes('director') && profile.projectIds.length !== 1)) throw invalidCredentials();
 
     const sessionToken = makeToken();
     const expiresAt = new Date(now().getTime() + SESSION_TTL_SECONDS * 1000);
@@ -107,7 +116,10 @@ export function createAuthService(pool, {
     const user = sessions[0];
     if (!user) throw new ApiProblem(401, 'UNAUTHENTICATED', 'Требуется вход');
     const profile = await profileFor(pool, user);
-    if (!profile.roles.some((role) => role === 'director' || role === 'teacher')) throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав');
+    if (!profile.roles.some((role) => role === 'director' || role === 'teacher' || role === 'partner')
+      || (profile.roles.includes('partner') && !profile.roles.includes('director') && profile.projectIds.length !== 1)) {
+      throw new ApiProblem(403, 'FORBIDDEN', 'Партнёр не связан с одним активным проектом');
+    }
     return { ...profile, userId: profile.id, sessionId: user.session_id };
   }
 

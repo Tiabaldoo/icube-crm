@@ -115,7 +115,7 @@ test('teacher не читает и не изменяет чужой lesson id', 
 test('teacher start игнорирует чужой actualTeacherId, director teacher-mode сохраняет actor director', async () => {
   const makeHandler = (lesson, captured) => async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
-    if (sql.startsWith('SELECT id FROM teachers WHERE id=')) return [[{ id: params.id }]];
+    if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: params.id }]];
     if (sql.includes('FROM group_memberships gm')) return [[{ child_id: 8, enrollment_id: 10 }]];
     if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) { captured.actorId = params.actorId; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('SELECT a.id FROM attendances a JOIN lessons')) return [[]];
@@ -247,7 +247,7 @@ test('активный group membership попадает во frozen roster, а 
   const laterVisits = [{ lessonId: 20, startsAt: '2026-09-21 10:00:00.000000' }];
   const handler = async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
-    if (sql.startsWith('SELECT id FROM teachers')) return [[{ id: 6 }]];
+    if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: 6 }]];
     if (sql.includes('FROM group_memberships gm')) return [[{ child_id: 8, enrollment_id: 9 }]];
     if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) { rosterChild = params.childId; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('SELECT a.id FROM attendances a JOIN lessons')) {
@@ -340,7 +340,7 @@ test('перенос проведённого занятия сохраняет 
   let updateSql;
   const handler = async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
-    if (sql.startsWith('SELECT id FROM teachers WHERE id=')) return [[{ id: 6 }]];
+    if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: 6 }]];
     if (sql.startsWith('UPDATE lessons SET starts_at=')) {
       updateSql = sql;
       lesson.starts_at = `${params.date} ${params.start}:00.000000`;

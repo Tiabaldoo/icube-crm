@@ -9,7 +9,7 @@ const numericId = (value, field = 'id') => {
 const hasAny = (dependencies) => Object.values(dependencies).some((value) => Number(value) > 0);
 const dependencyLabels = { memberships: 'участники', lessons: 'занятия', attendances: 'посещения', quickChildren: 'дети из занятия',
   childStatusHistory: 'история статусов детей', enrollmentStatusHistory: 'история направлений', payments: 'оплаты', refunds: 'возвраты',
-  balanceTransfers: 'переносы баланса', balanceEffects: 'операции баланса', balance: 'ненулевой баланс' };
+  balanceTransfers: 'переносы баланса', projectTransfers: 'межпроектные переводы', balanceEffects: 'операции баланса', balance: 'ненулевой баланс' };
 const dependencyNames = (dependencies) => Object.entries(dependencies).filter(([, value]) => Number(value) > 0)
   .map(([name, value]) => `${dependencyLabels[name] ?? name}: ${value}`).join(', ');
 
@@ -60,6 +60,7 @@ export function createDeletionService(pool) {
     try {
       await inTransaction(pool, async (connection) => {
         await connection.query('DELETE FROM teacher_directions WHERE teacher_id=:id', { id: teacherId });
+        await connection.query('DELETE FROM teacher_projects WHERE teacher_id=:id', { id: teacherId });
         await connection.query('DELETE FROM teachers WHERE id=:id', { id: teacherId });
       });
     } catch (error) {
@@ -69,12 +70,18 @@ export function createDeletionService(pool) {
     return null;
   }
 
-  async function deleteGroup(rawId) {
+  async function deleteGroup(rawId, context = {}) {
     const groupId = numericId(rawId, 'groupId');
     try {
       await inTransaction(pool, async (connection) => {
         const [groups] = await connection.query('SELECT id FROM study_groups WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: groupId });
         if (!groups.length) throw new ApiProblem(404, 'NOT_FOUND', 'Группа не найдена');
+        let notifyProject = null;
+        if ((context.roles ?? []).includes('director')) {
+          const [owners] = await connection.query(`SELECT g.project_id,g.name FROM study_groups g JOIN projects p ON p.id=g.project_id
+            WHERE g.id=:id AND p.code<>'icube-robots'`, { id: groupId });
+          notifyProject = owners[0] ?? null;
+        }
         await connection.query(`DELETE l FROM lessons l WHERE l.group_id=:id
           AND l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
           AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
@@ -123,6 +130,12 @@ export function createDeletionService(pool) {
         await connection.query('DELETE FROM lessons WHERE group_id=:id AND deleted_at IS NOT NULL', { id: groupId });
         await connection.query('DELETE FROM price_versions WHERE group_id=:id', { id: groupId });
         await connection.query('DELETE FROM study_groups WHERE id=:id', { id: groupId });
+        if (notifyProject) await connection.query(`INSERT INTO notifications
+          (role_code,recipient_project_id,notification_type,title,body,entity_type,entity_id)
+          VALUES ('partner',:projectId,'project_change',:title,:body,'group',:groupId)`, {
+          projectId: notifyProject.project_id, title: 'Группа удалена директором',
+          body: `Директор удалил группу «${notifyProject.name}» вашего проекта.`, groupId,
+        });
       });
     } catch (error) {
       if (error?.code === 'ER_ROW_IS_REFERENCED_2') throw new ApiProblem(409, 'GROUP_HAS_DEPENDENCIES', 'Нельзя удалить группу, потому что есть участники, занятия, посещения, оплаты или другая история.');
@@ -148,6 +161,7 @@ export function createDeletionService(pool) {
           (SELECT COUNT(*) FROM attendances WHERE enrollment_id=:id AND marked_at IS NOT NULL) attendances,
           (SELECT COUNT(*) FROM group_memberships WHERE enrollment_id=:id AND ended_on IS NULL) memberships,
           (SELECT COUNT(*) FROM balance_transfers WHERE source_enrollment_id=:id OR target_enrollment_id=:id) balanceTransfers,
+          (SELECT COUNT(*) FROM enrollment_project_transfers WHERE source_enrollment_id=:id OR target_enrollment_id=:id) projectTransfers,
           (SELECT COUNT(*) FROM balance_entries original
             LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=original.id
             WHERE original.enrollment_id=:id AND original.entry_type<>'reversal' AND reversal.id IS NULL

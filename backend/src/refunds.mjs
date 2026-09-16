@@ -41,6 +41,7 @@ export function createMysqlRefunds(pool) {
     for (const [field, column] of [['childId', 'r.child_id'], ['enrollmentId', 'r.enrollment_id'], ['paymentId', 'r.payment_id']]) {
       if (filters[field] != null && filters[field] !== '') { conditions.push(`${column}=:${field}`); params[field] = identifier(filters[field], field); }
     }
+    if (filters.projectId != null && filters.projectId !== '') { conditions.push('r.project_id_snapshot=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
     return (await queryRows(`${refundSelect} WHERE ${conditions.join(' AND ')} ORDER BY r.refunded_on DESC,r.id DESC`, params)).map(mapRefund);
   }
   async function get(refundId) {

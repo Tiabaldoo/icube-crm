@@ -48,7 +48,7 @@ export function createDirectionPriceVersions(pool) {
       FROM directions d
       LEFT JOIN price_versions pv ON pv.id=(
         SELECT pv2.id FROM price_versions pv2
-        WHERE pv2.scope_type='direction' AND pv2.direction_id=d.id
+        WHERE pv2.scope_type='direction' AND pv2.direction_id=d.id AND pv2.project_id IS NULL
           AND pv2.valid_from<=NOW(6) AND (pv2.valid_to IS NULL OR pv2.valid_to>NOW(6))
         ORDER BY pv2.valid_from DESC,pv2.id DESC LIMIT 1
       )
@@ -64,7 +64,7 @@ export function createDirectionPriceVersions(pool) {
       if (!directions.length) throw new ApiProblem(404, 'NOT_FOUND', 'Направление не найдено');
       const direction = directions[0];
       const [currentRows] = await connection.query(`SELECT id,price,valid_from FROM price_versions
-        WHERE scope_type='direction' AND direction_id=:directionId
+        WHERE scope_type='direction' AND direction_id=:directionId AND project_id IS NULL
           AND valid_from<=NOW(6) AND (valid_to IS NULL OR valid_to>NOW(6))
         ORDER BY valid_from DESC,id DESC LIMIT 1 FOR UPDATE`, { directionId });
       const current = currentRows[0] ?? null;

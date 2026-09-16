@@ -87,6 +87,7 @@ export function createMysqlPayments(pool) {
     const conditions = ['p.deleted_at IS NULL']; const params = {};
     if (filters.childId != null && filters.childId !== '') { conditions.push('p.child_id=:childId'); params.childId = identifier(filters.childId, 'childId'); }
     if (filters.enrollmentId != null && filters.enrollmentId !== '') { conditions.push('p.enrollment_id=:enrollmentId'); params.enrollmentId = identifier(filters.enrollmentId, 'enrollmentId'); }
+    if (filters.projectId != null && filters.projectId !== '') { conditions.push('p.project_id_snapshot=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
     return (await queryRows(`${paymentSelect} WHERE ${conditions.join(' AND ')} ORDER BY p.paid_on DESC,p.id DESC`, params)).map(mapPayment);
   }
   async function get(paymentId) {
@@ -95,12 +96,15 @@ export function createMysqlPayments(pool) {
     return mapPayment(rows[0]);
   }
   async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = isoDate(new Date()) } = {}) {
-    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,g.project_id,
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
+          AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY)
+          AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY))
+          ORDER BY (pv.project_id IS NOT NULL) DESC,pv.valid_from DESC,pv.id DESC LIMIT 1)
       ) current_price
       FROM child_enrollments e
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=:priceDate AND (gm2.ended_on IS NULL OR gm2.ended_on>=:priceDate) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
@@ -114,6 +118,7 @@ export function createMysqlPayments(pool) {
       const paymentId = await inTransaction(pool, async (connection) => {
         const date = paidOn(body.paidOn);
         const enrollment = await lockEnrollment(connection, body.enrollmentId, { priceDate: date });
+        if (enrollment.superseded_at != null) throw new ApiProblem(409, 'ENROLLMENT_TRANSFERRED', 'Новая оплата должна относиться к текущему проекту направления');
         const amount = normalizeMoney(body.amount);
         const price = normalizeMoney(enrollment.current_price, 'priceSnapshot');
         const lessons = calculateLessonsCredit(amount, price);
@@ -156,6 +161,7 @@ export function createMysqlPayments(pool) {
         const oldEnrollment = await lockEnrollment(connection, old.enrollment_id, { requirePrice: false, priceDate: date });
         const targetId = identifier(body.enrollmentId ?? old.enrollment_id, 'enrollmentId');
         const target = String(oldEnrollment.id) === targetId ? oldEnrollment : await lockEnrollment(connection, targetId, { requirePrice: body.priceSnapshot === undefined, priceDate: date });
+        if (String(old.project_id_snapshot) !== String(target.project_id)) throw new ApiProblem(409, 'PAYMENT_PROJECT_LOCKED', 'Нельзя перенести историческую оплату в другой проект');
         const amount = normalizeMoney(body.amount ?? old.amount);
         const price = body.priceSnapshot === undefined
           ? normalizeMoney(String(old.enrollment_id) === targetId ? old.price_snapshot : target.current_price, 'priceSnapshot')
@@ -228,8 +234,10 @@ export function createMysqlPayments(pool) {
     } catch (error) { throw mysqlError(error); }
   }
   async function balances(filters = {}) {
-    const params = {}; let where = '';
-    if (filters.childId != null && filters.childId !== '') { params.childId = identifier(filters.childId, 'childId'); where = 'WHERE e.child_id=:childId'; }
+    const params = {}; const conditions = [];
+    if (filters.childId != null && filters.childId !== '') { params.childId = identifier(filters.childId, 'childId'); conditions.push('e.child_id=:childId'); }
+    if (filters.projectId != null && filters.projectId !== '') { params.projectId = identifier(filters.projectId, 'projectId'); conditions.push('e.project_id=:projectId'); }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
     const rows = await queryRows(`SELECT e.id enrollment_id,e.child_id,c.full_name child_name,e.direction_id,d.name direction_name,e.balance_lessons
       FROM child_enrollments e JOIN children c ON c.id=e.child_id JOIN directions d ON d.id=e.direction_id ${where} ORDER BY c.full_name,d.name`, params);
     return rows.map((row) => ({ enrollmentId: String(row.enrollment_id), childId: String(row.child_id), childName: row.child_name,

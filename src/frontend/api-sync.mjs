@@ -59,12 +59,24 @@ function mapChild(child) {
     parent: child.guardian?.name ?? '', phone: child.guardian?.phone ?? '', status: childStatusFromApi[child.status] ?? child.status,
     note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
     enrollments: child.enrollments.map((enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
+      projectId: Number(enrollment.projectId), project: enrollment.projectName,
       direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId), status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
       individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
       balance: enrollment.balanceLessons == null ? 0 : Number(enrollment.balanceLessons) })) };
 }
 
 function mapLesson(lesson) {
+  if (lesson.readOnly) {
+    const date = isoToRu(timestampDate(lesson.startsAt));
+    return { id: Number(lesson.id), groupId: Number(lesson.groupId), groupName: lesson.groupName,
+      projectId: Number(lesson.projectId), project: lesson.projectName,
+      teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId), teacherName: lesson.actualTeacherName ?? lesson.plannedTeacherName,
+      siteId: Number(lesson.siteId), siteName: lesson.siteName, scheduledDate: isoToRu(timestampDate(lesson.scheduledStartsAt)),
+      scheduledTime: `${timestampTime(lesson.scheduledStartsAt)}–${timestampTime(lesson.scheduledEndsAt)}`,
+      date, time: `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`,
+      occurrenceKey: `${Number(lesson.groupId)}|${isoToRu(timestampDate(lesson.scheduledStartsAt))}`, readOnly: true,
+      attendance: {}, extras: [], photos: [], status: 'Занято' };
+  }
   const main = lesson.attendances.filter((item) => item.type === 'main');
   const extras = lesson.attendances.filter((item) => item.type === 'extra');
   const attendance = {}; const trialChildren = {};
@@ -89,18 +101,21 @@ function mapLesson(lesson) {
 
 async function reload({ render = true } = {}) {
   if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) return reloadTeacher({ render });
+  const partner = authProfile?.roles?.includes('partner') && !authProfile.roles.includes('director');
   const statisticsQuery = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
-  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics] = await Promise.all([
+  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics, dailySummary, venues] = await Promise.all([
     api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
-    api.list('balance-transfers'), api.list('statistics', statisticsQuery),
+    api.list('balance-transfers'), partner ? Promise.resolve(null) : api.list('statistics', statisticsQuery), api.request('/dashboard/daily'), api.list('sites/venues'),
   ]);
   directories = { projects, directions };
-  legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id) }));
-  legacy.state.teachers = teachers.map((teacher) => ({ ...teacher, id: Number(teacher.id), directions: teacher.directions.map((direction) => direction.name) }));
+  legacy.state.projects = projects.map((project) => ({ ...project, id: Number(project.id) }));
+  legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id), projectId: Number(site.projectId) }));
+  legacy.state.lessonVenues = venues.map((site) => ({ ...site, id: Number(site.id), active: Boolean(site.active) }));
+  legacy.state.teachers = teachers.map((teacher) => ({ ...teacher, id: Number(teacher.id), projectIds: teacher.projectIds.map(Number), directions: teacher.directions.map((direction) => direction.name) }));
   legacy.state.groups = groups.map(mapGroup);
   legacy.state.children = children.map(mapChild);
   legacy.state.payments = payments.map((payment) => ({
-    id: Number(payment.id), enrollmentId: Number(payment.enrollmentId), childId: Number(payment.childId),
+    id: Number(payment.id), enrollmentId: Number(payment.enrollmentId), childId: Number(payment.childId), childName: payment.childName,
     direction: payment.directionName, amount: Number(payment.amount), price: Number(payment.priceSnapshot),
     lessons: Number(payment.lessonsCredit), date: isoToRu(payment.paidOn), paidOn: payment.paidOn,
     method: paymentMethodLabel[payment.method] ?? payment.method, methodCode: payment.method,
@@ -108,7 +123,7 @@ async function reload({ render = true } = {}) {
     refundedAmount: Number(payment.refundedAmount), refundableAmount: Number(payment.refundableAmount),
   }));
   legacy.state.refunds = refunds.map((refund) => ({
-    id: Number(refund.id), paymentId: Number(refund.paymentId), enrollmentId: Number(refund.enrollmentId), childId: Number(refund.childId),
+    id: Number(refund.id), paymentId: Number(refund.paymentId), enrollmentId: Number(refund.enrollmentId), childId: Number(refund.childId), childName: refund.childName,
     direction: refund.directionName, amount: Number(refund.amount), price: Number(refund.priceSnapshot), lessons: Number(refund.lessonsDebit),
     date: isoToRu(refund.refundedOn), refundedOn: refund.refundedOn, method: paymentMethodLabel[refund.paymentMethod] ?? refund.paymentMethod,
     methodCode: refund.paymentMethod, groupId: refund.groupId == null ? null : Number(refund.groupId), projectId: refund.projectId == null ? null : Number(refund.projectId),
@@ -116,8 +131,12 @@ async function reload({ render = true } = {}) {
   legacy.state.balanceTransfers = balanceTransfers.map((transfer) => ({ ...transfer, id: Number(transfer.id), childId: Number(transfer.childId),
     sourceEnrollmentId: Number(transfer.sourceEnrollmentId), targetEnrollmentId: Number(transfer.targetEnrollmentId) }));
   legacy.state.statistics = statistics;
+  legacy.state.dailySummary = dailySummary;
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
+  legacy.state.calendarForeignGroups = legacy.state.lessons.filter((lesson) => lesson.readOnly).map((lesson) => ({
+    id: lesson.groupId, name: lesson.groupName, project: lesson.project,
+  }));
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
   legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
@@ -151,7 +170,7 @@ async function reloadTeacher({ render = true } = {}) {
 
 async function saveSite(resourceId, returnToGroup) {
   try {
-    const body = { name: value('#sf-name').trim(), shortName: value('#sf-short').trim(), type: value('#sf-type'), address: value('#sf-address').trim(), note: value('#sf-note').trim(), active: value('#sf-active') === 'true' };
+    const body = { name: value('#sf-name').trim(), shortName: value('#sf-short').trim(), type: value('#sf-type'), address: value('#sf-address').trim(), note: value('#sf-note').trim(), active: value('#sf-active') === 'true', projectId: value('#sf-project') || undefined };
     if (!body.name || !body.shortName) return window.alert('Укажите полное и короткое название площадки');
     const saved = resourceId ? await api.update('sites', resourceId, body) : await api.create('sites', body);
     await reload({ render: false });
@@ -163,7 +182,8 @@ async function saveSite(resourceId, returnToGroup) {
 async function saveTeacher(resourceId, returnToGroup) {
   try {
     const names = []; if (checked('#tf-robot')) names.push('Робототехника'); if (checked('#tf-code')) names.push('Программирование');
-    const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(), active: value('#tf-active') === 'true', directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean) };
+    const projectIds = directories.projects.filter((project) => checked(`#tf-project-${project.id}`)).map((project) => project.id);
+    const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(), active: value('#tf-active') === 'true', directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean), projectIds };
     if (!body.name) return window.alert('Укажите фамилию и имя преподавателя');
     if (body.directionIds.length !== names.length || !names.length) return window.alert('Выберите хотя бы одно доступное направление');
     const saved = resourceId ? await api.update('teachers', resourceId, body) : await api.create('teachers', body);
@@ -213,7 +233,8 @@ async function saveChild(resourceId) {
       saved = await api.create('children', body);
       const direction = byName(directories.directions, value('#cf-direction'));
       if (!direction) throw new ApiError('Направление отсутствует в серверном справочнике');
-      await api.createEnrollment(saved.id, { directionId: direction.id, groupId: value('#cf-group') ? Number(value('#cf-group')) : null, status: 'active' });
+      await api.createEnrollment(saved.id, { directionId: direction.id, projectId: value('#cf-project') || undefined,
+        groupId: value('#cf-group') ? Number(value('#cf-group')) : null, status: 'active' });
     }
     legacy.state.selectedChild = saved.id; legacy.state.modal = null; legacy.state.page = 'child'; await reload();
   } catch (error) { fail(error); }
@@ -248,9 +269,37 @@ async function addEnrollment() {
     const individual = value('#ad-price-mode') === 'individual'; const packagePrice = Number(value('#ad-individual-package') || 0);
     if (!direction) return;
     if (individual && !(packagePrice > 0)) return window.alert('Укажите индивидуальную цену абонемента за 4 занятия.');
-    await api.createEnrollment(childId, { directionId: direction.id, groupId: value('#ad-group') ? Number(value('#ad-group')) : null,
+    await api.createEnrollment(childId, { directionId: direction.id, projectId: value('#ad-project') || undefined,
+      groupId: value('#ad-group') ? Number(value('#ad-group')) : null,
       status: 'active', individualPrice: individual ? packagePrice / 4 : null });
     legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; await reload();
+  } catch (error) { fail(error); }
+}
+
+async function projectTransferForm(enrollmentId) {
+  const child = legacy.state.children.find((item) => item.enrollments.some((enrollment) => enrollment.id === Number(enrollmentId)));
+  const enrollment = child?.enrollments.find((item) => item.id === Number(enrollmentId));
+  if (!enrollment) return;
+  try {
+    const targets = (await api.list('project-transfer-targets')).filter((project) => String(project.id) !== String(enrollment.projectId));
+    if (!targets.length) return window.alert('Нет другого доступного проекта.');
+    const group = legacy.state.groups.find((item) => item.id === enrollment.groupId);
+    legacy.state.modal = `<h3>Перенести в другой проект</h3><div class="notice">Текущий проект: <b>${html(enrollment.project)}</b>.
+      ${group ? `Текущая группа «${html(group.name)}» будет снята. После переноса ребёнка нужно определить в новую группу.` : 'После переноса ребёнка нужно определить в новую группу.'}
+      Исторические занятия и оплаты останутся в прежнем проекте.</div>
+      <div class="field" style="margin-top:14px"><label>Новый проект</label><select class="select" id="pt-project">${targets.map((project) => `<option value="${html(project.id)}">${html(project.name)}</option>`).join('')}</select></div>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.confirmProjectTransfer(${enrollment.id})">Продолжить</button></div>`;
+    legacy.render();
+  } catch (error) { fail(error); }
+}
+
+async function confirmProjectTransfer(enrollmentId) {
+  const projectId = value('#pt-project'); if (!projectId) return;
+  if (!window.confirm('Перенести направление в другой проект? Текущая группа будет снята.')) return;
+  try {
+    const result = await api.request(`/enrollments/${enrollmentId}/project-transfer`, { method: 'POST', body: { projectId } });
+    legacy.state.selectedChild = Number(result.childId); legacy.state.childTab = 'overview'; legacy.state.modal = null;
+    legacy.state.page = 'child'; await reload();
   } catch (error) { fail(error); }
 }
 
@@ -397,22 +446,24 @@ function paymentEnrollment(childId, enrollmentId) {
 }
 
 function paymentForm(childId, direction, paymentId) {
-  if (!legacy.state.children.length) return window.alert('Сначала создайте ребёнка.');
   const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
+  if (!legacy.state.children.length && !existing) return window.alert('Сначала создайте ребёнка.');
   const child = legacy.state.children.find((item) => item.id === Number(existing?.childId ?? childId)) ?? legacy.state.children[0];
-  const preferred = existing?.enrollmentId ?? child.enrollments.find((enrollment) => enrollment.direction === direction)?.id ?? child.enrollments[0]?.id ?? null;
+  const historical = Boolean(existing && !child?.enrollments.some((enrollment) => enrollment.id === existing.enrollmentId));
+  const preferred = existing?.enrollmentId ?? child?.enrollments.find((enrollment) => enrollment.direction === direction)?.id ?? child?.enrollments[0]?.id ?? null;
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   legacy.state.modal = `<h3>${existing ? 'Редактировать оплату' : 'Новая оплата'}</h3><div class="form-grid">
     <div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="${html(existing?.paidOn ?? todayIso)}"></div>
-    <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'})">${legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>Направление</label><select class="select" id="pf-enrollment" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})"></select></div>
+    <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.childId}">${html(existing.childName)}</option>` : legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Направление</label><select class="select" id="pf-enrollment" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.enrollmentId}">${html(existing.direction)}</option>` : ''}</select></div>
     <div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" min="0.01" step="0.01" value="${html(existing?.amount ?? '4100')}" oninput="icubeApi.updatePaymentCalc()"></div>
     <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" ${existing ? '' : 'readonly'} data-price-edited="false" oninput="this.dataset.priceEdited='true';icubeApi.updatePaymentCalc()"></div>
     <div class="field"><label>Способ оплаты</label><select class="select" id="pf-method"><option value="cashless"${(existing?.methodCode ?? 'cashless') === 'cashless' ? ' selected' : ''}>Безналичный расчёт</option><option value="cash"${existing?.methodCode === 'cash' ? ' selected' : ''}>Наличные</option></select></div>
     </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
   legacy.render();
-  setTimeout(() => refreshPaymentDirections(existing?.id ?? null, preferred), 0);
+  if (historical) setTimeout(updatePaymentCalc, 0);
+  else setTimeout(() => refreshPaymentDirections(existing?.id ?? null, preferred), 0);
 }
 
 function refreshPaymentDirections(paymentId, preferredEnrollmentId) {
@@ -446,7 +497,8 @@ async function savePayment(paymentId) {
     if (paymentId && element('#pf-price')?.dataset.priceEdited === 'true') body.priceSnapshot = value('#pf-price');
     const saved = paymentId ? await api.update('payments', paymentId, body) : await api.create('payments', body);
     await reload({ render: false });
-    legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'payments'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+    legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'payments'; legacy.state.modal = null;
+    legacy.state.page = legacy.state.children.some((child) => child.id === Number(saved.childId)) ? 'child' : 'payments'; legacy.render();
   } catch (error) { fail(error); }
 }
 
@@ -462,7 +514,8 @@ async function deletePayment(paymentId) {
   if (!payment) return;
   try {
     await api.delete('payments', paymentId); await reload({ render: false });
-    legacy.state.selectedChild = payment.childId; legacy.state.childTab = 'payments'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+    legacy.state.selectedChild = payment.childId; legacy.state.childTab = 'payments'; legacy.state.modal = null;
+    legacy.state.page = legacy.state.children.some((child) => child.id === payment.childId) ? 'child' : 'payments'; legacy.render();
   } catch (error) { fail(error); }
 }
 
@@ -498,7 +551,8 @@ async function saveRefund() {
   try {
     const saved = await api.create('refunds', { paymentId: String(payment.id), refundedOn: value('#rf-date'), amount: value('#rf-amount') });
     await reload({ render: false });
-    legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'refunds'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+    legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'refunds'; legacy.state.modal = null;
+    legacy.state.page = legacy.state.children.some((child) => child.id === Number(saved.childId)) ? 'child' : 'refunds'; legacy.render();
   } catch (error) { fail(error); }
 }
 
@@ -514,7 +568,8 @@ async function deleteRefund(refundId) {
   if (!refund) return;
   try {
     await api.delete('refunds', refundId); await reload({ render: false });
-    legacy.state.selectedChild = refund.childId; legacy.state.childTab = 'refunds'; legacy.state.modal = null; legacy.state.page = 'child'; legacy.render();
+    legacy.state.selectedChild = refund.childId; legacy.state.childTab = 'refunds'; legacy.state.modal = null;
+    legacy.state.page = legacy.state.children.some((child) => child.id === refund.childId) ? 'child' : 'refunds'; legacy.render();
   } catch (error) { fail(error); }
 }
 
@@ -555,6 +610,15 @@ async function openCalendarEvent(key, role) {
       legacy.state.lessons.push(lesson);
     }
     if (!lesson) return;
+    if (lesson.readOnly) {
+      legacy.state.modal = `<h3>${html(lesson.groupName)}</h3><div class="info-list">
+        <div class="info-line"><span>Проект</span><b>${html(lesson.project)}</b></div>
+        <div class="info-line"><span>Дата и время</span><b>${html(lesson.date)} · ${html(lesson.time)}</b></div>
+        <div class="info-line"><span>Преподаватель</span><b>${html(lesson.teacherName)}</b></div>
+        <div class="info-line"><span>Площадка</span><b>${html(lesson.siteName)}</b></div></div>
+        <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
+      legacy.render(); return;
+    }
     if (role === 'teacher' && authProfile?.roles?.includes('director') && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
     legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson'; legacy.render();
   } catch (error) { fail(error); }
@@ -778,9 +842,10 @@ function installPersistentCalendarBridge() {
       if (actual < start || actual > end) continue;
       if (teacherId && Number(lesson.teacherId) !== Number(teacherId)) continue;
       const group = legacy.state.groups.find((item) => item.id === Number(lesson.groupId));
-      if (!group) continue;
+      if (!group && !lesson.readOnly) continue;
       const persisted = {
-        key: lesson.occurrenceKey, groupId: lesson.groupId, project: group.project, teacherId: lesson.teacherId,
+        key: lesson.occurrenceKey, groupId: lesson.groupId, groupName: group?.name ?? lesson.groupName,
+        project: group?.project ?? lesson.project, teacherId: lesson.teacherId,
         scheduledDate: lesson.scheduledDate, scheduledTime: lesson.scheduledTime, date: lesson.date, time: lesson.time,
         lesson, cancelled: lesson.cancelled, moved: lesson.moved, done: lesson.done,
       };
@@ -826,8 +891,10 @@ function applyAuthProfile(profile) {
   authProfile = profile;
   legacy.state.authUser = profile;
   const director = profile.roles.includes('director');
-  legacy.state.role = director ? 'director' : 'teacher';
-  legacy.state.page = director ? 'dashboard' : 'teacherToday';
+  const partner = !director && profile.roles.includes('partner');
+  legacy.state.role = director ? 'director' : partner ? 'partner' : 'teacher';
+  legacy.state.page = director || partner ? 'dashboard' : 'teacherToday';
+  if (partner) { legacy.state.calendarProject = 'Зебра'; legacy.state.balanceProject = 'Зебра'; }
   if (profile.teacherId) legacy.state.prototypeTeacherId = Number(profile.teacherId);
   const app = element('#app');
   if (app) app.style.visibility = 'visible';
@@ -867,7 +934,8 @@ function installAuthenticatedShells() {
     window.shell = function (...args) {
       const result = originalShell.apply(this, args);
       if (!authProfile) return result;
-      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">Директор</div></div><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
+      const roleLabel = authProfile.roles.includes('director') ? 'Директор' : 'Партнёр';
+      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
       return result.replace(/<div><select class="role-switch"[\s\S]*?<\/select><div class="muted mini">Режим прототипа<\/div><\/div>/, account);
     };
   }
@@ -954,6 +1022,7 @@ async function bootstrapAuth() {
 }
 
 window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
+  projectTransferForm, confirmProjectTransfer,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
   deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload,

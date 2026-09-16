@@ -21,6 +21,7 @@ function mysqlError(error) {
   if (error instanceof ApiProblem) return error;
   if (error?.code === 'ER_DUP_ENTRY') return new ApiProblem(409, 'TRANSFER_ALREADY_EXISTS', 'Этот перенос уже выполнен');
   if (error?.code === 'ER_NO_REFERENCED_ROW_2') return new ApiProblem(400, 'INVALID_REFERENCE', 'Связанная запись не найдена');
+  if (error?.code === 'ER_ROW_IS_REFERENCED_2') return new ApiProblem(409, 'TRANSFER_HAS_PROJECT_HISTORY', 'Денежный перенос связан с переводом направления между проектами');
   return error;
 }
 
@@ -53,12 +54,15 @@ export function fundedTransferLessons(credit, balanceBefore) {
 }
 
 export function createBalanceTransfers(pool) {
-  const enrollmentSql = `SELECT e.id,e.child_id,e.direction_id,e.status,e.balance_lessons,
+  const enrollmentSql = `SELECT e.id,e.child_id,e.direction_id,e.project_id,e.status,e.balance_lessons,
     COALESCE(
       (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
       CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
       (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
-      (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+      (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
+        AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<=NOW(6)
+        AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6))
+        ORDER BY (pv.project_id IS NOT NULL) DESC,pv.valid_from DESC,pv.id DESC LIMIT 1)
     ) current_price
     FROM child_enrollments e
     LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=CURDATE() AND (gm2.ended_on IS NULL OR gm2.ended_on>=CURDATE()) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
@@ -71,7 +75,9 @@ export function createBalanceTransfers(pool) {
     const source = rows.find((row) => String(row.id) === sourceId); const target = rows.find((row) => String(row.id) === targetId);
     if (!source || !target) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
     if (String(source.child_id) !== String(target.child_id)) throw new ApiProblem(409, 'DIFFERENT_CHILDREN', 'Перенос возможен только между направлениями одного ребёнка');
-    if (String(source.direction_id) === String(target.direction_id)) throw new ApiProblem(409, 'SAME_DIRECTION', 'Перенос между одинаковыми направлениями невозможен');
+    if (String(source.direction_id) === String(target.direction_id) && String(source.project_id) === String(target.project_id)) {
+      throw new ApiProblem(409, 'SAME_DIRECTION', 'Перенос между одинаковыми направлениями одного проекта невозможен');
+    }
     if (source.status !== 'finished') throw new ApiProblem(409, 'SOURCE_NOT_FINISHED', 'Старое направление должно иметь статус «Закончил»');
     if (target.status === 'finished') throw new ApiProblem(409, 'TARGET_FINISHED', 'Новое направление не должно иметь статус «Закончил»');
     const sourceBalance = lessonUnits(String(source.balance_lessons));
@@ -93,6 +99,7 @@ export function createBalanceTransfers(pool) {
   async function list(filters = {}) {
     const conditions = []; const params = {};
     if (filters.childId != null && filters.childId !== '') { conditions.push('bt.child_id=:childId'); params.childId = identifier(filters.childId, 'childId'); }
+    if (filters.projectId != null && filters.projectId !== '') { conditions.push('se.project_id=:projectId AND te.project_id=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
     const [rows] = await pool.query(`SELECT bt.*,sd.name source_direction_name,td.name target_direction_name
       FROM balance_transfers bt
       JOIN child_enrollments se ON se.id=bt.source_enrollment_id JOIN directions sd ON sd.id=se.direction_id
@@ -112,7 +119,7 @@ export function createBalanceTransfers(pool) {
     const idempotencyKey = context.idempotencyKey == null ? null : String(context.idempotencyKey).slice(0, 128);
     const existing = await getByIdempotencyKey(idempotencyKey); if (existing) return existing;
     try {
-      const transferId = await inTransaction(pool, async (connection) => {
+      const transferId = await (context.connection ? async (fn) => fn(context.connection) : (fn) => inTransaction(pool, fn))(async (connection) => {
         const plan = await loadPlan(connection, body.sourceEnrollmentId, body.targetEnrollmentId);
         const [transfer] = await connection.query(`INSERT INTO balance_transfers
           (child_id,source_enrollment_id,target_enrollment_id,transferred_amount,target_price_snapshot,target_lessons_credit,created_by_user_id)
@@ -168,7 +175,7 @@ export function createBalanceTransfers(pool) {
         });
         return String(transfer.insertId);
       });
-      const [rows] = await pool.query('SELECT * FROM balance_transfers WHERE id=:id', { id: transferId });
+      const [rows] = await (context.connection ?? pool).query('SELECT * FROM balance_transfers WHERE id=:id', { id: transferId });
       return mapTransfer(rows[0]);
     } catch (error) {
       if (error?.code === 'ER_DUP_ENTRY' && idempotencyKey) {

@@ -28,6 +28,7 @@ test('деактивация группы закрывает memberships, уда
   const handler = async (sql, params = {}) => {
     if (sql.includes('FROM study_groups g JOIN directions')) return [[groupRow()]];
     if (/^SELECT id FROM (directions|sites|projects|teachers)/.test(sql)) return [[{ id: 1 }]];
+    if (sql.startsWith('SELECT s.id FROM sites s JOIN teacher_projects')) return [[{ id: 2 }]];
     if (sql.startsWith('SELECT teacher_id FROM teacher_directions')) return [[{ teacher_id: 4 }]];
     if (sql.startsWith('UPDATE study_groups SET')) { active = params.active; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('UPDATE group_memberships SET ended_on=')) { membershipEnded = true; assert.equal(params.endedOn, '2026-09-15'); return [{ affectedRows: 1 }]; }

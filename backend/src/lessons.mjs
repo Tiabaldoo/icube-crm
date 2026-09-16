@@ -1,5 +1,6 @@
 import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
+import { assertProjectScope, partnerProjectId } from './project-scope.mjs';
 import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
 
 const DAY = 86400000;
@@ -51,7 +52,7 @@ export function createMysqlLessons(pool) {
     JOIN teachers pt ON pt.id=l.planned_teacher_id LEFT JOIN teachers act ON act.id=l.actual_teacher_id`;
 
   async function teacherForContext(connection, context) {
-    if (!hasRole(context, 'teacher') || hasRole(context, 'director')) return null;
+    if (!hasRole(context, 'teacher') || hasRole(context, 'director') || hasRole(context, 'partner')) return null;
     if (context.teacherId) return identifier(context.teacherId, 'teacherId');
     if (!context.userId) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не связан с пользователем');
     const [rows] = await connection.query('SELECT id FROM teachers WHERE user_id=:userId AND deleted_at IS NULL AND active=TRUE', { userId: context.userId });
@@ -64,15 +65,26 @@ export function createMysqlLessons(pool) {
     const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)` : '';
     const [lessonRows] = await connection.query(`${baseSelect} WHERE (${where}) AND l.deleted_at IS NULL${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
     if (!lessonRows.length) return [];
-    const ids = lessonRows.map((row) => String(row.id)).join(',');
+    const partnerProject = partnerProjectId(context);
+    const ids = lessonRows.filter((row) => !partnerProject || String(row.project_id_snapshot) === partnerProject)
+      .map((row) => String(row.id)).join(',');
     const [[rosterRows], [attendanceRows], [salaryRows]] = await Promise.all([
-      connection.query(`SELECT lesson_id,child_id,roster_type FROM lesson_roster_members WHERE lesson_id IN (${ids}) ORDER BY child_id`),
-      connection.query(`SELECT id,lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,price_snapshot,charged_lessons,marked_at FROM attendances WHERE lesson_id IN (${ids}) ORDER BY child_id`),
-      hasRole(context, 'director')
+      ids ? connection.query(`SELECT lesson_id,child_id,roster_type FROM lesson_roster_members WHERE lesson_id IN (${ids}) ORDER BY child_id`) : Promise.resolve([[]]),
+      ids ? connection.query(`SELECT id,lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,price_snapshot,charged_lessons,marked_at FROM attendances WHERE lesson_id IN (${ids}) ORDER BY child_id`) : Promise.resolve([[]]),
+      ids && (hasRole(context, 'director') || partnerProject)
         ? connection.query(`SELECT sa.* FROM salary_accruals sa WHERE sa.lesson_id IN (${ids}) AND sa.reversed_at IS NULL ORDER BY sa.id`)
         : Promise.resolve([[]]),
     ]);
     return lessonRows.map((row) => {
+      if (partnerProject && String(row.project_id_snapshot) !== partnerProject) return {
+        id: String(row.id), groupId: String(row.group_id), groupName: row.group_name,
+        projectId: String(row.project_id_snapshot), projectName: row.project_name,
+        plannedTeacherId: String(row.planned_teacher_id), plannedTeacherName: row.planned_teacher_name,
+        actualTeacherId: row.actual_teacher_id == null ? null : String(row.actual_teacher_id), actualTeacherName: row.actual_teacher_name,
+        siteId: String(row.site_override_id ?? row.site_id_snapshot), siteName: row.site_override_name ?? row.site_name,
+        scheduledStartsAt: isoDateTime(row.scheduled_starts_at), scheduledEndsAt: isoDateTime(row.scheduled_ends_at),
+        startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), readOnly: true,
+      };
       const roster = rosterRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({ childId: String(item.child_id), type: item.roster_type }));
       const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({
         id: String(item.id), childId: String(item.child_id), enrollmentId: item.enrollment_id == null ? null : String(item.enrollment_id),
@@ -160,11 +172,12 @@ export function createMysqlLessons(pool) {
   }
 
   async function create(body, context = {}) {
-    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Историческое занятие может создать только директор');
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав для создания занятия');
     const groupId = identifier(body.groupId, 'groupId'); const scheduledDate = dateOnly(body.scheduledDate, 'scheduledDate');
     const [groups] = await pool.query(`SELECT id,direction_id,project_id,site_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on
       FROM study_groups WHERE id=:groupId AND deleted_at IS NULL`, { groupId });
     const group = groups[0];
+    if (group) assertProjectScope(context, group.project_id);
     if (!group || occurrenceDates(group, scheduledDate, scheduledDate).length !== 1) {
       throw new ApiProblem(409, 'OCCURRENCE_OUTSIDE_SCHEDULE', 'На эту дату занятие группы не запланировано');
     }
@@ -184,8 +197,10 @@ export function createMysqlLessons(pool) {
   async function deletedOccurrences(context = {}) {
     const actorTeacherId = await teacherForContext(pool, context);
     const scope = actorTeacherId ? ' AND (planned_teacher_id=:actorTeacherId OR actual_teacher_id=:actorTeacherId)' : '';
+    const projectId = partnerProjectId(context);
+    const projectScope = projectId ? ' AND project_id_snapshot=:projectId' : '';
     const [rows] = await pool.query(`SELECT group_id,scheduled_starts_at FROM lessons
-      WHERE deleted_at IS NOT NULL${scope} ORDER BY scheduled_starts_at,id`, { actorTeacherId });
+      WHERE deleted_at IS NOT NULL${scope}${projectScope} ORDER BY scheduled_starts_at,id`, { actorTeacherId, projectId });
     return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at) }));
   }
 
@@ -196,6 +211,7 @@ export function createMysqlLessons(pool) {
   }
 
   async function assertAccess(connection, lesson, context) {
+    assertProjectScope(context, lesson.project_id_snapshot);
     const actorTeacherId = await teacherForContext(connection, context);
     if (actorTeacherId && ![lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id) === actorTeacherId)) throw new ApiProblem(403, 'FORBIDDEN', 'Занятие не назначено преподавателю');
     return actorTeacherId;
@@ -206,10 +222,10 @@ export function createMysqlLessons(pool) {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId); const actorTeacherId = await assertAccess(connection, lesson, context);
         if (lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя изменить этим маршрутом');
-        if (lesson.status === 'completed' && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Проведённое занятие может перенести только директор');
-        if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только директор');
+        if (lesson.status === 'completed' && !hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Проведённое занятие может перенести только администратор проекта');
+        if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только администратор проекта');
         const siteChanged = Object.prototype.hasOwnProperty.call(body, 'siteId');
-        if (siteChanged && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Площадку занятия меняет только директор');
+        if (siteChanged && !hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Площадку занятия меняет только администратор проекта');
         let siteOverrideId = lesson.site_override_id;
         if (siteChanged) {
           if (body.siteId == null || body.siteId === '') siteOverrideId = null;
@@ -225,7 +241,8 @@ export function createMysqlLessons(pool) {
         if (end <= start) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Окончание должно быть позже начала');
         const teacherId = actorTeacherId ?? (body.actualTeacherId === undefined ? lesson.actual_teacher_id : identifier(body.actualTeacherId, 'actualTeacherId'));
         if (teacherId != null) {
-          const [teachers] = await connection.query('SELECT id FROM teachers WHERE id=:id AND deleted_at IS NULL', { id: teacherId });
+          const [teachers] = await connection.query(`SELECT t.id FROM teachers t JOIN teacher_projects tp ON tp.teacher_id=t.id
+            WHERE t.id=:id AND tp.project_id=:projectId AND t.deleted_at IS NULL`, { id: teacherId, projectId: lesson.project_id_snapshot });
           if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Преподаватель не найден');
         }
         if (lesson.status === 'completed' && String(teacherId ?? '') !== String(lesson.actual_teacher_id ?? '')) {
@@ -258,7 +275,10 @@ export function createMysqlLessons(pool) {
         if (lesson.status === 'in_progress' || lesson.status === 'completed') return;
         if (lesson.status !== 'scheduled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя начать');
         const actualTeacherId = actorTeacherId ?? identifier(body.actualTeacherId ?? lesson.planned_teacher_id, 'actualTeacherId');
-        const [teachers] = await connection.query('SELECT id FROM teachers WHERE id=:id AND deleted_at IS NULL AND active=TRUE', { id: actualTeacherId });
+        const [teachers] = await connection.query(`SELECT t.id FROM teachers t JOIN teacher_projects tp ON tp.teacher_id=t.id
+          WHERE t.id=:id AND tp.project_id=:projectId AND t.deleted_at IS NULL AND t.active=TRUE`, {
+          id: actualTeacherId, projectId: lesson.project_id_snapshot,
+        });
         if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Фактический преподаватель не найден');
         const [members] = await connection.query(`SELECT gm.child_id,gm.enrollment_id FROM (
           SELECT e.child_id,e.id enrollment_id,gm.id membership_id FROM group_memberships gm
@@ -291,10 +311,18 @@ export function createMysqlLessons(pool) {
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
         (SELECT pv.price FROM price_versions pv JOIN group_memberships gm ON gm.group_id=pv.group_id WHERE pv.scope_type='group' AND gm.enrollment_id=e.id AND gm.started_on<=:date AND (gm.ended_on IS NULL OR gm.ended_on>=:date) AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY gm.started_on DESC,pv.valid_from DESC,pv.id DESC LIMIT 1),
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1)
+        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
+          AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<=:startsAt
+          AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt)
+          ORDER BY (pv.project_id IS NOT NULL) DESC,pv.valid_from DESC,pv.id DESC LIMIT 1)
       ) current_price
-      FROM child_enrollments e WHERE e.child_id=:childId AND e.direction_id=:directionId FOR UPDATE`, {
-      childId: identifier(childId, 'childId'), directionId: lesson.direction_id_snapshot, date, startsAt: lesson.starts_at,
+      FROM child_enrollments e WHERE e.child_id=:childId AND e.direction_id=:directionId
+        AND e.project_id=:projectId AND (e.superseded_at IS NULL OR e.superseded_at>:startsAt)
+        AND (NOT EXISTS (SELECT 1 FROM enrollment_project_transfers pt WHERE pt.target_enrollment_id=e.id)
+          OR e.created_at<=:startsAt)
+      ORDER BY e.id DESC LIMIT 1 FOR UPDATE`, {
+      childId: identifier(childId, 'childId'), directionId: lesson.direction_id_snapshot,
+      projectId: lesson.project_id_snapshot, date, startsAt: lesson.starts_at,
     });
     if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет направления этого занятия');
     if (rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
@@ -452,11 +480,12 @@ export function createMysqlLessons(pool) {
   }
 
   async function removeAttendance(lessonId, childId, context = {}) {
-    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить ошибочное посещение может только директор');
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить ошибочное посещение может только администратор проекта');
     childId = identifier(childId, 'childId');
     try {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId);
+        await assertAccess(connection, lesson, context);
         const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
         if (!rows.length) throw new ApiProblem(404, 'ATTENDANCE_NOT_FOUND', 'Посещение не найдено');
         const attendance = rows[0];
@@ -489,10 +518,11 @@ export function createMysqlLessons(pool) {
   }
 
   async function emptyTrip(lessonId, context = {}) {
-    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Пустой выезд отмечает только директор');
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Пустой выезд отмечает только администратор проекта');
     try {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId);
+        await assertAccess(connection, lesson, context);
         if (lesson.status === 'completed' && bool(lesson.is_empty_trip)) return;
         if (lesson.status === 'completed' || lesson.status === 'cancelled') throw new ApiProblem(409, 'LESSON_FINAL', 'Статус занятия уже финальный');
         await connection.query(`UPDATE attendances SET present=FALSE,charged_lessons=0 WHERE lesson_id=:lessonId`, { lessonId: lesson.id });
@@ -506,10 +536,11 @@ export function createMysqlLessons(pool) {
   }
 
   async function remove(lessonId, context = {}) {
-    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить занятие может только директор');
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить занятие может только администратор проекта');
     try {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId);
+        await assertAccess(connection, lesson, context);
         const [attendances] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId FOR UPDATE', { lessonId: lesson.id });
         for (const attendance of attendances) {
           await reverseAttendanceDebit(connection, attendance, context);
@@ -627,8 +658,8 @@ export function createMysqlLessons(pool) {
           await connection.query('INSERT INTO child_guardians (child_id,guardian_id,is_primary) VALUES (:childId,:guardianId,TRUE)', { childId, guardianId: guardian.insertId });
         }
         const [enrollment] = await connection.query(`INSERT INTO child_enrollments
-          (child_id,direction_id,status,started_on) VALUES (:childId,:directionId,'active',DATE(:startsAt))`, {
-          childId, directionId: lesson.direction_id_snapshot, startsAt: lesson.starts_at,
+          (child_id,direction_id,project_id,status,started_on) VALUES (:childId,:directionId,:projectId,'active',DATE(:startsAt))`, {
+          childId, directionId: lesson.direction_id_snapshot, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
         });
         await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
           VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
@@ -644,8 +675,10 @@ export function createMysqlLessons(pool) {
   }
 
   async function salaryAccruals(filters = {}, context = {}) {
-    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Зарплату видит только директор');
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав для просмотра зарплаты');
     const conditions = ['sa.reversed_at IS NULL']; const params = {};
+    const projectId = partnerProjectId(context);
+    if (projectId) { conditions.push('l.project_id_snapshot=:projectId'); params.projectId = projectId; }
     if (filters.teacherId) { conditions.push('sa.teacher_id=:teacherId'); params.teacherId = identifier(filters.teacherId, 'teacherId'); }
     if (filters.from) { conditions.push('DATE(l.starts_at)>=:from'); params.from = dateOnly(filters.from, 'from'); }
     if (filters.to) { conditions.push('DATE(l.starts_at)<=:to'); params.to = dateOnly(filters.to, 'to'); }
@@ -657,10 +690,12 @@ export function createMysqlLessons(pool) {
   }
 
   async function notifications(context = {}) {
-    if (!hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Уведомления директора недоступны');
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Уведомления недоступны');
+    const roleCode = partnerProjectId(context) ? 'partner' : 'director';
     const [rows] = await pool.query(`SELECT id,notification_type,title,body,entity_type,entity_id,created_at
-      FROM notifications WHERE role_code='director' AND dismissed_at IS NULL
-      ORDER BY created_at DESC,id DESC LIMIT 50`);
+      FROM notifications WHERE (user_id=:userId OR (user_id IS NULL AND role_code=:roleCode
+        AND (:projectId IS NULL OR recipient_project_id=:projectId))) AND dismissed_at IS NULL
+      ORDER BY created_at DESC,id DESC LIMIT 50`, { userId: context.userId ?? null, roleCode, projectId: partnerProjectId(context) });
     return rows.map((row) => ({
       id: String(row.id), type: row.notification_type, title: row.title, body: row.body,
       entityType: row.entity_type, entityId: row.entity_id == null ? null : String(row.entity_id),

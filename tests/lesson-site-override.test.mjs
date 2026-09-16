@@ -48,7 +48,7 @@ function mutablePool() {
   const query = async (sql, params = {}) => {
     if (sql.startsWith('SELECT * FROM lessons WHERE id=')) return [[{ ...row }]];
     if (sql.startsWith('SELECT id FROM sites WHERE id=')) return [[{ id: params.id }]];
-    if (sql.startsWith('SELECT id FROM teachers WHERE id=')) return [[{ id: params.id }]];
+    if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: params.id }]];
     if (sql.startsWith('UPDATE lessons SET starts_at=')) {
       row.site_override_id = params.siteOverrideId;
       row.site_override_name = params.siteOverrideId == null ? null : 'Зебра';
@@ -88,6 +88,14 @@ test('teacher cannot change lesson site', async () => {
     assert.equal(error.code, 'FORBIDDEN');
     return true;
   });
+});
+
+test('partner may use another project site as physical venue only for its own lesson', async () => {
+  const service = createMysqlLessons(mutablePool());
+  const own = await service.update(1, { siteId: 8 }, { roles: ['partner'], projectIds: ['5'] });
+  assert.equal(own.siteId, '8');
+  assert.equal(own.projectId, '5');
+  await assert.rejects(service.update(1, { siteId: 8 }, { roles: ['partner'], projectIds: ['2'] }), { status: 403, code: 'FORBIDDEN' });
 });
 
 test('site used as a lesson override cannot be physically deleted', async () => {

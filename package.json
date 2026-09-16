@@ -8,6 +8,7 @@
     "check": "node scripts/check-syntax.mjs",
     "migrate": "node database/migrate.mjs",
     "create-director": "node scripts/create-director.mjs",
+    "create-partner": "node scripts/create-partner.mjs",
     "start:api": "node backend/src/server.mjs"
   },
   "engines": {

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
 import { clearSessionCookieOptions, createAuthService, parseSessionCookie, SESSION_COOKIE, sessionCookieOptions } from './auth-service.mjs';
-import { createMysqlCatalog } from './catalog.mjs';
+import { ApiProblem, createMysqlCatalog } from './catalog.mjs';
 import { createDeletionService } from './deletion.mjs';
 import { createMysqlPayments } from './payments.mjs';
 import { createMysqlRefunds } from './refunds.mjs';
@@ -12,6 +12,9 @@ import { createMysqlLessons } from './lessons.mjs';
 import { createBalanceTransfers } from './balance-transfers.mjs';
 import { createPartnerSettlements } from './partner-settlements.mjs';
 import { createStatistics } from './statistics.mjs';
+import { assertOwned, partnerProjectId } from './project-scope.mjs';
+import { createProjectTransfers } from './project-transfers.mjs';
+import { createDailyDashboard } from './daily-dashboard.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -31,6 +34,8 @@ export function createApiRouter(pool, {
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
   lessons = createMysqlLessons(pool),
   balanceTransfers = createBalanceTransfers(pool),
+  projectTransfers = createProjectTransfers(pool, balanceTransfers),
+  dailyDashboard = createDailyDashboard(pool),
   partnerSettlements = createPartnerSettlements(pool),
   statistics = createStatistics(pool),
   authService = createAuthService(pool),
@@ -54,7 +59,8 @@ export function createApiRouter(pool, {
     next();
   }, authenticate);
   router.get('/auth/me', run((request) => ({ id: request.auth.userId, displayName: request.auth.displayName,
-    roles: request.auth.roles, teacherId: request.auth.teacherId ?? null })));
+    roles: request.auth.roles, teacherId: request.auth.teacherId ?? null, projectIds: request.auth.projectIds ?? [] })));
+  router.get('/dashboard/daily', requirePermission('children:read'), run((request) => dailyDashboard.get(request.auth)));
   router.post('/auth/logout', async (request, response, next) => {
     try {
       await authService.logout(request.auth.sessionId);
@@ -62,45 +68,57 @@ export function createApiRouter(pool, {
       response.status(204).end();
     } catch (error) { next(error); }
   });
+  router.get('/project-transfer-targets', requirePermission('enrollments:write'), run(async (request) => {
+    const partnerProject = partnerProjectId(request.auth);
+    const [rows] = await pool.query(`SELECT id,code,name FROM projects WHERE active=TRUE
+      AND (:partnerProject IS NULL OR code='icube-robots') ORDER BY name`, { partnerProject });
+    return rows.map((row) => ({ id: String(row.id), code: row.code, name: row.name }));
+  }));
+  router.get('/sites/venues', requirePermission('lessons:read'), run(async () => {
+    const [rows] = await pool.query('SELECT id,name,active FROM sites WHERE active=TRUE AND deleted_at IS NULL ORDER BY name');
+    return rows.map((row) => ({ id: String(row.id), name: row.name, active: Boolean(row.active) }));
+  }));
 
   for (const resource of ['projects', 'directions', 'sites', 'teachers', 'groups', 'children']) {
-    const permission = resource === 'projects' ? 'projects:read' : resource === 'groups' ? 'groups:read' : resource === 'children' ? 'children:read' : '*';
+    const permission = `${resource}:read`;
     router.get(`/${resource}`, requirePermission(permission), run((request) => catalog.list(resource, request.auth)));
     router.get(`/${resource}/:id`, requirePermission(permission), run((request) => catalog.get(resource, request.params.id, request.auth)));
     if (resource !== 'projects') {
-      router.post(`/${resource}`, requirePermission('*'), run((request) => catalog.create(resource, request.body), 201));
-      router.patch(`/${resource}/:id`, requirePermission('*'), run((request) => catalog.update(resource, request.params.id, request.body)));
+      router.post(`/${resource}`, requirePermission(`${resource}:write`), run((request) => catalog.create(resource, request.body, request.auth), 201));
+      router.patch(`/${resource}/:id`, requirePermission(`${resource}:write`), run((request) => catalog.update(resource, request.params.id, request.body, request.auth)));
     }
   }
-  router.delete('/sites/:id', requirePermission('*'), run((request) => deletions.deleteSite(request.params.id), 204));
-  router.delete('/teachers/:id', requirePermission('*'), run((request) => deletions.deleteTeacher(request.params.id), 204));
-  router.delete('/groups/:id', requirePermission('*'), run((request) => deletions.deleteGroup(request.params.id), 204));
-  router.delete('/children/:id', requirePermission('*'), run((request) => catalog.deleteChild(request.params.id), 204));
-  router.post('/children/:id/enrollments', requirePermission('*'), run((request) => catalog.createEnrollment(request.params.id, request.body), 201));
-  router.patch('/enrollments/:id', requirePermission('*'), run((request) => catalog.updateEnrollment(request.params.id, request.body)));
-  router.delete('/enrollments/:id', requirePermission('*'), run((request) => deletions.deleteEnrollment(request.params.id), 204));
+  router.delete('/sites/:id', requirePermission('sites:write'), run(async (request) => { await assertOwned(pool, 'sites', request.params.id, request.auth); return deletions.deleteSite(request.params.id); }, 204));
+  router.delete('/teachers/:id', requirePermission('teachers:write'), run(async (request) => { await assertOwned(pool, 'teachers', request.params.id, request.auth); if (partnerProjectId(request.auth)) throw new ApiProblem(403, 'FORBIDDEN', 'Партнёр может изменить доступность преподавателя, но не удалить глобальную запись'); return deletions.deleteTeacher(request.params.id); }, 204));
+  router.delete('/groups/:id', requirePermission('groups:write'), run(async (request) => { await assertOwned(pool, 'groups', request.params.id, request.auth); return deletions.deleteGroup(request.params.id, request.auth); }, 204));
+  router.delete('/children/:id', requirePermission('children:write'), run(async (request) => { await assertOwned(pool, 'children', request.params.id, request.auth, { exclusiveChild: true }); return catalog.deleteChild(request.params.id); }, 204));
+  router.post('/children/:id/enrollments', requirePermission('enrollments:write'), run((request) => catalog.createEnrollment(request.params.id, request.body, request.auth), 201));
+  router.patch('/enrollments/:id', requirePermission('enrollments:write'), run((request) => catalog.updateEnrollment(request.params.id, request.body, request.auth)));
+  router.post('/enrollments/:id/project-transfer', requirePermission('enrollments:write'), run((request) => projectTransfers.create(request.params.id, request.body, request.auth), 201));
+  router.delete('/enrollments/:id', requirePermission('enrollments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.params.id, request.auth); return deletions.deleteEnrollment(request.params.id); }, 204));
   router.get('/teachers/:id/access', requirePermission('*'), run((request) => authService.getTeacherAccess(request.params.id)));
   router.post('/teachers/:id/access', requirePermission('*'), run((request) => authService.createTeacherAccess(request.params.id, request.body, request.auth.userId), 201));
   router.post('/teachers/:id/access/reset-password', requirePermission('*'), run((request) => authService.resetTeacherPassword(request.params.id, request.body)));
   router.delete('/teachers/:id/access', requirePermission('*'), run((request) => authService.disableTeacherAccess(request.params.id)));
 
-  router.get('/payments', requirePermission('*'), run((request) => payments.list(request.query)));
-  router.get('/payments/:id', requirePermission('*'), run((request) => payments.get(request.params.id)));
-  router.post('/payments', requirePermission('*'), run((request) => payments.create(request.body, {
+  const projectFilters = (request) => ({ ...request.query, ...(partnerProjectId(request.auth) ? { projectId: partnerProjectId(request.auth) } : {}) });
+  router.get('/payments', requirePermission('payments:read'), run((request) => payments.list(projectFilters(request))));
+  router.get('/payments/:id', requirePermission('payments:read'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.get(request.params.id); }));
+  router.post('/payments', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
     idempotencyKey: request.get('Idempotency-Key') ?? null,
-  }), 201));
-  router.patch('/payments/:id', requirePermission('*'), run((request) => payments.update(request.params.id, request.body, {
+  }); }, 201));
+  router.patch('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); if (request.body.enrollmentId) await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.update(request.params.id, request.body, {
     actorUserId: request.auth?.userId ?? null,
-  })));
-  router.delete('/payments/:id', requirePermission('*'), run((request) => payments.remove(request.params.id), 204));
-  router.get('/balances', requirePermission('*'), run((request) => payments.balances(request.query)));
-  router.get('/refunds', requirePermission('*'), run((request) => refunds.list(request.query)));
-  router.post('/refunds', requirePermission('*'), run((request) => refunds.create(request.body, {
+  }); }));
+  router.delete('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.remove(request.params.id); }, 204));
+  router.get('/balances', requirePermission('balances:read'), run((request) => payments.balances(projectFilters(request))));
+  router.get('/refunds', requirePermission('refunds:read'), run((request) => refunds.list(projectFilters(request))));
+  router.post('/refunds', requirePermission('refunds:write'), run(async (request) => { await assertOwned(pool, 'payments', request.body.paymentId, request.auth); return refunds.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
     idempotencyKey: request.get('Idempotency-Key') ?? null,
-  }), 201));
-  router.delete('/refunds/:id', requirePermission('*'), run((request) => refunds.remove(request.params.id), 204));
+  }); }, 201));
+  router.delete('/refunds/:id', requirePermission('refunds:write'), run(async (request) => { await assertOwned(pool, 'refunds', request.params.id, request.auth); return refunds.remove(request.params.id); }, 204));
 
   router.get('/price-versions', requirePermission('*'), run(() => priceVersions.list()));
   router.post('/price-versions', requirePermission('*'), run((request) => priceVersions.create(request.body, {
@@ -115,38 +133,38 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
 
-  const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [], teacherId: request.auth?.teacherId ?? null });
+  const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [], teacherId: request.auth?.teacherId ?? null, projectIds: request.auth?.projectIds ?? [] });
   router.get('/lessons', requirePermission('lessons:read'), run((request) => lessons.list(request.query, lessonContext(request))));
   router.get('/lesson-deletions', requirePermission('lessons:read'), run((request) => lessons.deletedOccurrences(lessonContext(request))));
   router.get('/lessons/:id', requirePermission('lessons:read'), run((request) => lessons.get(request.params.id, lessonContext(request))));
-  router.post('/lessons', requirePermission('*'), run((request) => lessons.create(request.body, lessonContext(request)), 201));
+  router.post('/lessons', requirePermission('lessons:create'), run((request) => lessons.create(request.body, lessonContext(request)), 201));
   router.patch('/lessons/:id', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
-  router.delete('/lessons/:id', requirePermission('*'), run((request) => lessons.remove(request.params.id, lessonContext(request)), 204));
+  router.delete('/lessons/:id', requirePermission('lessons:delete'), run((request) => lessons.remove(request.params.id, lessonContext(request)), 204));
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
   router.post('/lessons/:id/start', requirePermission('lessons:start'), run((request) => lessons.start(request.params.id, request.body, lessonContext(request))));
   router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.putAttendance(request.params.id, request.params.childId, request.body, lessonContext(request))));
-  router.delete('/lessons/:id/attendance/:childId', requirePermission('*'), run((request) => lessons.removeAttendance(request.params.id, request.params.childId, lessonContext(request))));
+  router.delete('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.removeAttendance(request.params.id, request.params.childId, lessonContext(request))));
   router.post('/lessons/:id/finish', requirePermission('lessons:finish'), run((request) => lessons.finish(request.params.id, request.body, lessonContext(request))));
   router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
   router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), run((request) => lessons.cancel(request.params.id, lessonContext(request))));
-  router.post('/lessons/:id/empty-trip', requirePermission('*'), run((request) => lessons.emptyTrip(request.params.id, lessonContext(request))));
+  router.post('/lessons/:id/empty-trip', requirePermission('lessons:empty-trip'), run((request) => lessons.emptyTrip(request.params.id, lessonContext(request))));
   router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), run((request) => lessons.quickChild(request.params.id, request.body, lessonContext(request)), 201));
   router.post('/lessons/:id/extras', requirePermission('lessons:extras'), run((request) => lessons.addExtra(request.params.id, request.body, lessonContext(request)), 201));
   router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), run((request) => lessons.removeExtra(request.params.id, request.params.childId, lessonContext(request)), 200));
   router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
   router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
-  router.get('/balance-transfers/preview', requirePermission('*'), run((request) => balanceTransfers.preview(request.query.sourceEnrollmentId, request.query.targetEnrollmentId)));
-  router.get('/balance-transfers', requirePermission('*'), run((request) => balanceTransfers.list(request.query)));
-  router.post('/balance-transfers', requirePermission('*'), run((request) => balanceTransfers.create(request.body, {
+  router.get('/balance-transfers/preview', requirePermission('balance-transfers:read'), run(async (request) => { await assertOwned(pool, 'enrollments', request.query.sourceEnrollmentId, request.auth); await assertOwned(pool, 'enrollments', request.query.targetEnrollmentId, request.auth); return balanceTransfers.preview(request.query.sourceEnrollmentId, request.query.targetEnrollmentId); }));
+  router.get('/balance-transfers', requirePermission('balance-transfers:read'), run((request) => balanceTransfers.list(projectFilters(request))));
+  router.post('/balance-transfers', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.body.sourceEnrollmentId, request.auth); await assertOwned(pool, 'enrollments', request.body.targetEnrollmentId, request.auth); return balanceTransfers.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
     idempotencyKey: request.get('Idempotency-Key') ?? null,
-  }), 201));
-  router.delete('/balance-transfers/:id', requirePermission('*'), run((request) => balanceTransfers.remove(request.params.id), 204));
+  }); }, 201));
+  router.delete('/balance-transfers/:id', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'transfers', request.params.id, request.auth); return balanceTransfers.remove(request.params.id); }, 204));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));
-  router.get('/salary-accruals', requirePermission('*'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
-  router.get('/notifications', requirePermission('*'), run((request) => lessons.notifications(lessonContext(request))));
+  router.get('/salary-accruals', requirePermission('salary:read'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
+  router.get('/notifications', requirePermission('notifications:read'), run((request) => lessons.notifications(lessonContext(request))));
   router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(request.query)));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
