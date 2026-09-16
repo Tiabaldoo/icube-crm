@@ -48,6 +48,7 @@ function mutablePool() {
   const query = async (sql, params = {}) => {
     if (sql.startsWith('SELECT * FROM lessons WHERE id=')) return [[{ ...row }]];
     if (sql.startsWith('SELECT id FROM sites WHERE id=')) return [[{ id: params.id }]];
+    if (sql.startsWith('SELECT id FROM teachers WHERE id=')) return [[{ id: params.id }]];
     if (sql.startsWith('UPDATE lessons SET starts_at=')) {
       row.site_override_id = params.siteOverrideId;
       row.site_override_name = params.siteOverrideId == null ? null : 'Зебра';
