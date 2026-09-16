@@ -1,0 +1,300 @@
+name: Temporary lesson site override patch
+
+on:
+  push:
+    branches: ["feat/lesson-site-override"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feat/lesson-site-override
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply focused changes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}: {old[:80]!r}')
+              p.write_text(text.replace(old, new, 1))
+
+          # Backend: expose effective site and accept a director-only per-lesson override.
+          replace_once('backend/src/lessons.mjs',
+          """  const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,
+            pt.full_name planned_teacher_name,act.full_name actual_teacher_name
+            FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
+            JOIN projects p ON p.id=l.project_id_snapshot JOIN sites s ON s.id=l.site_id_snapshot
+            JOIN teachers pt ON pt.id=l.planned_teacher_id LEFT JOIN teachers act ON act.id=l.actual_teacher_id`;""",
+          """  const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
+            pt.full_name planned_teacher_name,act.full_name actual_teacher_name
+            FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
+            JOIN projects p ON p.id=l.project_id_snapshot JOIN sites s ON s.id=l.site_id_snapshot
+            LEFT JOIN sites os ON os.id=l.site_override_id
+            JOIN teachers pt ON pt.id=l.planned_teacher_id LEFT JOIN teachers act ON act.id=l.actual_teacher_id`;""")
+
+          replace_once('backend/src/lessons.mjs',
+          """        siteId: String(row.site_id_snapshot), siteName: row.site_name,
+""",
+          """        siteId: String(row.site_override_id ?? row.site_id_snapshot), siteName: row.site_override_name ?? row.site_name,
+        siteOverrideId: row.site_override_id == null ? null : String(row.site_override_id),
+""")
+
+          replace_once('backend/src/lessons.mjs',
+          """        if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только директор');
+        const date = body.date === undefined ? isoDate(lesson.starts_at) : dateOnly(body.date);
+""",
+          """        if ((body.emptyTrip !== undefined || body.introGroup !== undefined) && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Тип занятия меняет только директор');
+        const siteChanged = Object.prototype.hasOwnProperty.call(body, 'siteId');
+        if (siteChanged && !hasRole(context, 'director')) throw new ApiProblem(403, 'FORBIDDEN', 'Площадку занятия меняет только директор');
+        let siteOverrideId = lesson.site_override_id;
+        if (siteChanged) {
+          if (body.siteId == null || body.siteId === '') siteOverrideId = null;
+          else {
+            siteOverrideId = identifier(body.siteId, 'siteId');
+            const [sites] = await connection.query('SELECT id FROM sites WHERE id=:id AND deleted_at IS NULL', { id: siteOverrideId });
+            if (!sites.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Площадка не найдена');
+          }
+        }
+        const date = body.date === undefined ? isoDate(lesson.starts_at) : dateOnly(body.date);
+""")
+
+          replace_once('backend/src/lessons.mjs',
+          """          actual_teacher_id=:teacherId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
+          id: lesson.id, date, start, end, teacherId, topic: body.topic === undefined ? lesson.topic : nullableText(body.topic),
+""",
+          """          actual_teacher_id=:teacherId,site_override_id=:siteOverrideId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
+          id: lesson.id, date, start, end, teacherId, siteOverrideId, topic: body.topic === undefined ? lesson.topic : nullableText(body.topic),
+""")
+
+          # Site deletion must consider lesson overrides as dependencies.
+          replace_once('backend/src/deletion.mjs',
+          """      (SELECT COUNT(*) FROM lessons WHERE site_id_snapshot=:id AND deleted_at IS NULL) lessons""",
+          """      (SELECT COUNT(*) FROM lessons WHERE (site_id_snapshot=:id OR site_override_id=:id) AND deleted_at IS NULL) lessons""")
+
+          # Frontend lesson mapping + director PATCH body.
+          replace_once('src/frontend/api-sync.mjs',
+          """    plannedTeacherId: Number(lesson.plannedTeacherId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
+""",
+          """    plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
+    siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
+""")
+
+          replace_once('src/frontend/api-sync.mjs',
+          """    if (value('#le-cancel') === 'cancelled') await api.request(`/lessons/${lesson.id}/cancel`, { method: 'POST', body: {} });
+    else await api.update('lessons', lesson.id, { date: value('#le-date'), startTime: value('#le-start'), endTime: value('#le-end'), actualTeacherId: value('#le-teacher') });
+""",
+          """    if (value('#le-cancel') === 'cancelled') await api.request(`/lessons/${lesson.id}/cancel`, { method: 'POST', body: {} });
+    else {
+      const body = { date: value('#le-date'), startTime: value('#le-start'), endTime: value('#le-end'), actualTeacherId: value('#le-teacher') };
+      if (role !== 'teacher') body.siteId = value('#le-site') || null;
+      await api.update('lessons', lesson.id, body);
+    }
+""")
+
+          # Existing lesson edit form: site is a director-only per-lesson setting.
+          replace_once('src/frontend/crm-ui.js',
+          """    html+='</select><div class=\"muted mini\" style=\"margin-top:5px\">Замена действует только для этого занятия и не меняет основного преподавателя группы.</div></div>';
+    html+='<div class=\"field span-2\"><label>Статус</label><select class=\"select\" id=\"le-cancel\"><option value=\"active\"'+(!l.cancelled?' selected':'')+'>Занятие состоится</option><option value=\"cancelled\"'+(l.cancelled?' selected':'')+'>Отменено</option></select></div>';
+""",
+          """    html+='</select><div class=\"muted mini\" style=\"margin-top:5px\">Замена действует только для этого занятия и не меняет основного преподавателя группы.</div></div>';
+    if(role!=='teacher'){
+      const group=byId(state.groups,l.groupId),defaultSite=group?byId(state.sites,group.siteId):null;
+      html+='<div class=\"field span-2\"><label>Площадка</label><select class=\"select\" id=\"le-site\"><option value=\"\">По умолчанию — '+(defaultSite?.name||'площадка группы')+'</option>';
+      (state.sites||[]).filter(function(site){return site.active!==false || Number(site.id)===Number(l.siteOverrideId);}).forEach(function(site){
+        html+='<option value=\"'+site.id+'\"'+(Number(l.siteOverrideId)===Number(site.id)?' selected':'')+'>'+site.name+'</option>';
+      });
+      html+='</select><div class=\"muted mini\" style=\"margin-top:5px\">Меняет только место проведения этого занятия.</div></div>';
+    }
+    html+='<div class=\"field span-2\"><label>Статус</label><select class=\"select\" id=\"le-cancel\"><option value=\"active\"'+(!l.cancelled?' selected':'')+'>Занятие состоится</option><option value=\"cancelled\"'+(l.cancelled?' selected':'')+'>Отменено</option></select></div>';
+""")
+
+          # Latest shared director/teacher calendar card: actual site replaces duplicated start time.
+          replace_once('src/frontend/crm-ui.js',
+          """      '<div class=\"calendar-event-top\"><b>'+timeStart(e.time)+'</b><span>'+ (e.project==='Зебра'?'Зебра':'iCube') +'</span></div>'+""",
+          """      '<div class=\"calendar-event-top\"><b>'+(e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'')+'</b><span>'+ (e.project==='Зебра'?'Зебра':'iCube') +'</span></div>'+""")
+
+          # Teacher lesson detail must use the API-provided effective site.
+          replace_once('src/frontend/crm-ui.js',
+          """<div class=\"muted\">'+g.name+' · '+byId(state.sites,g.siteId).name+'</div>'+(l.moved?""",
+          """<div class=\"muted\">'+g.name+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||'')+'</div>'+(l.moved?""")
+
+          # Director lesson header must use the same effective site.
+          replace_once('src/frontend/crm-ui.js',
+          """      pageHead(l.date+' · '+g.direction,l.time+' · '+byId(state.sites,g.siteId).name,
+""",
+          """      pageHead(l.date+' · '+g.direction,l.time+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||''),
+""")
+
+          # Current teacher Today cards: prefer the persisted lesson effective site, fallback to group site for generated events.
+          replace_once('src/frontend/crm-ui.js',
+          """            const g=byId(state.groups,e.groupId),site=g?byId(state.sites,g.siteId):null;
+            if(!g) return '';
+            return '<div class=\"teacher-card\" onclick=\"openUnifiedCalendarEvent(\\\''+e.key+'\\\',\\\'teacher\\\')\">'+
+              '<div class=\"teacher-lesson-head\"><div><div class=\"teacher-time\">'+timeStart(e.time)+'</div><h3 style=\"margin:4px 0\">'+g.direction+'</h3><div class=\"muted\">'+g.name+'<br>'+(site?.name||'')+'</div></div><div>'+eventStatusHtml(e)+'</div></div>'+""",
+          """            const g=byId(state.groups,e.groupId),siteName=e.lesson?.siteName||(g?byId(state.sites,g.siteId)?.name:'');
+            if(!g) return '';
+            return '<div class=\"teacher-card\" onclick=\"openUnifiedCalendarEvent(\\\''+e.key+'\\\',\\\'teacher\\\')\">'+
+              '<div class=\"teacher-lesson-head\"><div><div class=\"teacher-time\">'+timeStart(e.time)+'</div><h3 style=\"margin:4px 0\">'+g.direction+'</h3><div class=\"muted\">'+g.name+'<br>'+siteName+'</div></div><div>'+eventStatusHtml(e)+'</div></div>'+""")
+
+          Path('database/migrations/010_lesson_site_override.sql').write_text("""ALTER TABLE lessons
+  ADD COLUMN site_override_id BIGINT UNSIGNED NULL AFTER site_id_snapshot,
+  ADD KEY ix_lessons_site_override_id (site_override_id),
+  ADD CONSTRAINT fk_lessons_site_override FOREIGN KEY (site_override_id) REFERENCES sites(id);
+""")
+
+          Path('tests/lesson-site-override.test.mjs').write_text(r'''import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { test } from 'node:test';
+import { createDeletionService } from '../backend/src/deletion.mjs';
+import { createMysqlLessons } from '../backend/src/lessons.mjs';
+
+function baseLesson(overrides = {}) {
+  return {
+    id: 1, group_id: 10, group_name: 'Роботы · Чт 13:00', direction_id_snapshot: 3, direction_name: 'Робототехника',
+    project_id_snapshot: 5, project_name: 'iCubeRobots', site_id_snapshot: 7, site_name: 'Школа №1',
+    site_override_id: null, site_override_name: null, planned_teacher_id: 9, planned_teacher_name: 'Преподаватель',
+    actual_teacher_id: 9, actual_teacher_name: 'Преподаватель', scheduled_starts_at: '2026-09-20 13:00:00',
+    scheduled_ends_at: '2026-09-20 14:30:00', starts_at: '2026-09-20 13:00:00', ends_at: '2026-09-20 14:30:00',
+    actual_starts_at: null, actual_ends_at: null, status: 'scheduled', topic: null, is_intro_group: 0, is_empty_trip: 0,
+    roster_frozen_at: null, attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 1,
+    deleted_at: null, ...overrides,
+  };
+}
+
+function readPool(row) {
+  return {
+    query: async (sql) => {
+      if (sql.includes('FROM lessons l JOIN study_groups')) return [[row]];
+      if (sql.includes('FROM lesson_roster_members')) return [[]];
+      if (sql.includes('FROM attendances WHERE lesson_id IN')) return [[]];
+      if (sql.includes('FROM salary_accruals')) return [[]];
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+}
+
+test('lesson API returns group site by default and override site when set', async () => {
+  const defaultLesson = await createMysqlLessons(readPool(baseLesson())).get(1, { roles: ['director'] });
+  assert.equal(defaultLesson.siteId, '7');
+  assert.equal(defaultLesson.siteName, 'Школа №1');
+  assert.equal(defaultLesson.siteOverrideId, null);
+
+  const overridden = await createMysqlLessons(readPool(baseLesson({ site_override_id: 8, site_override_name: 'Зебра' }))).get(1, { roles: ['director'] });
+  assert.equal(overridden.siteId, '8');
+  assert.equal(overridden.siteName, 'Зебра');
+  assert.equal(overridden.siteOverrideId, '8');
+  assert.equal(overridden.projectId, '5');
+  assert.equal(overridden.projectName, 'iCubeRobots');
+});
+
+function mutablePool() {
+  const row = baseLesson();
+  const query = async (sql, params = {}) => {
+    if (sql.startsWith('SELECT * FROM lessons WHERE id=')) return [[{ ...row }]];
+    if (sql.startsWith('SELECT id FROM sites WHERE id=')) return [[{ id: params.id }]];
+    if (sql.startsWith('UPDATE lessons SET starts_at=')) {
+      row.site_override_id = params.siteOverrideId;
+      row.site_override_name = params.siteOverrideId == null ? null : 'Зебра';
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('FROM lessons l JOIN study_groups')) {
+      row.site_override_name = row.site_override_id == null ? null : 'Зебра';
+      return [[{ ...row }]];
+    }
+    if (sql.includes('FROM lesson_roster_members')) return [[]];
+    if (sql.includes('FROM attendances WHERE lesson_id IN')) return [[]];
+    if (sql.includes('FROM salary_accruals')) return [[]];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+  return {
+    query,
+    getConnection: async () => ({ query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release: () => {} }),
+  };
+}
+
+test('director can set and clear lesson site override without changing project', async () => {
+  const service = createMysqlLessons(mutablePool());
+  const overridden = await service.update(1, { siteId: 8 }, { roles: ['director'] });
+  assert.equal(overridden.siteId, '8');
+  assert.equal(overridden.siteName, 'Зебра');
+  assert.equal(overridden.siteOverrideId, '8');
+  assert.equal(overridden.projectId, '5');
+
+  const reset = await service.update(1, { siteId: null }, { roles: ['director'] });
+  assert.equal(reset.siteId, '7');
+  assert.equal(reset.siteName, 'Школа №1');
+  assert.equal(reset.siteOverrideId, null);
+  assert.equal(reset.projectId, '5');
+});
+
+test('teacher cannot change lesson site', async () => {
+  const service = createMysqlLessons(mutablePool());
+  await assert.rejects(() => service.update(1, { siteId: 8 }, { roles: ['teacher'], teacherId: 9 }), (error) => {
+    assert.equal(error.status, 403);
+    assert.equal(error.code, 'FORBIDDEN');
+    return true;
+  });
+});
+
+test('site used as a lesson override cannot be physically deleted', async () => {
+  let dependencySql = '';
+  const pool = {
+    query: async (sql) => {
+      if (sql.startsWith('SELECT id FROM sites')) return [[{ id: 8 }]];
+      if (sql.startsWith('SELECT\n      (SELECT COUNT(*) FROM study_groups')) {
+        dependencySql = sql;
+        return [[{ groupCount: 0, lessons: 1 }]];
+      }
+      throw new Error(`Unexpected SQL: ${sql}`);
+    },
+  };
+  const service = createDeletionService(pool);
+  await assert.rejects(() => service.deleteSite(8), (error) => error.code === 'SITE_HAS_DEPENDENCIES');
+  assert.match(dependencySql, /site_override_id=:id/);
+});
+
+test('migration and frontend keep the override through reload and display the effective site', async () => {
+  const [migration, sync, ui] = await Promise.all([
+    readFile(new URL('../database/migrations/010_lesson_site_override.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(migration, /site_override_id BIGINT UNSIGNED NULL/);
+  assert.match(migration, /FOREIGN KEY \(site_override_id\) REFERENCES sites\(id\)/);
+  assert.match(sync, /siteName: lesson\.siteName/);
+  assert.match(sync, /siteOverrideId: lesson\.siteOverrideId/);
+  assert.match(sync, /body\.siteId = value\('#le-site'\) \|\| null/);
+  assert.match(ui, /id=\\"le-site\\"/);
+  assert.match(ui, /По умолчанию —/);
+  assert.match(ui, /e\.lesson\?\.siteName/);
+  assert.match(ui, /l\.siteName\|\|byId\(state\.sites,g\.siteId\)/);
+});
+''')
+          PY
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run check
+      - run: git diff --check
+      - name: Commit focused feature
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add backend/src/lessons.mjs backend/src/deletion.mjs src/frontend/api-sync.mjs src/frontend/crm-ui.js database/migrations/010_lesson_site_override.sql tests/lesson-site-override.test.mjs
+          git commit -m "Add per-lesson site overrides"
+          git push origin HEAD:feat/lesson-site-override
