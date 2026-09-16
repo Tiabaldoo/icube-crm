@@ -38,7 +38,6 @@ ALTER TABLE sites
   ADD COLUMN project_id BIGINT UNSIGNED NULL AFTER id,
   ADD COLUMN created_by_user_id BIGINT UNSIGNED NULL AFTER active,
   ADD KEY idx_sites_project (project_id,deleted_at),
-  ADD CONSTRAINT fk_sites_project FOREIGN KEY (project_id) REFERENCES projects(id),
   ADD CONSTRAINT fk_sites_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id);
 
 -- A previously shared site becomes separate editable site records per project.
@@ -65,6 +64,8 @@ SET g.site_id=m.new_site_id;
 ALTER TABLE sites DROP COLUMN migration_source_site_id;
 DROP TEMPORARY TABLE site_project_clones;
 ALTER TABLE sites MODIFY project_id BIGINT UNSIGNED NOT NULL;
+ALTER TABLE sites
+  ADD CONSTRAINT fk_sites_project FOREIGN KEY (project_id) REFERENCES projects(id);
 
 ALTER TABLE study_groups
   ADD COLUMN created_by_user_id BIGINT UNSIGNED NULL AFTER active,
