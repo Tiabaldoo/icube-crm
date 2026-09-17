@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { countActiveChildrenForProject } from '../src/frontend/dashboard-ui.mjs';
+import {
+  calculateDashboardMetrics,
+  countActiveChildrenForProject,
+  countActiveChildrenTotal,
+  countActiveGroups,
+  monthlyPaymentAmount,
+} from '../src/frontend/dashboard-ui.mjs';
 import { createNotifications } from '../backend/src/notifications.mjs';
 import { createDailyDashboard } from '../backend/src/daily-dashboard.mjs';
 
@@ -9,7 +15,7 @@ const partner = { roles: ['partner'], projectIds: ['2'], userId: '17' };
 const director = { roles: ['director'], projectIds: [], userId: '1' };
 const pool = (query) => ({ query });
 
-test('active children are distinct by child and project', () => {
+test('active children are distinct globally and independently inside each project', () => {
   const children = [
     { id: 1, enrollments: [
       { projectId: 1, status: 'Активный' },
@@ -19,10 +25,13 @@ test('active children are distinct by child and project', () => {
       { projectId: 1, status: 'Активный' },
       { projectId: 2, status: 'Активный' },
     ] },
-    { id: 3, enrollments: [{ projectId: 1, status: 'Пауза' }] },
+    { id: 3, enrollments: [{ projectId: 2, status: 'Активный' }] },
+    { id: 4, enrollments: [{ projectId: 1, status: 'Пауза' }] },
   ];
+  assert.equal(countActiveChildrenTotal(children), 3);
   assert.equal(countActiveChildrenForProject(children, 1), 2);
-  assert.equal(countActiveChildrenForProject(children, 2), 1);
+  assert.equal(countActiveChildrenForProject(children, 2), 2);
+  assert.equal(countActiveChildrenTotal(children, ['2']), 2);
 });
 
 test('active children project count follows current state after project transfer', () => {
@@ -39,6 +48,57 @@ test('active children project count follows current state after project transfer
   ] }];
   assert.equal(countActiveChildrenForProject(keepsOldProject, 1), 1);
   assert.equal(countActiveChildrenForProject(keepsOldProject, 2), 1);
+});
+
+test('active groups count only active groups and split by project', () => {
+  const groups = [
+    { id: 1, projectId: 1, active: true },
+    { id: 2, projectId: 1, active: false },
+    { id: 3, projectId: 2, active: true },
+    { id: 4, projectId: 2, active: true },
+  ];
+  assert.equal(countActiveGroups(groups), 3);
+  assert.equal(countActiveGroups(groups, 1), 1);
+  assert.equal(countActiveGroups(groups, 2), 2);
+});
+
+test('monthly payments use payment project snapshot and gross amount', () => {
+  const payments = [
+    { id: 1, paidOn: '2026-09-01', amount: 4100, projectId: 1 },
+    { id: 2, paidOn: '2026-09-02', amount: 4500, projectId: 2 },
+    { id: 3, paidOn: '2026-08-31', amount: 7000, projectId: 1 },
+  ];
+  const now = new Date(2026, 8, 17, 12, 0, 0);
+  assert.equal(monthlyPaymentAmount(payments, now), 8600);
+  assert.equal(monthlyPaymentAmount(payments, now, 1), 4100);
+  assert.equal(monthlyPaymentAmount(payments, now, 2), 4500);
+});
+
+test('partner dashboard metrics stay inside its own project', () => {
+  const input = {
+    projects: [
+      { id: 1, name: 'iCubeRobots', active: true },
+      { id: 2, name: 'Зебра', active: true },
+    ],
+    children: [
+      { id: 1, enrollments: [{ projectId: 1, status: 'Активный' }] },
+      { id: 2, enrollments: [{ projectId: 2, status: 'Активный' }] },
+      { id: 3, enrollments: [{ projectId: 1, status: 'Активный' }, { projectId: 2, status: 'Активный' }] },
+    ],
+    groups: [
+      { id: 1, projectId: 1, active: true },
+      { id: 2, projectId: 2, active: true },
+    ],
+    payments: [
+      { paidOn: '2026-09-03', amount: 7000, projectId: 1 },
+      { paidOn: '2026-09-04', amount: 4500, projectId: 2 },
+    ],
+  };
+  const metrics = calculateDashboardMetrics(input, { now: new Date(2026, 8, 17), projectIds: ['2'] });
+  assert.equal(metrics.activeChildren, 2);
+  assert.equal(metrics.activeGroups, 1);
+  assert.equal(metrics.monthlyPayments, 4500);
+  assert.deepEqual(metrics.projects.map((item) => item.name), ['Зебра']);
 });
 
 test('notification list exposes read state and mark-as-read persists read_at', async () => {
