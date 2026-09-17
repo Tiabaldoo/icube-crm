@@ -125,6 +125,12 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     if (lesson?.siteName) return lesson.siteName;
     return (state.sites ?? []).find((site) => Number(site.id) === Number(lesson?.siteId ?? group?.siteId))?.name ?? 'Площадка не указана';
   }
+  function directionCardClass(group) {
+    const direction = typeof windowObject.crmDirectionClassV134 === 'function'
+      ? windowObject.crmDirectionClassV134(group?.direction)
+      : '';
+    return ['dashboard-direction-card', direction].filter(Boolean).join(' ');
+  }
   function unreadNotifications() { return (state.notifications ?? []).filter((notification) => !notification.readAt); }
 
   function notificationBlock() {
@@ -158,7 +164,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     const content = rows.length ? rows.map(({ lesson }) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
       const datePrefix = lesson.date === today ? '' : `${shortLessonDate(lesson.date)} · `;
-      return `<div class="dashboard-upcoming-row clickable" onclick="openLesson(${lesson.id})"><div class="dashboard-upcoming-copy"><div class="dashboard-upcoming-title">${safe(datePrefix)}${safe(startTime(lesson))} · ${safe(group?.direction ?? '')}</div><div class="muted mini dashboard-upcoming-meta">${safe(group?.name ?? '')}</div><div class="muted mini dashboard-upcoming-meta">${safe(siteFor(lesson, group))}${teacher?.name ? ` · ${safe(teacher.name)}` : ''}</div></div><div class="dashboard-upcoming-side"><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div>`;
+      return `<div class="dashboard-upcoming-row clickable ${directionCardClass(group)}" onclick="openLesson(${lesson.id})"><div class="dashboard-upcoming-copy"><div class="dashboard-upcoming-title">${safe(siteFor(lesson, group))}</div><div class="muted mini dashboard-upcoming-meta">${safe(datePrefix)}${safe(group?.name ?? '')}</div><div class="muted mini dashboard-upcoming-meta">${safe(teacher?.name ?? 'Преподаватель не указан')}</div></div><div class="dashboard-upcoming-side"><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div>`;
     }).join('') : '<div class="dashboard-empty">Ближайших занятий нет</div>';
     return `<div class="card pad dashboard-panel"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo('calendar')">Календарь</button></div><div class="dashboard-upcoming">${content}</div></div>`;
   }
@@ -168,7 +174,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     const lessons = ownLessons().filter((lesson) => lesson.date === today).sort((a, b) => startTime(a).localeCompare(startTime(b)));
     const cards = lessons.map((lesson) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
-      return `<div class="dashboard-lesson-card"><div class="dashboard-lesson-top"><div class="dashboard-lesson-time">${safe(lesson.time)}</div><span class="badge ${statusBadgeClass(lesson.status)}">${safe(lesson.status)}</span></div><div class="dashboard-lesson-title">${safe(group?.name ?? 'Занятие')}</div><div class="dashboard-lesson-details"><div>${safe(group?.direction ?? '')}</div><div class="muted mini">${safe(siteFor(lesson, group))}</div><div class="muted mini">${safe(teacher?.name ?? 'Преподаватель не указан')}</div><div><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div><div class="dashboard-lesson-actions"><button class="btn soft" onclick="openLesson(${lesson.id})">Открыть занятие</button></div></div>`;
+      return `<div class="dashboard-lesson-card ${directionCardClass(group)}"><div class="dashboard-lesson-top"><div class="dashboard-lesson-site">${safe(siteFor(lesson, group))}</div><span class="badge ${statusBadgeClass(lesson.status)}">${safe(lesson.status)}</span></div><div class="dashboard-lesson-title">${safe(group?.name ?? 'Занятие')}</div><div class="dashboard-lesson-details"><div>${safe(group?.direction ?? '')}</div><div class="muted mini">${safe(teacher?.name ?? 'Преподаватель не указан')}</div><div><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div><div class="dashboard-lesson-actions"><button class="btn soft" onclick="openLesson(${lesson.id})">Открыть занятие</button></div></div>`;
     }).join('');
     return `<div class="card pad dashboard-today"><div class="section-title"><h2>Сегодня · ${lessons.length} занятий</h2></div>${lessons.length ? `<div class="dashboard-today-grid">${cards}</div>` : '<div class="dashboard-empty">Сегодня занятий нет</div>'}</div>`;
   }

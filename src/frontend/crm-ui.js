@@ -6285,6 +6285,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function directionClass(direction){
     return direction==='Программирование'?'crm-direction-program':direction==='Робототехника'?'crm-direction-robot':'';
   }
+  window.crmDirectionClassV134=directionClass;
 
   function setDirectionClass(el,direction){
     if(!el) return;
@@ -6354,11 +6355,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }
     style.textContent=`
       /* Unified direction palette: robotics blue, programming orange. */
-      .group-card.crm-direction-robot{
+      .group-card.crm-direction-robot,
+      .dashboard-direction-card.crm-direction-robot{
         border-top:4px solid #3b82f6!important;
         background:linear-gradient(180deg,#eff6ff 0,#fff 38%)!important;
       }
-      .group-card.crm-direction-program{
+      .group-card.crm-direction-program,
+      .dashboard-direction-card.crm-direction-program{
         border-top:4px solid #f97316!important;
         background:linear-gradient(180deg,#fff7ed 0,#fff 38%)!important;
       }

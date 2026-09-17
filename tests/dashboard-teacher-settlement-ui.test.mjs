@@ -8,8 +8,25 @@ test('dashboard attention remains a compact vertical list and upcoming lessons a
   const [source, css] = await Promise.all([read('../src/frontend/dashboard-ui.mjs'), read('../src/ui/dashboard.css')]);
   assert.match(source, /lessonRows\(now\)\.slice\(0, 3\)/);
   assert.match(source, /dashboard-attention-row/);
-  assert.match(css, /\.dashboard-attention\{display:grid;gap:0/);
+  assert.match(css, /\.dashboard-attention\{display:grid;grid-template-columns:1fr;gap:0/);
   assert.match(css, /\.dashboard-attention-row\+\.dashboard-attention-row\{border-top:/);
+  assert.match(css, /\.dashboard-attention-row b\{display:block;margin:0 0 0 auto/);
+});
+
+test('dashboard lesson cards use effective site once and reuse group direction classes', async () => {
+  const [source, uiSource, css] = await Promise.all([
+    read('../src/frontend/dashboard-ui.mjs'),
+    read('../src/frontend/crm-ui.js'),
+    read('../src/ui/dashboard.css'),
+  ]);
+  assert.match(source, /dashboard-upcoming-title">\$\{safe\(siteFor\(lesson, group\)\)\}/);
+  assert.match(source, /dashboard-lesson-site">\$\{safe\(siteFor\(lesson, group\)\)\}/);
+  assert.doesNotMatch(source, /dashboard-lesson-time/);
+  assert.match(source, /windowObject\.crmDirectionClassV134\(group\?\.direction\)/);
+  assert.match(uiSource, /window\.crmDirectionClassV134=directionClass/);
+  assert.match(uiSource, /\.dashboard-direction-card\.crm-direction-robot/);
+  assert.match(uiSource, /\.dashboard-direction-card\.crm-direction-program/);
+  assert.match(css, /\.dashboard-upcoming-row\{[\s\S]*border:1px solid var\(--line\)/);
 });
 
 test('temporary teacher view returns director or partner home without replacing logout', async () => {
