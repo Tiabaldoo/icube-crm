@@ -56,10 +56,10 @@ function openLesson(id,teacher=false){state.selectedLesson=id;state.page=teacher
 function modal(html){state.modal=html;render()}
 function closeModal(){state.modal=null;render()}
 const navItems=[
- ['dashboard','Главная'],['children','Дети'],['groups','Группы'],['calendar','Календарь'],['payments','Оплаты'],['refunds','Возвраты'],['balances','Балансы / долги'],['teachers','Преподаватели'],['sites','Площадки'],['salary','Зарплата'],['partner','Партнёр'],['stats','Статистика'],['settings','Настройки']
+ ['dashboard','Главная'],['children','Дети'],['groups','Группы'],['calendar','Календарь'],['payments','Оплаты'],['refunds','Возвраты'],['balances','Балансы / долги'],['teachers','Преподаватели'],['sites','Площадки'],['salary','Зарплата'],['settlements','Расчёты'],['partner','Партнёр'],['stats','Статистика'],['settings','Настройки']
 ];
 function shell(content,title='iCube CRM'){
- const visibleNav=navItems.filter(([p])=>state.role!=='partner'||!['partner','stats','settings'].includes(p));
+ const visibleNav=navItems.filter(([p])=>state.role==='partner'?!['partner','stats','settings'].includes(p):p!=='settlements');
  return `<div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">iC</div><div>iCube CRM</div></div><div class="nav">${visibleNav.map(([p,l],i)=>`${i===7?'<small>Управление</small>':''}<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></aside><main class="main"><header class="topbar"><div class="crumb">${title}</div><div class="top-actions"><div><select class="role-switch" onchange="state.role=this.value; state.page=this.value==='teacher'?'teacherToday':'dashboard'; render()"><option value="director" ${state.role==='director'?'selected':''}>Директор</option><option value="teacher" ${state.role==='teacher'?'selected':''}>Преподаватель</option></select><div class="muted mini">Режим прототипа</div></div><div class="avatar">ИЯ</div></div></header><div class="content">${content}</div><div class="mobile-nav">${[['dashboard','Главная'],['children','Дети'],['calendar','Календарь'],['payments','Оплаты'],[state.role==='partner'?'groups':'settings','Ещё']].map(([p,l])=>`<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></main></div>`;
 }
 function pageHead(title,sub='',action=''){return `<div class="page-head"><div><h1>${title}</h1><div class="muted">${sub}</div></div>${action}</div>`}
@@ -1721,7 +1721,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       document.querySelector('#app').innerHTML=teacherShell(content)+(state.modal?'<div class="modal-backdrop"><div class="modal">'+state.modal+'</div></div>':'');
       return;
     }
-    const pages={dashboard:dashboard,children:children,child:child,groups:groups,group:group,sites:sites,teachers:teachers,calendar:calendar,lesson:lesson,payments:payments,refunds:refunds,balances:balances,salary:salary,partner:partner,stats:stats,settings:settings};
+    const pages={dashboard:dashboard,children:children,child:child,groups:groups,group:group,sites:sites,teachers:teachers,calendar:calendar,lesson:lesson,payments:payments,refunds:refunds,balances:balances,salary:salary,settlements:function(){return typeof window.partnerSettlementPage==='function'?window.partnerSettlementPage():partner();},partner:partner,stats:stats,settings:settings};
     content=(pages[state.page]||dashboard)();
     document.querySelector('#app').innerHTML=shell(content,title)+(state.modal?'<div class="modal-backdrop"><div class="modal">'+state.modal+'</div></div>':'');
   };
@@ -5856,6 +5856,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     ['teachers','Преподаватели'],
     ['sites','Площадки'],
     ['salary','Зарплата'],
+    ['settlements','Расчёты'],
     ['partner','Партнёр'],
     ['stats','Статистика'],
     ['settings','Настройки']
@@ -5875,7 +5876,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       '<aside class="mobile-drawer" onclick="event.stopPropagation()">'+
         '<div class="mobile-drawer-head"><div class="brand"><div class="brand-mark">iC</div><div>iCube CRM</div></div><button class="mobile-drawer-close" onclick="closeMobileMenuV129()">×</button></div>'+
         '<div class="mobile-drawer-nav">'+
-          mobileNavItems.filter(function(x){return state.role!=='partner'||!['partner','stats','settings'].includes(x[0]);}).map(function(x,i){
+          mobileNavItems.filter(function(x){return state.role==='partner'?!['partner','stats','settings'].includes(x[0]):x[0]!=='settlements';}).map(function(x,i){
             return (i===7?'<div class="mobile-drawer-section">Управление</div>':'')+
               '<button class="'+(state.page===x[0]?'active':'')+'" onclick="mobileNavToV129(\''+x[0]+'\')">'+x[1]+'</button>';
           }).join('')+
