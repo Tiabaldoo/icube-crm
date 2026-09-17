@@ -403,39 +403,70 @@ function childPageWithTransferHistory() {
 }
 
 function partnerProjects() { return directories.projects.filter((project) => project.partnerId != null); }
+
+function settlementContent({ partnerView = false } = {}) {
+  const result = legacy.state.partnerSettlement;
+  if (legacy.state.partnerSettlementError) return `<div class="card pad"><div class="notice">${html(legacy.state.partnerSettlementError)}</div></div>`;
+  if (!result) return '<div class="card pad"><div class="empty">Выберите период и нажмите «Рассчитать».</div></div>';
+
+  const percent = (value) => String(value).replace(/\.0+$/, '');
+  const transfer = Number(result.transferAmount);
+  const amount = displayMoney(Math.abs(transfer));
+  const rows = `<div class="partner-lines">
+    <div class="partner-line"><span>Оплаты</span><b>${displayMoney(result.paymentsAmount)}</b></div>
+    <div class="partner-line"><span>Возвраты</span><b>${displayMoney(result.refundsAmount)}</b></div>
+    <div class="partner-line"><span>Доход после возвратов</span><b>${displayMoney(result.incomeAmount)}</b></div>
+    <div class="partner-line"><span>Налог ${percent(result.taxPercent)}%</span><b>− ${displayMoney(result.taxAmount)}</b></div>
+    <div class="partner-line"><span>Зарплата преподавателей</span><b>− ${displayMoney(result.salaryAmount)}</b></div>
+    <div class="partner-line partner-divider"><span>Остаток к распределению</span><b>${displayMoney(result.distributableAmount)}</b></div>
+    <div class="partner-line"><span>Доля iCube ${percent(result.icubePercent)}%</span><b>${displayMoney(result.icubeShareAmount)}</b></div>
+    <div class="partner-line"><span>Доля партнёра ${percent(result.partnerPercent)}%</span><b>${displayMoney(result.partnerShareAmount)}</b></div>
+    <div class="partner-line"><span>Наличные у партнёра</span><b>${displayMoney(result.cashHeldByPartner)}</b></div>
+  </div>`;
+
+  let finalBlock;
+  if (partnerView) {
+    if (transfer > 0) {
+      finalBlock = `<div class="partner-final partner-final-pay"><div><div class="partner-final-caption">Итоговый расчёт</div><span>К получению</span><div class="partner-final-direction">от iCube</div></div><b>${amount}</b></div>`;
+    } else if (transfer < 0) {
+      finalBlock = `<div class="partner-final partner-final-return"><div><div class="partner-final-caption">Итоговый расчёт</div><span>К переводу</span><div class="partner-final-direction">в iCube</div></div><b>${amount}</b></div>`;
+    } else {
+      finalBlock = '<div class="partner-final partner-final-zero"><div><div class="partner-final-caption">Итоговый расчёт</div><span>Взаиморасчёт закрыт</span></div><b>0 ₽</b></div>';
+    }
+  } else {
+    const positive = transfer >= 0;
+    finalBlock = `<div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'К переводу партнёру' : 'К получению от партнёра'}</span><b>${amount}</b></div>`;
+  }
+
+  return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>${rows}${finalBlock}</div>`;
+}
+
 function partnerPage() {
   const projects = partnerProjects();
   if (!projects.length) return `${legacy.pageHead('Партнёр', 'Расчёт по операциям партнёрского проекта.')}<div class="card pad"><div class="empty">Нет проекта с назначенным партнёром.</div></div>`;
   if (!projects.some((project) => String(project.id) === String(legacy.state.partnerProjectId))) legacy.state.partnerProjectId = String(projects[0].id);
-  const result = legacy.state.partnerSettlement;
-  let content = `<div class="card pad"><div class="empty">Выберите период и нажмите «Рассчитать».</div></div>`;
-  if (legacy.state.partnerSettlementError) content = `<div class="card pad"><div class="notice">${html(legacy.state.partnerSettlementError)}</div></div>`;
-  if (result) {
-    const percent = (value) => String(value).replace(/\.0+$/, ''); const transfer = Number(result.transferAmount); const positive = transfer >= 0;
-    content = `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>
-      <div class="partner-lines"><div class="partner-line"><span>Оплаты</span><b>${displayMoney(result.paymentsAmount)}</b></div>
-      <div class="partner-line"><span>Получено партнёром наличными</span><b>${displayMoney(result.cashHeldByPartner)}</b></div>
-      <div class="partner-line"><span>Возвраты</span><b>${displayMoney(result.refundsAmount)}</b></div>
-      <div class="partner-line"><span>Доход после возвратов</span><b>${displayMoney(result.incomeAmount)}</b></div>
-      <div class="partner-line"><span>Налог ${percent(result.taxPercent)}%</span><b>− ${displayMoney(result.taxAmount)}</b></div>
-      <div class="partner-line"><span>Зарплата</span><b>− ${displayMoney(result.salaryAmount)}</b></div>
-      <div class="partner-line partner-divider"><span>К распределению</span><b>${displayMoney(result.distributableAmount)}</b></div>
-      <div class="partner-line"><span>iCube ${percent(result.icubePercent)}%</span><b>${displayMoney(result.icubeShareAmount)}</b></div>
-      <div class="partner-line"><span>Партнёр ${percent(result.partnerPercent)}%</span><b>${displayMoney(result.partnerShareAmount)}</b></div></div>
-      <div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'Перевести партнёру' : 'Партнёр должен передать iCube'}</span><b>${displayMoney(positive ? result.transferAmount : String(result.transferAmount).replace('-', ''))}</b></div></div>`;
-  }
   return `${legacy.pageHead('Партнёр', 'Расчёт по реальным операциям и занятиям партнёрского проекта.')}<div class="toolbar">
     <select class="select" id="partner-project" style="max-width:240px">${projects.map((project) => `<option value="${project.id}"${String(project.id) === String(legacy.state.partnerProjectId) ? ' selected' : ''}>${html(project.name)}</option>`).join('')}</select>
     <input class="input" id="partner-from" type="date" value="${html(legacy.state.partnerDateFrom)}" style="max-width:180px">
     <input class="input" id="partner-to" type="date" value="${html(legacy.state.partnerDateTo)}" style="max-width:180px">
-    <button class="btn primary" onclick="icubeApi.calculatePartnerSettlement()">Рассчитать</button></div>${content}`;
+    <button class="btn primary" onclick="icubeApi.calculatePartnerSettlement()">Рассчитать</button></div>${settlementContent()}`;
 }
+
+function partnerSettlementPage() {
+  return `${legacy.pageHead('Расчёты', 'Взаиморасчёт по вашему проекту. Проект определяется вашей учётной записью.')}<div class="toolbar">
+    <input class="input" id="partner-from" type="date" value="${html(legacy.state.partnerDateFrom)}" aria-label="Начало периода">
+    <input class="input" id="partner-to" type="date" value="${html(legacy.state.partnerDateTo)}" aria-label="Конец периода">
+    <button class="btn primary" onclick="icubeApi.calculatePartnerSettlement()">Рассчитать</button></div>${settlementContent({ partnerView: true })}`;
+}
+
 async function calculatePartnerSettlement() {
-  legacy.state.partnerProjectId = value('#partner-project') || legacy.state.partnerProjectId;
+  const partnerView = authProfile?.roles?.includes('partner') && !authProfile?.roles?.includes('director');
+  if (!partnerView) legacy.state.partnerProjectId = value('#partner-project') || legacy.state.partnerProjectId;
   legacy.state.partnerDateFrom = value('#partner-from') || legacy.state.partnerDateFrom;
   legacy.state.partnerDateTo = value('#partner-to') || legacy.state.partnerDateTo;
+  const query = `?from=${encodeURIComponent(legacy.state.partnerDateFrom)}&to=${encodeURIComponent(legacy.state.partnerDateTo)}${partnerView ? '' : `&projectId=${encodeURIComponent(legacy.state.partnerProjectId)}`}`;
   try {
-    legacy.state.partnerSettlement = await api.list('partner-settlements', `?projectId=${encodeURIComponent(legacy.state.partnerProjectId)}&from=${encodeURIComponent(legacy.state.partnerDateFrom)}&to=${encodeURIComponent(legacy.state.partnerDateTo)}`);
+    legacy.state.partnerSettlement = await api.list('partner-settlements', query);
     legacy.state.partnerSettlementError = null;
   } catch (error) { legacy.state.partnerSettlement = null; legacy.state.partnerSettlementError = error.message; }
   legacy.render();
@@ -619,7 +650,7 @@ async function openCalendarEvent(key, role) {
         <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
       legacy.render(); return;
     }
-    if (role === 'teacher' && authProfile?.roles?.includes('director') && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
+    if (role === 'teacher' && temporaryTeacherParentRole() && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
     legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson'; legacy.render();
   } catch (error) { fail(error); }
 }
@@ -922,8 +953,23 @@ async function logout() {
   showLogin();
 }
 
+function temporaryTeacherParentRole() {
+  if (authProfile?.roles?.includes('director')) return 'director';
+  if (authProfile?.roles?.includes('partner')) return 'partner';
+  return null;
+}
+
+function returnFromTemporaryTeacherView() {
+  const parentRole = temporaryTeacherParentRole();
+  if (!parentRole) return;
+  legacy.state.role = parentRole;
+  legacy.state.page = 'dashboard';
+  legacy.state.modal = null;
+  legacy.render();
+}
+
 function teacherNameForShell() {
-  if (!authProfile?.roles?.includes('director')) return authProfile?.displayName ?? 'Преподаватель';
+  if (!temporaryTeacherParentRole()) return authProfile?.displayName ?? 'Преподаватель';
   const lesson = legacy.state.lessons?.find((item) => item.id === Number(legacy.state.selectedLesson));
   return legacy.state.teachers?.find((item) => item.id === Number(lesson?.teacherId))?.name ?? 'Интерфейс преподавателя';
 }
@@ -940,9 +986,9 @@ function installAuthenticatedShells() {
     };
   }
   window.teacherShell = function (content) {
-    const directorMode = authProfile?.roles?.includes('director');
-    const right = directorMode
-      ? '<button class="btn" onclick="icubeReturnToDirector()">Вернуться в режим директора</button>'
+    const parentRole = temporaryTeacherParentRole();
+    const right = parentRole
+      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
       : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
     return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>${html(teacherNameForShell())}</b></div><div>${right}</div></div>
       <div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn ${legacy.state.page === 'teacherToday' ? 'soft' : ''}" onclick="state.page='teacherToday';render()">Сегодня</button><button class="btn ${legacy.state.page === 'teacherCalendar' ? 'soft' : ''}" onclick="state.page='teacherCalendar';render()">Календарь</button></div></div>
@@ -951,7 +997,7 @@ function installAuthenticatedShells() {
   const originalOpenLesson = window.openLesson;
   if (typeof originalOpenLesson === 'function') {
     window.openLesson = function (lessonId, teacherMode) {
-      if (teacherMode && authProfile?.roles?.includes('director')) {
+      if (teacherMode && temporaryTeacherParentRole()) {
         const lesson = legacy.state.lessons?.find((item) => item.id === Number(lessonId));
         if (lesson?.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
       }
@@ -1084,6 +1130,7 @@ window.child = childPageWithTransferHistory;
 window.stats = statisticsPage;
 window.applyStatsFiltersV125 = window.icubeApi.loadStatistics;
 window.partner = partnerPage;
+window.partnerSettlementPage = partnerSettlementPage;
 window.applyPartnerFiltersV123 = window.icubeApi.calculatePartnerSettlement;
 window.saveLessonEdit = window.icubeApi.saveLessonEdit;
 window.lToggle = window.icubeApi.lessonToggle;
@@ -1091,7 +1138,8 @@ window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;
 window.salaryCalculation = window.icubeApi.salaryCalculation;
 window.icubeAuthLogin = loginFromForm;
 window.icubeAuthLogout = logout;
-window.icubeReturnToDirector = () => { legacy.state.role = 'director'; legacy.state.page = 'dashboard'; legacy.state.modal = null; legacy.render(); };
+window.icubeReturnToHome = returnFromTemporaryTeacherView;
+window.icubeReturnToDirector = returnFromTemporaryTeacherView;
 window.icubeCreateTeacherAccess = createTeacherAccess;
 window.icubeResetTeacherPassword = resetTeacherPassword;
 window.icubeDisableTeacherAccess = disableTeacherAccess;
