@@ -18,9 +18,14 @@ function appendNavigationButton(html, className, button) {
   const marker = `<div class="${className}">`;
   const start = html.indexOf(marker);
   if (start < 0) return html;
-  const end = html.indexOf('</div>', start + marker.length);
-  if (end < 0) return html;
-  return `${html.slice(0, end)}${button}${html.slice(end)}`;
+  const tags = /<\/?div\b[^>]*>/g;
+  tags.lastIndex = start + marker.length;
+  let depth = 1;
+  for (let match = tags.exec(html); match; match = tags.exec(html)) {
+    depth += match[0].startsWith('</') ? -1 : 1;
+    if (depth === 0) return `${html.slice(0, match.index)}${button}${html.slice(match.index)}`;
+  }
+  return html;
 }
 
 export function installPartnerSettlementUi({ windowObject = globalThis.window, api = new ApiClient() } = {}) {
@@ -36,15 +41,15 @@ export function installPartnerSettlementUi({ windowObject = globalThis.window, a
   function resultContent() {
     const project = ownProject();
     const result = String(state.partnerSettlement?.projectId ?? '') === String(project?.id ?? '') ? state.partnerSettlement : null;
-    if (state.partnerSettlementError) return `<div class="card pad partner-settlement"><div class="notice">${safe(state.partnerSettlementError)}</div></div>`;
-    if (!result) return '<div class="card pad partner-settlement"><div class="empty">Выберите период и нажмите «Рассчитать».</div></div>';
+    if (state.partnerSettlementError) return `<div class="card pad partner-settlement partner-readonly"><div class="notice">${safe(state.partnerSettlementError)}</div></div>`;
+    if (!result) return '<div class="card pad partner-settlement partner-readonly"><div class="empty">Выберите период и нажмите «Рассчитать».</div></div>';
 
     const direction = settlementDirection(result.transferAmount);
     const final = direction.closed
       ? `<div class="partner-final partner-final-closed"><span>Итоговый расчёт</span><b>${money(0)}</b><div class="partner-final-note">${safe(direction.detail)}</div></div>`
       : `<div class="partner-final ${Number(result.transferAmount) > 0 ? 'partner-final-pay' : 'partner-final-return'}"><span>Итоговый расчёт · ${safe(direction.label)}</span><b>${money(direction.amount)}</b><div class="partner-final-note">${safe(direction.detail)}</div></div>`;
 
-    return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${safe(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div></div>
+    return `<div class="card pad partner-settlement partner-readonly"><div class="section-title"><div><h2 style="font-size:22px">${safe(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div></div>
       <div class="partner-lines">
         <div class="partner-line"><span>Оплаты</span><b>${money(result.paymentsAmount)}</b></div>
         <div class="partner-line"><span>Возвраты</span><b>${money(result.refundsAmount)}</b></div>
