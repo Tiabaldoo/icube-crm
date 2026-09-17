@@ -15,13 +15,12 @@
 .dashboard-kpi-line b{color:var(--text);font-weight:700;white-space:nowrap}
 .dashboard-main-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:16px;margin-top:16px;align-items:start}
 .dashboard-panel{min-width:0}
-.dashboard-attention{display:grid;gap:0;overflow:hidden;border-radius:12px}
-.dashboard-attention-row{width:100%;min-height:0;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 12px;text-align:left;border-radius:0}
+.dashboard-attention{display:grid;grid-template-columns:1fr;gap:0;overflow:hidden;border-radius:12px}
+.dashboard-attention-row{width:100%;min-height:0;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:11px 12px;text-align:left;border:0;border-radius:0}
 .dashboard-attention-row+.dashboard-attention-row{border-top:1px solid rgba(16,24,40,.08)}
-.dashboard-attention-row b{margin-left:auto;flex:0 0 auto;white-space:nowrap}
+.dashboard-attention-row b{display:block;margin:0 0 0 auto;flex:0 0 auto;white-space:nowrap;font-size:18px}
 .dashboard-upcoming{display:grid;gap:8px}
-.dashboard-upcoming-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:11px 0;border-top:1px solid var(--line)}
-.dashboard-upcoming-row:first-child{border-top:0}
+.dashboard-upcoming-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .dashboard-upcoming-copy{min-width:0}
 .dashboard-upcoming-title{font-weight:700}
 .dashboard-upcoming-meta{margin-top:3px}
@@ -30,7 +29,7 @@
 .dashboard-today-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .dashboard-lesson-card{min-width:0;border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:7px}
 .dashboard-lesson-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-.dashboard-lesson-time{font-weight:800;font-size:17px}
+.dashboard-lesson-site{font-weight:800;font-size:17px;overflow-wrap:anywhere}
 .dashboard-lesson-title{font-weight:800;font-size:16px;overflow-wrap:anywhere}
 .dashboard-lesson-details{display:grid;gap:3px}
 .dashboard-lesson-actions{margin-top:auto;padding-top:7px}
