@@ -50,6 +50,7 @@ test('teacher получает ограниченную навигацию и fr
     await globalThis.window.icubeAuthReady;
     assert.equal(setup.state.role, 'teacher'); assert.equal(setup.state.prototypeTeacherId, 7);
     assert.match(setup.app.innerHTML, /Сегодня/); assert.match(setup.app.innerHTML, /Календарь/); assert.match(setup.app.innerHTML, /Выйти/);
+    assert.doesNotMatch(setup.app.innerHTML, /Вернуться на главную/);
     assert.doesNotMatch(setup.app.innerHTML, /role-switch|Платежи|Статистика|Настройки|Выберите преподавателя/);
     assert.deepEqual(new Set(setup.calls.slice(1)), new Set(['/groups', '/children', '/lessons', '/lesson-deletions']));
   } finally { setup.restore(); }
@@ -66,7 +67,33 @@ test('director сохраняет полный CRM и teacher-mode остаёт�
     assert.ok(setup.calls.some((path) => path === '/payments')); assert.ok(setup.calls.some((path) => path.startsWith('/statistics?')));
     setup.state.lessons = [{ id: 10, teacherId: 7 }]; setup.state.teachers = [{ id: 7, name: 'Учитель А' }]; setup.state.selectedLesson = 10; setup.state.role = 'teacher'; setup.state.page = 'teacherLesson';
     setup.state.authUser = profile; setup.app.innerHTML = globalThis.window.teacherShell('<main>Урок</main>');
-    assert.match(setup.app.innerHTML, /Вернуться в режим директора/); assert.doesNotMatch(setup.app.innerHTML, /Выберите преподавателя/);
+    assert.match(setup.app.innerHTML, /Вернуться на главную/); assert.match(setup.app.innerHTML, /Выйти/); assert.doesNotMatch(setup.app.innerHTML, /Выберите преподавателя/);
+  } finally { setup.restore(); }
+});
+
+test('partner temporary teacher-view возвращается на партнёрскую главную без logout', async () => {
+  const profile = { id: '3', displayName: 'Партнёр Зебры', roles: ['partner'], teacherId: null, projectIds: ['3'] };
+  const setup = globals({ ok: true, status: 200, async json() { return { data: profile }; } });
+  try {
+    await import(`../src/frontend/api-sync.mjs?auth-partner-teacher=${Date.now()}`);
+    await globalThis.window.icubeAuthReady;
+    assert.equal(setup.state.role, 'partner');
+    const scopeBefore = setup.state.calendarProject;
+
+    setup.state.lessons = [{ id: 10, teacherId: 7 }];
+    setup.state.teachers = [{ id: 7, name: 'Учитель А' }];
+    setup.state.selectedLesson = 10;
+    setup.state.role = 'teacher';
+    setup.state.page = 'teacherLesson';
+    setup.app.innerHTML = globalThis.window.teacherShell('<main>Урок</main>');
+
+    assert.match(setup.app.innerHTML, /Вернуться на главную/);
+    assert.match(setup.app.innerHTML, /Выйти/);
+    globalThis.window.icubeReturnToHome();
+    assert.equal(setup.state.role, 'partner');
+    assert.equal(setup.state.page, 'dashboard');
+    assert.equal(setup.state.calendarProject, scopeBefore);
+    assert.equal(setup.calls.includes('/auth/logout'), false);
   } finally { setup.restore(); }
 });
 

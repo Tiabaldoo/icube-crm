@@ -154,7 +154,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
 
   function upcomingBlock(now) {
     const today = ruDate(now);
-    const rows = lessonRows(now).slice(0, 5);
+    const rows = lessonRows(now).slice(0, 3);
     const content = rows.length ? rows.map(({ lesson }) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
       const datePrefix = lesson.date === today ? '' : `${shortLessonDate(lesson.date)} · `;

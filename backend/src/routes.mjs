@@ -168,7 +168,7 @@ export function createApiRouter(pool, {
   router.get('/salary-accruals', requirePermission('salary:read'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
   router.get('/notifications', requirePermission('notifications:read'), run((request) => notifications.list(request.auth)));
   router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
-  router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(request.query)));
+  router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(projectFilters(request))));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), run((request) => statistics.get(request.query)));
   router.post('/notifications/:id/read', requirePermission('notifications:read'), run((request) => notifications.markRead(request.params.id, request.auth)));

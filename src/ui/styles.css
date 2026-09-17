@@ -75,6 +75,9 @@
 .partner-final b{font-size:26px}
 .partner-final-pay{background:var(--greenbg);color:var(--green);border:1px solid #abefc6}
 .partner-final-return{background:var(--redbg);color:var(--red);border:1px solid #fecdca}
+.partner-final-zero{background:#f8fafc;color:var(--text);border:1px solid var(--line)}
+.partner-final-caption{font-size:12px;font-weight:700;opacity:.72;margin-bottom:3px}
+.partner-final-direction{font-size:12px;opacity:.72;margin-top:3px}
 @media(max-width:760px){
   .partner-final{align-items:flex-start;flex-direction:column}
 }
@@ -644,14 +647,14 @@ body.modal-open{overflow:hidden!important;touch-action:none}
   .page-salary .section-title{display:grid!important;grid-template-columns:1fr auto!important;gap:10px!important;align-items:start!important}
 
   /* Partner filters: partner on first row, both dates together, action below. */
-  .page-partner .toolbar{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:8px!important;align-items:stretch!important}
+  .page-partner .toolbar,.page-settlements .toolbar{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:8px!important;align-items:stretch!important}
   .page-partner #partner-project{grid-column:1/-1!important;width:100%!important;max-width:none!important}
-  .page-partner #partner-from{grid-column:1!important;width:100%!important;max-width:none!important;min-width:0!important}
-  .page-partner #partner-to{grid-column:2!important;width:100%!important;max-width:none!important;min-width:0!important}
-  .page-partner .toolbar>.btn{grid-column:1/-1!important;width:100%!important}
-  .page-partner .partner-line{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;align-items:center!important}
-  .page-partner .partner-line span{min-width:0!important;overflow-wrap:anywhere!important}
-  .page-partner .partner-line b{white-space:nowrap!important}
+  .page-partner #partner-from,.page-settlements #partner-from{grid-column:1!important;width:100%!important;max-width:none!important;min-width:0!important}
+  .page-partner #partner-to,.page-settlements #partner-to{grid-column:2!important;width:100%!important;max-width:none!important;min-width:0!important}
+  .page-partner .toolbar>.btn,.page-settlements .toolbar>.btn{grid-column:1/-1!important;width:100%!important}
+  .page-partner .partner-line,.page-settlements .partner-line{display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:12px!important;align-items:center!important}
+  .page-partner .partner-line span,.page-settlements .partner-line span{min-width:0!important;overflow-wrap:anywhere!important}
+  .page-partner .partner-line b,.page-settlements .partner-line b{white-space:nowrap!important}
 
   /* Statistics: keep date fields full-width and metrics readable. */
   .page-stats #stats-from,.page-stats #stats-to{width:100%!important;min-width:0!important;max-width:100%!important}
@@ -663,7 +666,7 @@ body.modal-open{overflow:hidden!important;touch-action:none}
 @media(max-width:390px){
   .teacher-content .student-check{grid-template-columns:34px minmax(0,1fr) auto!important;column-gap:8px!important}
   .teacher-content .student-check>div:nth-of-type(2) .photo{font-size:13px!important;padding-left:9px!important;padding-right:9px!important}
-  .page-partner .toolbar,.page-salary .toolbar{gap:7px!important}
+  .page-partner .toolbar,.page-settlements .toolbar,.page-salary .toolbar{gap:7px!important}
 }
 
 /* ===== Итоговый каскад из mobile-fixes5.css ===== */

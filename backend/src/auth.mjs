@@ -19,7 +19,7 @@ export const permissions = Object.freeze({
     'balance-transfers:read', 'balance-transfers:write', 'lessons:read', 'lessons:create',
     'lessons:update-assigned', 'lessons:start', 'lessons:attendance', 'lessons:finish', 'lessons:photos',
     'lessons:extras', 'lessons:quick-child', 'lessons:cancel', 'lessons:delete', 'lessons:empty-trip',
-    'salary:read', 'notifications:read']),
+    'salary:read', 'partner-settlements:read', 'notifications:read']),
   parent: new Set(['own-children:read', 'own-payments:read', 'own-attendance:read']),
   child: new Set(['own-profile:read', 'own-attendance:read']),
 });
