@@ -15,6 +15,7 @@ import { createStatistics } from './statistics.mjs';
 import { assertOwned, partnerProjectId } from './project-scope.mjs';
 import { createProjectTransfers } from './project-transfers.mjs';
 import { createDailyDashboard } from './daily-dashboard.mjs';
+import { createNotifications } from './notifications.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -36,6 +37,7 @@ export function createApiRouter(pool, {
   balanceTransfers = createBalanceTransfers(pool),
   projectTransfers = createProjectTransfers(pool, balanceTransfers),
   dailyDashboard = createDailyDashboard(pool),
+  notifications = createNotifications(pool),
   partnerSettlements = createPartnerSettlements(pool),
   statistics = createStatistics(pool),
   authService = createAuthService(pool),
@@ -164,11 +166,11 @@ export function createApiRouter(pool, {
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));
   router.get('/salary-accruals', requirePermission('salary:read'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
-  router.get('/notifications', requirePermission('notifications:read'), run((request) => lessons.notifications(lessonContext(request))));
+  router.get('/notifications', requirePermission('notifications:read'), run((request) => notifications.list(request.auth)));
   router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(request.query)));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), run((request) => statistics.get(request.query)));
-  router.post('/notifications/:id/read', requirePermission('*'), notImplemented('notification read'));
+  router.post('/notifications/:id/read', requirePermission('notifications:read'), run((request) => notifications.markRead(request.params.id, request.auth)));
   return router;
 }
