@@ -35,7 +35,7 @@ test('partner has a dedicated read-only settlements page without project selecto
   assert.ok(pageStart >= 0 && pageEnd > pageStart);
   assert.match(page, /pageHead\('Расчёты'/);
   assert.doesNotMatch(page, /partner-project/);
-  assert.match(apiSource, /partnerView \? '' : `&projectId=/);
+  assert.match(apiSource, /const query = partnerView[\s\S]*\? `\?from=[\s\S]*: `\?projectId=/);
   assert.match(apiSource, /К получению/);
   assert.match(apiSource, /К переводу/);
   assert.match(apiSource, /Взаиморасчёт закрыт/);
