@@ -435,7 +435,7 @@ function settlementContent({ partnerView = false } = {}) {
     }
   } else {
     const positive = transfer >= 0;
-    finalBlock = `<div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'К переводу партнёру' : 'К получению от партнёра'}</span><b>${amount}</b></div>`;
+    finalBlock = `<div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'Перевести партнёру' : 'Партнёр должен передать iCube'}</span><b>${amount}</b></div>`;
   }
 
   return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>${rows}${finalBlock}</div>`;
