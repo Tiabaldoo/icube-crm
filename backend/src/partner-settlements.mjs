@@ -1,5 +1,6 @@
 import { ApiProblem } from './catalog.mjs';
 import { moneyCents, moneyDecimal } from './lesson-rules.mjs';
+import { partnerProjectId } from './project-scope.mjs';
 
 const PERCENT_SCALE = 1000n;
 const HUNDRED_PERCENT = 100n * PERCENT_SCALE;
@@ -45,9 +46,20 @@ export function calculatePartnerSettlement({ paymentsAmount, refundsAmount, cash
   };
 }
 
+export function settlementProjectId(filters = {}, context = {}) {
+  const scopedProjectId = partnerProjectId(context);
+  if (scopedProjectId) {
+    if (filters.projectId != null && String(filters.projectId) !== String(scopedProjectId)) {
+      throw new ApiProblem(403, 'FORBIDDEN', 'Расчёт другого проекта недоступен');
+    }
+    return identifier(scopedProjectId, 'projectId');
+  }
+  return identifier(filters.projectId, 'projectId');
+}
+
 export function createPartnerSettlements(pool) {
-  async function preview(filters = {}) {
-    const projectId = identifier(filters.projectId, 'projectId'); const from = dateOnly(filters.from, 'from'); const to = dateOnly(filters.to, 'to');
+  async function preview(filters = {}, context = {}) {
+    const projectId = settlementProjectId(filters, context); const from = dateOnly(filters.from, 'from'); const to = dateOnly(filters.to, 'to');
     if (from > to) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Дата начала периода должна быть не позже даты окончания');
     const [projects] = await pool.query(`SELECT p.id,p.name,p.partner_id,partner.name partner_name
       FROM projects p LEFT JOIN partners partner ON partner.id=p.partner_id WHERE p.id=:projectId`, { projectId });
