@@ -464,7 +464,9 @@ async function calculatePartnerSettlement() {
   if (!partnerView) legacy.state.partnerProjectId = value('#partner-project') || legacy.state.partnerProjectId;
   legacy.state.partnerDateFrom = value('#partner-from') || legacy.state.partnerDateFrom;
   legacy.state.partnerDateTo = value('#partner-to') || legacy.state.partnerDateTo;
-  const query = `?from=${encodeURIComponent(legacy.state.partnerDateFrom)}&to=${encodeURIComponent(legacy.state.partnerDateTo)}${partnerView ? '' : `&projectId=${encodeURIComponent(legacy.state.partnerProjectId)}`}`;
+  const query = partnerView
+    ? `?from=${encodeURIComponent(legacy.state.partnerDateFrom)}&to=${encodeURIComponent(legacy.state.partnerDateTo)}`
+    : `?projectId=${encodeURIComponent(legacy.state.partnerProjectId)}&from=${encodeURIComponent(legacy.state.partnerDateFrom)}&to=${encodeURIComponent(legacy.state.partnerDateTo)}`;
   try {
     legacy.state.partnerSettlement = await api.list('partner-settlements', query);
     legacy.state.partnerSettlementError = null;
