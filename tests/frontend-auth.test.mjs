@@ -71,6 +71,32 @@ test('director сохраняет полный CRM и teacher-mode остаёт�
   } finally { setup.restore(); }
 });
 
+test('partner temporary teacher-view возвращается на партнёрскую главную без logout', async () => {
+  const profile = { id: '3', displayName: 'Партнёр Зебры', roles: ['partner'], teacherId: null, projectIds: ['3'] };
+  const setup = globals({ ok: true, status: 200, async json() { return { data: profile }; } });
+  try {
+    await import(`../src/frontend/api-sync.mjs?auth-partner-teacher=${Date.now()}`);
+    await globalThis.window.icubeAuthReady;
+    assert.equal(setup.state.role, 'partner');
+    const scopeBefore = setup.state.calendarProject;
+
+    setup.state.lessons = [{ id: 10, teacherId: 7 }];
+    setup.state.teachers = [{ id: 7, name: 'Учитель А' }];
+    setup.state.selectedLesson = 10;
+    setup.state.role = 'teacher';
+    setup.state.page = 'teacherLesson';
+    setup.app.innerHTML = globalThis.window.teacherShell('<main>Урок</main>');
+
+    assert.match(setup.app.innerHTML, /Вернуться на главную/);
+    assert.match(setup.app.innerHTML, /Выйти/);
+    globalThis.window.icubeReturnToHome();
+    assert.equal(setup.state.role, 'partner');
+    assert.equal(setup.state.page, 'dashboard');
+    assert.equal(setup.state.calendarProject, scopeBefore);
+    assert.equal(setup.calls.includes('/auth/logout'), false);
+  } finally { setup.restore(); }
+});
+
 test('auth frontend содержит управление доступом преподавателя и понятную обработку 401/403', async () => {
   const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
   assert.match(source, /Доступ в CRM/); assert.match(source, /Создать доступ/); assert.match(source, /Сбросить пароль/); assert.match(source, /Отключить доступ/);
