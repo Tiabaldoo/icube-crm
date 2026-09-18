@@ -8,7 +8,7 @@ const indexUrl = new URL('../index.html', import.meta.url);
 
 test('context help covers director pages and entity cards', async () => {
   const { getContextHelp } = await import(moduleUrl);
-  for (const page of ['dashboard','children','groups','calendar','payments','salary','stats','settings']) {
+  for (const page of ['dashboard','children','groups','calendar','payments','salary','rent','stats','settings']) {
     assert.ok(getContextHelp('director', page), page);
   }
   for (const page of ['child','group','lesson']) assert.ok(getContextHelp('director', page), page);
@@ -60,6 +60,19 @@ test('role-specific help contains the important current CRM rules', async () => 
   assert.match(settlements, /Наличные/);
   assert.match(settlements, /К получению от iCube/);
   assert.match(settlements, /К переводу в iCube/);
+
+  const rent = JSON.stringify(getContextHelp('director', 'rent'));
+  for (const phrase of ['проведённые занятия', 'Ознакомительное', 'пустой выезд', 'исторической ставке', 'фактическая площадка', 'Подробная сводка']) {
+    assert.match(rent.toLowerCase(), new RegExp(phrase.toLowerCase()), phrase);
+  }
+  assert.equal(getContextHelp('partner', 'rent'), null);
+  assert.equal(getContextHelp('teacher', 'rent'), null);
+
+  const directorSites = JSON.stringify(getContextHelp('director', 'sites'));
+  const partnerSites = JSON.stringify(getContextHelp('partner', 'sites'));
+  assert.match(directorSites, /стоимость аренды/);
+  assert.match(directorSites, /историческая версия/);
+  assert.doesNotMatch(partnerSites, /стоимость аренды|ставки аренды/);
 
   const settings = JSON.stringify(getContextHelp('director', 'settings'));
   assert.match(settings, /историческую версию/);
