@@ -41,6 +41,33 @@ function salaryContext(source) {
   return { context, state: context.__salaryProbe.state, controls };
 }
 
+function reportRow({
+  id = 91,
+  lessonId = 44,
+  teacherId = 5,
+  projectId = 1,
+  projectName = 'iCubeRobots',
+  groupId = 12,
+  groupName = 'Историческая группа',
+  siteId = 8,
+  siteName = 'ДК «Океан»',
+  date = '15.01.2025',
+  time = '10:00',
+  type = 'Обычное занятие',
+  children = 3,
+  fixed = 600,
+  childrenPay = 300,
+  total = 900,
+} = {}) {
+  return {
+    id, lessonId, teacherId, projectId, projectName, groupId, groupName, siteId, siteName,
+    date, time, totalAmount: total.toFixed(2),
+    lesson: { id: lessonId, date, time, groupId, groupName, projectId, project: projectName, projectName, siteId, siteName },
+    group: { id: groupId, name: groupName, projectId, project: projectName, siteId, siteName },
+    calc: { type, children, fixed, childrenPay, total },
+  };
+}
+
 test('salary default periods follow current 11-10 iCube and 26-25 Zebra cycles', async () => {
   const originalWindow = globalThis.window;
   const originalDocument = globalThis.document;
@@ -58,48 +85,46 @@ test('salary default periods follow current 11-10 iCube and 26-25 Zebra cycles',
   }
 });
 
-test('salary project filter supports all, iCube, Zebra and totals only filtered rows', async () => {
+test('salary page renders historical server rows with state.lessons empty', async () => {
   const source = await readFile(uiUrl, 'utf8');
   const { context, state } = salaryContext(source);
-  state.projects = [
-    { id: 1, name: 'iCubeRobots', active: true },
-    { id: 2, name: 'Зебра', active: true },
-  ];
-  state.groups = [
-    { id: 11, name: 'iCube группа', projectId: 1, project: 'iCubeRobots', siteId: 1 },
-    { id: 22, name: 'Зебра группа', projectId: 2, project: 'Зебра', siteId: 2 },
-  ];
-  state.sites = [{ id: 1, name: 'Школа' }, { id: 2, name: 'Зебра' }];
+  state.role = 'director';
+  state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
   state.teachers = [{ id: 5, name: 'Иванов Сергей', active: true }];
   state.salaryTeacher = '5';
-  state.salaryDateFrom = '2026-09-01';
-  state.salaryDateTo = '2026-09-30';
-  state.lessons = [
-    { id: 101, date: '15.09.2026', time: '10:00–11:30', groupId: 11, projectId: 1, teacherId: 5, done: true, cancelled: false, emptyTrip: false, intro: false, attendance: { 1: true }, extras: [], salarySnapshot: { fix: 600, child: 100, intro: 600, empty: 300 } },
-    { id: 102, date: '16.09.2026', time: '10:00–11:30', groupId: 22, projectId: 2, teacherId: 5, done: true, cancelled: false, emptyTrip: false, intro: false, attendance: { 1: true, 2: true }, extras: [], salarySnapshot: { fix: 600, child: 100, intro: 600, empty: 300 } },
-  ];
+  state.salaryProjectId = '1';
+  state.salaryDateFrom = '2025-01-01';
+  state.salaryDateTo = '2025-01-31';
+  state.lessons = [];
+  state.groups = [];
+  state.sites = [];
+  state.salaryReportRows = [reportRow()];
+  state.salaryReportTotal = 900;
 
-  state.salaryProjectId = 'all';
+  const html = context.salary();
+  assert.match(html, /Историческая группа/);
+  assert.match(html, /ДК «Океан»/);
+  assert.match(html, /600 ₽/);
+  assert.match(html, /300 ₽/);
+  assert.match(html, /900 ₽/);
+  assert.doesNotMatch(html, /За выбранный период начислений нет/);
+});
+
+test('salary page keeps project selector for director and hides it and PDF for partner', async () => {
+  const source = await readFile(uiUrl, 'utf8');
+  const { context, state } = salaryContext(source);
+  state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
+  state.teachers = [{ id: 5, name: 'Иванов Сергей', active: true }];
+  state.salaryTeacher = '5';
+  state.salaryReportRows = [];
+  state.salaryReportTotal = 0;
+
+  state.role = 'director';
   let html = context.salary();
-  assert.match(html, /<option value="all" selected>Все<\/option>/);
+  assert.match(html, /<option value="all"/);
   assert.match(html, />iCube<\/option>/);
   assert.match(html, />Зебра<\/option>/);
-  assert.match(html, /iCube группа/);
-  assert.match(html, /Зебра группа/);
-  assert.match(html, /Итого за период/);
-  assert.match(html, /1[^0-9]?500 ₽/);
-
-  state.salaryProjectId = '1';
-  html = context.salary();
-  assert.match(html, /iCube группа/);
-  assert.doesNotMatch(html, /Зебра группа/);
-  assert.match(html, /700 ₽/);
-
-  state.salaryProjectId = '2';
-  html = context.salary();
-  assert.doesNotMatch(html, /iCube группа/);
-  assert.match(html, /Зебра группа/);
-  assert.match(html, /800 ₽/);
+  assert.match(html, /Печать \/ PDF/);
 
   state.role = 'partner';
   html = context.salary();
@@ -107,134 +132,70 @@ test('salary project filter supports all, iCube, Zebra and totals only filtered 
   assert.doesNotMatch(html, /Печать \/ PDF/);
 });
 
-test('salary project change updates default dates but Apply preserves manual dates', async () => {
+test('legacy Apply delegates to the API bridge and does not commit form values itself', async () => {
   const source = await readFile(uiUrl, 'utf8');
   const { context, state, controls } = salaryContext(source);
-  state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
-  const from = { value: '2026-09-01' };
-  const to = { value: '2026-09-18' };
-  controls.set('#salary-from', from);
-  controls.set('#salary-to', to);
-  controls.set('#salary-teacher', { value: '5' });
-  controls.set('#salary-project', { value: '1' });
-
-  context.icubeSalaryDefaultPeriod = (name) => name === 'iCubeRobots'
-    ? { from: '2026-09-11', to: '2026-10-10' }
-    : { from: '2026-08-26', to: '2026-09-25' };
-
-  context.setSalaryProjectDefaults('1');
-  assert.equal(from.value, '2026-09-11');
-  assert.equal(to.value, '2026-10-10');
-
-  from.value = '2026-09-15';
-  to.value = '2026-09-30';
+  state.salaryTeacher = '5';
+  state.salaryProjectId = '1';
+  state.salaryDateFrom = '2026-09-11';
+  state.salaryDateTo = '2026-10-10';
+  controls.set('#salary-from', { value: '2026-09-01' });
+  controls.set('#salary-to', { value: '2026-09-30' });
+  let calls = 0;
+  context.icubeApi = { applySalaryFilters() { calls += 1; } };
   context.applySalaryFilters();
-  assert.equal(state.salaryProjectId, '1');
-  assert.equal(state.salaryDateFrom, '2026-09-15');
-  assert.equal(state.salaryDateTo, '2026-09-30');
+  assert.equal(calls, 1);
+  assert.equal(state.salaryDateFrom, '2026-09-11');
+  assert.equal(state.salaryDateTo, '2026-10-10');
 });
 
-test('salary print export uses applied state and ignores unapplied input values', async () => {
+test('salary PDF uses the applied historical server report and ignores unapplied inputs', async () => {
   const source = await readFile(uiUrl, 'utf8');
   const { context, state, controls } = salaryContext(source);
-  state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
-  state.groups = [
-    { id: 11, name: 'iCube группа', projectId: 1, project: 'iCubeRobots', siteId: 1 },
-    { id: 22, name: 'Зебра группа', projectId: 2, project: 'Зебра', siteId: 2 },
-  ];
-  state.sites = [{ id: 1, name: 'Школа № 1' }, { id: 2, name: 'Центр Зебра' }];
+  state.role = 'director';
+  state.projects = [{ id: 1, name: 'iCubeRobots' }];
   state.teachers = [{ id: 5, name: 'Иванов Сергей', active: true }];
   state.salaryTeacher = '5';
   state.salaryProjectId = '1';
-  state.salaryDateFrom = '2026-09-15';
-  state.salaryDateTo = '2026-09-30';
-  state.lessons = [
-    { id: 101, date: '16.09.2026', time: '10:00–11:30', groupId: 11, projectId: 1, project: 'iCubeRobots', teacherId: 5, done: true, cancelled: false, emptyTrip: false, intro: false, attendance: { 1: true }, extras: [], salarySnapshot: { fix: 600, child: 100, intro: 600, empty: 300 } },
-    { id: 102, date: '02.10.2026', time: '12:00–13:30', groupId: 11, projectId: 1, project: 'iCubeRobots', teacherId: 5, done: true, cancelled: false, emptyTrip: false, intro: false, attendance: { 1: true, 2: true }, extras: [], salarySnapshot: { fix: 600, child: 100, intro: 600, empty: 300 } },
-    { id: 103, date: '20.09.2026', time: '14:00–15:30', groupId: 22, projectId: 2, project: 'Зебра', teacherId: 5, done: true, cancelled: false, emptyTrip: false, intro: false, attendance: { 1: true }, extras: [], salarySnapshot: { fix: 600, child: 100, intro: 600, empty: 300 } },
-  ];
-
-  controls.set('#salary-from', { value: '2026-09-15' });
-  controls.set('#salary-to', { value: '2026-10-05' });
-  controls.set('#salary-project', { value: '1' });
-  controls.set('#salary-teacher', { value: '5' });
-
-  let printed = '';
-  let printCalls = 0;
-  context.open = () => ({
-    document: {
-      open() {},
-      write(value) { printed = value; },
-      close() {},
-    },
-    focus() {},
-    print() { printCalls += 1; },
-  });
-
-  const page = context.salary();
-  assert.match(page, /Печать \/ PDF/);
-  assert.match(page, /700 ₽/);
-  context.printSalaryAppliedV122();
-
-  assert.equal(printCalls, 1);
-  assert.match(printed, /Расчёт заработной платы/);
-  assert.match(printed, /Преподаватель:<\/b> Иванов Сергей/);
-  assert.match(printed, /Проект:<\/b> iCube/);
-  assert.match(printed, /Период:<\/b> 15\.09\.2026 – 30\.09\.2026/);
-  assert.match(printed, /16\.09\.2026/);
-  assert.doesNotMatch(printed, /02\.10\.2026/);
-  assert.doesNotMatch(printed, /20\.09\.2026/);
-  assert.match(printed, /Школа № 1/);
-  assert.match(printed, /Обычное занятие/);
-  assert.match(printed, /700 ₽/);
-  assert.doesNotMatch(printed, /05\.10\.2026/);
-});
-
-test('salary print project labels, total and empty state come from the applied calculation', async () => {
-  const source = await readFile(uiUrl, 'utf8');
-  const { context, state } = salaryContext(source);
-  state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
-  state.groups = [{ id: 22, name: 'Зебра группа', projectId: 2, project: 'Зебра', siteId: 2 }];
-  state.sites = [{ id: 2, name: 'Центр Зебра' }];
-  state.teachers = [{ id: 5, name: 'Смирнова Алина', active: true }];
-  state.salaryTeacher = '5';
-  state.salaryDateFrom = '2026-08-26';
-  state.salaryDateTo = '2026-09-25';
-  state.lessons = [
-    { id: 201, date: '10.09.2026', time: '18:00–19:30', groupId: 22, projectId: 2, project: 'Зебра', teacherId: 5, done: false, cancelled: true, emptyTrip: true, intro: false, attendance: {}, extras: [], salarySnapshot: { fix: 600, child: 100, intro: 600, empty: 300 } },
-  ];
+  state.salaryDateFrom = '2025-01-01';
+  state.salaryDateTo = '2025-01-31';
+  state.salaryReportRows = [reportRow()];
+  state.salaryReportTotal = 900;
+  state.lessons = [];
+  controls.set('#salary-from', { value: '2025-02-01' });
+  controls.set('#salary-to', { value: '2025-02-28' });
 
   let printed = '';
   context.open = () => ({
     document: { open() {}, write(value) { printed = value; }, close() {} },
     focus() {}, print() {},
   });
-
-  state.salaryProjectId = '2';
-  const zebraPage = context.salary();
-  assert.match(zebraPage, /300 ₽/);
   context.printSalaryAppliedV122();
-  assert.match(printed, /Проект:<\/b> Зебра/);
-  assert.match(printed, /Пустой выезд/);
-  assert.match(printed, /Итого за период<\/span><span>300 ₽/);
 
-  state.salaryProjectId = 'all';
-  context.printSalaryAppliedV122();
-  assert.match(printed, /Проект:<\/b> Все/);
-
-  state.salaryDateFrom = '2026-10-01';
-  state.salaryDateTo = '2026-10-31';
-  context.printSalaryAppliedV122();
-  assert.match(printed, /Начислений за выбранный период нет/);
-  assert.match(printed, /Итого за период<\/span><span>0 ₽/);
+  assert.match(printed, /Период:<\/b> 01\.01\.2025 – 31\.01\.2025/);
+  assert.match(printed, /Историческая группа/);
+  assert.match(printed, /ДК «Океан»/);
+  assert.match(printed, /iCube/);
+  assert.match(printed, /Обычное занятие/);
+  assert.match(printed, /900 ₽/);
+  assert.doesNotMatch(printed, /01\.02\.2025/);
 });
 
-test('salary print uses browser print without PDF libraries and keeps explanatory notes removed', async () => {
+test('salary empty server report is a successful zero state and loading disables Apply/PDF', async () => {
   const source = await readFile(uiUrl, 'utf8');
-  assert.doesNotMatch(source, /Пустой выезд считается отдельным начислением и не требует статуса «Проведено»/);
-  assert.doesNotMatch(source, /Обычное занятие:[^\n]*Пустой выезд:[^\n]*Отменённое занятие без отметки «Пустой выезд» не оплачивается/);
-  assert.match(source, /window\.printSalaryAppliedV122=function\(\)/);
-  assert.match(source, /printWindow\.print\(\)/);
-  assert.match(source, /@page\{size:A4 portrait/);
-  assert.doesNotMatch(source, /jspdf|pdfmake|pdfkit|puppeteer|playwright/i);
+  const { context, state } = salaryContext(source);
+  state.role = 'director';
+  state.teachers = [{ id: 5, name: 'Иванов Сергей', active: true }];
+  state.salaryTeacher = '5';
+  state.salaryReportRows = [];
+  state.salaryReportTotal = 0;
+  let html = context.salary();
+  assert.match(html, /За выбранный период начислений нет/);
+  assert.match(html, /Итого за период/);
+  assert.match(html, /0 ₽/);
+
+  state.salaryReportLoading = true;
+  html = context.salary();
+  assert.match(html, /Загрузка…/);
+  assert.match(html, /onclick="printSalaryAppliedV122\(\)" disabled/);
 });
