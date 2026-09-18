@@ -323,19 +323,17 @@ test('подтверждение удаления занятия предупр�
   assert.doesNotMatch(source, /source\.balance=0;[\s\S]*?target\.balance=/);
 });
 
-test('общая кнопка настроек сохраняет цены и зарплату, управляет dirty-state и показывает успех', async () => {
+test('настройки сохраняют цены, зарплату и партнёрство отдельными server-backed действиями и сохраняют dirty-state', async () => {
   const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
-  assert.match(source, /button\.textContent = 'Сохранить настройки'/);
-  assert.doesNotMatch(source, /Сохранить базовые цены/);
+  assert.match(source, /ensureAction\(priceBlock, 'prices', 'Сохранить цены', savePrices\)/);
+  assert.match(source, /ensureAction\(salaryBlock, 'salary', 'Сохранить ставки', saveSalaryRates\)/);
+  assert.match(source, /ensureAction\(partnerBlock, 'partner', 'Сохранить условия', savePartnerAgreement\)/);
   assert.match(source, /api\.create\('price-versions'/);
   assert.match(source, /api\.create\('salary-rate-versions'/);
+  assert.match(source, /api\.create\('partner-agreement-versions'/);
   assert.match(source, /input\.addEventListener\('input', recalculateDirty\)/);
   assert.match(source, /dirty = Object\.keys\(baseline\)\.some/);
-  assert.match(source, /function setCleanBaseline\(\)[\s\S]*?dirty = false;/);
   assert.match(source, /await window\.icubeApi\.reload\(\{ render: false \}\);/);
-  assert.match(source, /state\.page = 'settings';[\s\S]*?legacy\.render\(\);/);
-  assert.match(source, /Настройки сохранены/);
-  assert.match(source, /window\.setTimeout\(\(\) => \{ status\.hidden = true; \}, 2500\)/);
   assert.match(source, /addEventListener\('beforeunload'/);
   assert.match(source, /event\.preventDefault\(\);\s*event\.returnValue = '';/);
   assert.match(source, /Есть несохранённые изменения\. Уйти без сохранения\?/);
