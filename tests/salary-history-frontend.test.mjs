@@ -68,7 +68,7 @@ async function loadApi(setup, label) {
 const historicalRow = {
   id: '91', lessonId: '44', teacherId: '5', rateVersionId: '7', type: 'regular',
   presentChildren: 3, fixedAmount: '600.00', childrenAmount: '300.00', totalAmount: '900.00',
-  startsAt: '2025-01-15T10:00:00Z', groupId: '12', groupName: 'Историческая группа',
+  startsAt: '2025-01-15T10:00:00Z', endsAt: '2025-01-15T11:30:00Z', groupId: '12', groupName: 'Историческая группа',
   projectId: '1', projectName: 'iCubeRobots', siteId: '8', siteName: 'ДК «Океан»',
 };
 
@@ -92,11 +92,26 @@ test('Apply requests arbitrary historical dates and numeric director projectId, 
     assert.equal(setup.state.salaryDateTo, '2025-01-31');
     assert.equal(setup.state.salaryReportRows[0].groupName, 'Историческая группа');
     assert.equal(setup.state.salaryReportRows[0].siteName, 'ДК «Океан»');
+    assert.equal(setup.state.salaryReportRows[0].time, '10:00–11:30');
+    assert.equal(setup.state.salaryReportRows[0].endsAt, '2025-01-15T11:30:00Z');
     assert.equal(setup.state.salaryReportRows[0].calc.fixed, 600);
     assert.equal(setup.state.salaryReportRows[0].calc.childrenPay, 300);
     assert.equal(setup.state.salaryReportRows[0].calc.total, 900);
     assert.equal(setup.state.salaryReportTotal, 900);
     assert.deepEqual(setup.state.lessons, []);
+  } finally { setup.restore(); }
+});
+
+test('salary time falls back to start time when endsAt is absent', async () => {
+  const setup = setupFrontend({ responseRows: [{ ...historicalRow, endsAt: null }] });
+  try {
+    setup.set('#salary-teacher', '5');
+    setup.set('#salary-project', '1');
+    setup.set('#salary-from', '2025-01-01');
+    setup.set('#salary-to', '2025-01-31');
+    await loadApi(setup, 'time-fallback');
+    await globalThis.window.icubeApi.applySalaryFilters();
+    assert.equal(setup.state.salaryReportRows[0].time, '10:00');
   } finally { setup.restore(); }
 });
 

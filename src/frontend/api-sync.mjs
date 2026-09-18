@@ -124,7 +124,9 @@ function decimalCents(value) {
 
 function mapSalaryReportRow(row) {
   const date = isoToRu(timestampDate(row.startsAt));
-  const time = timestampTime(row.startsAt);
+  const startTime = timestampTime(row.startsAt);
+  const endTime = row.endsAt ? timestampTime(row.endsAt) : '';
+  const time = endTime ? `${startTime}–${endTime}` : startTime;
   const type = salaryTypeLabel[row.type] ?? row.type;
   const fixedAmount = String(row.fixedAmount ?? '0.00');
   const childrenAmount = String(row.childrenAmount ?? '0.00');
@@ -135,7 +137,7 @@ function mapSalaryReportRow(row) {
     projectId: Number(row.projectId), projectName: row.projectName ?? '',
     siteId: Number(row.siteId), siteName: row.siteName ?? '',
     groupId: Number(row.groupId), groupName: row.groupName ?? 'Группа',
-    startsAt: row.startsAt, date, time,
+    startsAt: row.startsAt, endsAt: row.endsAt ?? null, date, time,
     fixedAmount, childrenAmount, totalAmount, presentChildren: Number(row.presentChildren ?? 0), typeCode: row.type,
     lesson: {
       id: Number(row.lessonId), date, time, groupId: Number(row.groupId), groupName: row.groupName ?? 'Группа',

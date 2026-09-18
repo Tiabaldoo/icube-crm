@@ -688,7 +688,7 @@ export function createMysqlLessons(pool) {
     if (from) { conditions.push('DATE(l.starts_at)>=:from'); params.from = from; }
     if (to) { conditions.push('DATE(l.starts_at)<=:to'); params.to = to; }
     const [rows] = await pool.query(`SELECT sa.id,sa.lesson_id,sa.teacher_id,sa.rate_version_id,sa.accrual_type,sa.present_children,
-        sa.fixed_amount,sa.children_amount,sa.total_amount,l.starts_at,l.group_id,l.project_id_snapshot,
+        sa.fixed_amount,sa.children_amount,sa.total_amount,l.starts_at,l.ends_at,l.group_id,l.project_id_snapshot,
         g.name group_name,p.name project_name,COALESCE(l.site_override_id,l.site_id_snapshot) site_id,
         COALESCE(os.name,ss.name) site_name
       FROM salary_accruals sa
@@ -704,7 +704,7 @@ export function createMysqlLessons(pool) {
       rateVersionId: row.rate_version_id == null ? null : String(row.rate_version_id),
       type: row.accrual_type, presentChildren: Number(row.present_children),
       fixedAmount: String(row.fixed_amount), childrenAmount: String(row.children_amount), totalAmount: String(row.total_amount),
-      startsAt: isoDateTime(row.starts_at), groupId: String(row.group_id), groupName: row.group_name,
+      startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), groupId: String(row.group_id), groupName: row.group_name,
       projectId: String(row.project_id_snapshot), projectName: row.project_name,
       siteId: String(row.site_id), siteName: row.site_name,
     }));
