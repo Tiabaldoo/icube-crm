@@ -361,12 +361,15 @@ function rentPage() {
   }
 
   output += `<div class="muted rent-period">${isoToRu(report.period.from)} — ${isoToRu(report.period.to)}</div>`;
-  if (!report.sites.length || Number(report.totalLessons) === 0) {
+  if (!report.sites.length) {
     output += '<div class="card pad"><div class="empty">За выбранный период проведённых занятий для расчёта аренды нет.</div></div>';
   } else {
     output += '<div class="grid cols-2 rent-summary-grid">'+report.sites.map((site) =>
       `<div class="card pad rent-summary-card"><div><h3>${html(site.siteName)}</h3><div class="muted">${site.lessonCount} ${lessonCountLabel(site.lessonCount)}</div></div><b class="rent-summary-amount">${displayMoney(site.amount)}</b></div>`
     ).join('')+'</div>';
+    if (Number(report.totalLessons) === 0) {
+      output += '<div class="muted mini" style="margin-top:10px">За выбранный период на этой площадке проведённых занятий для расчёта аренды нет.</div>';
+    }
   }
 
   output += `<div class="card pad rent-total-card"><div><div class="muted">Итого за период</div><b>${report.totalLessons} ${lessonCountLabel(report.totalLessons)}</b></div><b class="rent-total-amount">${displayMoney(report.totalAmount)}</b></div>`;
