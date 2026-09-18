@@ -819,3 +819,39 @@ body.context-help-open{overflow:hidden}
   .context-help-actions{padding:12px 16px 14px}
   .context-help-actions .btn{width:100%}
 }
+
+
+/* Director site rent report */
+.rent-toolbar{align-items:end}
+.rent-toolbar>.field{min-width:180px}
+.rent-toolbar>#rent-site,.rent-toolbar>.field:first-child{min-width:240px}
+.rent-period{margin:0 0 14px}
+.rent-summary-grid{margin-top:14px}
+.rent-summary-card{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.rent-summary-card h3{margin:0 0 5px;font-size:17px}
+.rent-summary-amount{font-size:21px;white-space:nowrap}
+.rent-total-card{margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:16px}
+.rent-total-amount{font-size:28px;white-space:nowrap}
+.rent-details{display:grid;gap:14px;margin-top:14px}
+.rent-detail-group .section-title{margin-bottom:5px}
+.rent-detail-list{display:grid}
+.rent-detail-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.rent-detail-row:first-child{border-top:0}
+.rent-detail-side{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap;text-align:right;white-space:nowrap}
+
+@media(max-width:760px){
+  .page-rent .rent-toolbar{display:grid!important;grid-template-columns:1fr!important;gap:10px!important;align-items:stretch!important}
+  .page-rent .rent-toolbar>.field,.page-rent .rent-toolbar>.btn{width:100%!important;min-width:0!important;max-width:none!important}
+  .page-rent .rent-summary-grid{grid-template-columns:1fr!important}
+  .rent-summary-card,.rent-total-card{align-items:flex-start}
+  .rent-summary-amount{font-size:19px}
+  .rent-total-amount{font-size:24px}
+  .rent-detail-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:10px}
+  .rent-detail-side{align-items:flex-end;flex-direction:column;white-space:normal}
+}
+@media(max-width:390px){
+  .rent-summary-card,.rent-total-card{display:grid;grid-template-columns:1fr}
+  .rent-summary-amount,.rent-total-amount{white-space:normal}
+  .rent-detail-row{grid-template-columns:1fr}
+  .rent-detail-side{align-items:flex-start;text-align:left}
+}
