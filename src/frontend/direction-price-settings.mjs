@@ -416,7 +416,7 @@ async function saveSalaryRates() {
   if (button) button.disabled = true;
   try {
     for (const key of changedKeys) {
-      await api.create('salary-rate-versions', { key, value: values[key] });
+      await api.create('salary-rate-versions', { key, value: displayNumber(values[key]) });
     }
     const verified = await loadSalaryRates();
     if (!verified) throw new Error('Не удалось повторно загрузить ставки зарплаты');
@@ -467,9 +467,9 @@ async function savePartnerAgreement() {
   try {
     await api.create('partner-agreement-versions', {
       projectId: currentPartnerAgreement.projectId,
-      taxPercent: values.taxPercent,
-      icubePercent: values.icubePercent,
-      partnerPercent: values.partnerPercent,
+      taxPercent: displayNumber(values.taxPercent),
+      icubePercent: displayNumber(values.icubePercent),
+      partnerPercent: displayNumber(values.partnerPercent),
     });
     const verified = await loadPartnerAgreement();
     if (!verified) throw new Error('Не удалось повторно загрузить условия партнёрства');
