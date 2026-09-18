@@ -100,6 +100,10 @@ test('salary project filter supports all, iCube, Zebra and totals only filtered 
   assert.doesNotMatch(html, /iCube группа/);
   assert.match(html, /Зебра группа/);
   assert.match(html, /800 ₽/);
+
+  state.role = 'partner';
+  html = context.salary();
+  assert.doesNotMatch(html, /id="salary-project"/);
 });
 
 test('salary project change updates default dates but Apply preserves manual dates', async () => {
