@@ -2090,6 +2090,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 // iCube CRM v1.1.4 — real salary ledger from completed concrete lessons.
 (function () {
   state.salaryTeacher = state.salaryTeacher || String((state.teachers.find(function(t){return t.active!==false;}) || state.teachers[0] || {id:1}).id);
+  state.salaryProjectId = state.salaryProjectId || 'all';
   state.salaryDateFrom = state.salaryDateFrom || '2026-08-10';
   state.salaryDateTo = state.salaryDateTo || '2026-09-10';
 
@@ -2198,8 +2199,22 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       });
   }
 
+  window.setSalaryProjectDefaults = function (projectId) {
+    if(String(projectId)==='all') return;
+    const project=(state.projects||[]).find(function(p){return String(p.id)===String(projectId);});
+    if(!project || typeof window.icubeSalaryDefaultPeriod!=='function') return;
+    const period=window.icubeSalaryDefaultPeriod(project.name);
+    if(!period) return;
+    const from=document.querySelector('#salary-from');
+    const to=document.querySelector('#salary-to');
+    if(from) from.value=period.from;
+    if(to) to.value=period.to;
+  };
+
   window.applySalaryFilters = function () {
     state.salaryTeacher=document.querySelector('#salary-teacher').value;
+    const project=document.querySelector('#salary-project');
+    if(project) state.salaryProjectId=project.value;
     state.salaryDateFrom=document.querySelector('#salary-from').value;
     state.salaryDateTo=document.querySelector('#salary-to').value;
     render();
@@ -2221,6 +2236,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<option value="'+t.id+'"'+(String(t.id)===String(state.salaryTeacher)?' selected':'')+'>'+t.name+(t.active===false?' · неактивен':'')+'</option>';
     });
     html+='</select>';
+    if(state.role==='director'){
+      html+='<select class="select" id="salary-project" style="max-width:170px" onchange="setSalaryProjectDefaults(this.value)">';
+      html+='<option value="all"'+(String(state.salaryProjectId)==='all'?' selected':'')+'>Все</option>';
+      ['iCubeRobots','Зебра'].forEach(function(name){
+        const p=(state.projects||[]).find(function(project){return project.name===name;});
+        if(!p) return;
+        html+='<option value="'+p.id+'"'+(String(p.id)===String(state.salaryProjectId)?' selected':'')+'>'+(name==='iCubeRobots'?'iCube':'Зебра')+'</option>';
+      });
+      html+='</select>';
+    }
     html+='<input class="input" id="salary-from" type="date" value="'+state.salaryDateFrom+'" style="max-width:180px">';
     html+='<input class="input" id="salary-to" type="date" value="'+state.salaryDateTo+'" style="max-width:180px">';
     html+='<button class="btn primary" onclick="applySalaryFilters()">Применить</button>';
@@ -4218,8 +4243,17 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return new Date(p[0],p[1]-1,p[2]);
   }
 
+  function salaryLessonProjectIdV122(lesson){
+    if(lesson?.projectId!=null) return lesson.projectId;
+    const group=byId(state.groups,lesson?.groupId);
+    if(group?.projectId!=null) return group.projectId;
+    const project=(state.projects||[]).find(function(p){return p.name===group?.project;});
+    return project?.id??null;
+  }
+
   function salaryRowsV122(){
     const teacherId=Number(state.salaryTeacher);
+    const projectId=state.role==='director'?String(state.salaryProjectId||'all'):'all';
     const from=isoToDateV122(state.salaryDateFrom);
     const to=isoToDateV122(state.salaryDateTo);
     to.setHours(23,59,59,999);
@@ -4229,6 +4263,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         // Normal salary rows need done; empty trip does not.
         if(!l.emptyTrip && (!l.done || l.cancelled)) return false;
         if(Number(l.teacherId)!==teacherId) return false;
+        if(projectId!=='all' && String(salaryLessonProjectIdV122(l))!==projectId) return false;
         const d=parseSalaryDateV122(l.date);
         return d>=from && d<=to;
       })
@@ -4257,6 +4292,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<option value="'+t.id+'"'+(String(t.id)===String(state.salaryTeacher)?' selected':'')+'>'+t.name+(t.active===false?' · неактивен':'')+'</option>';
     });
     html+='</select>';
+    if(state.role==='director'){
+      html+='<select class="select" id="salary-project" style="max-width:170px" onchange="setSalaryProjectDefaults(this.value)">';
+      html+='<option value="all"'+(String(state.salaryProjectId)==='all'?' selected':'')+'>Все</option>';
+      ['iCubeRobots','Зебра'].forEach(function(name){
+        const p=(state.projects||[]).find(function(project){return project.name===name;});
+        if(!p) return;
+        html+='<option value="'+p.id+'"'+(String(p.id)===String(state.salaryProjectId)?' selected':'')+'>'+(name==='iCubeRobots'?'iCube':'Зебра')+'</option>';
+      });
+      html+='</select>';
+    }
     html+='<input class="input" id="salary-from" type="date" value="'+state.salaryDateFrom+'" style="max-width:180px">';
     html+='<input class="input" id="salary-to" type="date" value="'+state.salaryDateTo+'" style="max-width:180px">';
     html+='<button class="btn primary" onclick="applySalaryFilters()">Применить</button>';
@@ -4291,8 +4336,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }
     html+='</div>';
 
-    html+='<div class="card pad" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:16px"><div><b style="font-size:18px">Итого за период</b><div class="muted mini" style="margin-top:3px">Пустой выезд считается отдельным начислением и не требует статуса «Проведено».</div></div><b style="font-size:24px">'+money(total)+'</b></div>';
-    html+='<div class="notice" style="margin-top:16px">Обычное занятие: '+money(state.settings.salaryFix)+' + '+money(state.settings.salaryChild)+' × присутствующие. Пустой выезд: '+money(state.settings.salaryEmpty)+'. Отменённое занятие без отметки «Пустой выезд» не оплачивается.</div>';
+    html+='<div class="card pad" style="margin-top:16px;display:flex;justify-content:space-between;align-items:center;gap:16px"><b style="font-size:18px">Итого за период</b><b style="font-size:24px">'+money(total)+'</b></div>';
 
     return html;
   };
