@@ -32,16 +32,20 @@ test('dashboard separates today and tomorrow and keeps partner project scope', a
     dashboardLessonsForDate({ lessons, groups }, '18.09.2026').map((lesson) => lesson.id),
     [1, 2],
   );
-  assert.deepEqual(
-    dashboardLessonsForDate({ lessons, groups }, '19.09.2026').map((lesson) => lesson.id),
-    [3, 4],
-  );
+  const tomorrow = dashboardLessonsForDate({ lessons, groups }, '19.09.2026');
+  assert.deepEqual(tomorrow.map((lesson) => lesson.id), [3, 4]);
+  assert.ok(tomorrow.every((lesson) => lesson.date === '19.09.2026'));
+  assert.ok(tomorrow.every((lesson) => ![1, 2].includes(lesson.id)));
   assert.deepEqual(
     dashboardLessonsForDate({ lessons, groups }, '19.09.2026', ['2']).map((lesson) => lesson.id),
     [4],
   );
   assert.deepEqual(
     dashboardLessonsForDate({ lessons, groups }, '19.09.2026', ['3']),
+    [],
+  );
+  assert.deepEqual(
+    dashboardLessonsForDate({ lessons, groups }, '21.09.2026'),
     [],
   );
 
