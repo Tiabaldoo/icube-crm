@@ -64,13 +64,12 @@ const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
 const money = (value) => `${new Intl.NumberFormat('ru-RU').format(Number(value ?? 0))} ₽`;
 const ruDate = (date) => `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`;
 const startTime = (lesson) => String(lesson?.time ?? '').split('–')[0] || '';
-const endTime = (lesson) => String(lesson?.time ?? '').split('–')[1] || startTime(lesson);
 
-function parseRuLessonDate(date, time = '00:00') {
-  const [day, month, year] = String(date ?? '').split('.').map(Number);
-  const [hour, minute] = String(time ?? '00:00').split(':').map(Number);
-  if (![day, month, year, hour, minute].every(Number.isFinite)) return null;
-  return new Date(year, month - 1, day, hour, minute, 0, 0);
+export function dashboardLessonsForDate({ lessons = [], groups = [] } = {}, date, projectIds = null) {
+  const allowed = projectIds == null ? null : new Set(projectIds.map(String));
+  const groupIds = new Set(groups.filter((group) => projectMatches(group.projectId, allowed)).map((group) => Number(group.id)));
+  return lessons.filter((lesson) => groupIds.has(Number(lesson.groupId)) && lesson.date === date)
+    .sort((left, right) => startTime(left).localeCompare(startTime(right)));
 }
 function longToday(now) {
   const result = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).format(now);
@@ -78,11 +77,6 @@ function longToday(now) {
 }
 function monthName(now) {
   return new Intl.DateTimeFormat('ru-RU', { month: 'long' }).format(new Date(now.getFullYear(), now.getMonth(), 1));
-}
-function shortLessonDate(value) {
-  const [day, month, year] = String(value ?? '').split('.').map(Number);
-  if (![day, month, year].every(Number.isFinite)) return value;
-  return new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short' }).format(new Date(year, month - 1, day));
 }
 function projectLabel(project) {
   return project?.name === 'iCubeRobots' ? 'iCube' : project?.name ?? 'Проект';
@@ -112,11 +106,6 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     if (!allowed) return state.groups ?? [];
     const ids = new Set(allowed.map(String));
     return (state.groups ?? []).filter((group) => ids.has(String(group.projectId)));
-  }
-  function ownLessons() {
-    const groups = ownGroups();
-    const groupIds = new Set(groups.map((group) => Number(group.id)));
-    return (state.lessons ?? []).filter((lesson) => groupIds.has(Number(lesson.groupId)));
   }
   function groupFor(lesson) { return ownGroups().find((group) => Number(group.id) === Number(lesson.groupId)); }
   function projectFor(group) { return visibleProjects().find((project) => String(project.id) === String(group?.projectId)); }
@@ -149,29 +138,30 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     return `<div class="dashboard-kpi-breakdown">${rows.map((row) => `<div class="dashboard-kpi-line"><span>${safe(projectLabel(row))}</span><b>${safe(formatter(row[valueKey]))}</b></div>`).join('')}</div>`;
   }
 
-  function lessonRows(now) {
-    return ownLessons().filter((lesson) => lesson.status !== 'Отменено').map((lesson) => {
-      const start = parseRuLessonDate(lesson.date, startTime(lesson));
-      const end = parseRuLessonDate(lesson.date, endTime(lesson));
-      return { lesson, start, end };
-    }).filter((item) => item.start && item.end && item.end >= now)
-      .sort((left, right) => left.start - right.start);
-  }
-
-  function upcomingBlock(now) {
-    const today = ruDate(now);
-    const rows = lessonRows(now).slice(0, 3);
-    const content = rows.length ? rows.map(({ lesson }) => {
+  function tomorrowBlock(now) {
+    const tomorrow = new Date(now);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowDate = ruDate(tomorrow);
+    const rows = dashboardLessonsForDate(
+      { lessons: state.lessons, groups: state.groups },
+      tomorrowDate,
+      allowedProjectIds(),
+    ).filter((lesson) => lesson.status !== 'Отменено').slice(0, 3);
+    const content = rows.length ? rows.map((lesson) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
-      const datePrefix = lesson.date === today ? '' : `${shortLessonDate(lesson.date)} · `;
-      return `<div class="dashboard-upcoming-row clickable ${directionCardClass(group)}" onclick="openLesson(${lesson.id})"><div class="dashboard-upcoming-copy"><div class="dashboard-upcoming-title">${safe(siteFor(lesson, group))}</div><div class="muted mini dashboard-upcoming-meta">${safe(datePrefix)}${safe(group?.name ?? '')}</div><div class="muted mini dashboard-upcoming-meta">${safe(teacher?.name ?? 'Преподаватель не указан')}</div></div><div class="dashboard-upcoming-side"><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div>`;
-    }).join('') : '<div class="dashboard-empty">Ближайших занятий нет</div>';
-    return `<div class="card pad dashboard-panel"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo('calendar')">Календарь</button></div><div class="dashboard-upcoming">${content}</div></div>`;
+      const groupName = String(group?.name ?? '');
+      const lessonStart = startTime(lesson);
+      const schedule = lessonStart && !groupName.includes(lessonStart)
+        ? [group?.day, lessonStart].filter(Boolean).join(' · ')
+        : '';
+      return `<div class="dashboard-upcoming-row clickable ${directionCardClass(group)}" onclick="openLesson(${lesson.id})"><div class="dashboard-upcoming-copy"><div class="dashboard-upcoming-title">${safe(siteFor(lesson, group))}</div><div class="muted mini dashboard-upcoming-meta">${safe(groupName)}</div>${schedule ? `<div class="muted mini dashboard-upcoming-meta">${safe(schedule)}</div>` : ''}<div class="muted mini dashboard-upcoming-meta">${safe(teacher?.name ?? 'Преподаватель не указан')}</div></div><div class="dashboard-upcoming-side"><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div>`;
+    }).join('') : '<div class="dashboard-empty">Завтра занятий нет</div>';
+    return `<div class="card pad dashboard-panel"><div class="section-title"><h2>Занятия завтра</h2><button class="btn" onclick="navTo('calendar')">Календарь</button></div><div class="dashboard-upcoming">${content}</div></div>`;
   }
 
   function todayBlock(now) {
     const today = ruDate(now);
-    const lessons = ownLessons().filter((lesson) => lesson.date === today).sort((a, b) => startTime(a).localeCompare(startTime(b)));
+    const lessons = dashboardLessonsForDate({ lessons: state.lessons, groups: state.groups }, today, allowedProjectIds());
     const cards = lessons.map((lesson) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
       return `<div class="dashboard-lesson-card ${directionCardClass(group)}"><div class="dashboard-lesson-top"><div class="dashboard-lesson-site">${safe(siteFor(lesson, group))}</div><span class="badge ${statusBadgeClass(lesson.status)}">${safe(lesson.status)}</span></div><div class="dashboard-lesson-title">${safe(group?.name ?? 'Занятие')}</div><div class="dashboard-lesson-details"><div>${safe(group?.direction ?? '')}</div><div class="muted mini">${safe(teacher?.name ?? 'Преподаватель не указан')}</div><div><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div><div class="dashboard-lesson-actions"><button class="btn soft" onclick="openLesson(${lesson.id})">Открыть занятие</button></div></div>`;
@@ -194,8 +184,8 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     html += `<div class="card metric dashboard-kpi"><div class="label">Активные группы</div><div class="value">${metrics.activeGroups}</div>${kpiBreakdown(metrics.projects, 'activeGroups')}</div>`;
     html += `<div class="card metric dashboard-kpi"><div class="label">Оплаты за ${safe(monthName(now))}</div><div class="value">${safe(money(metrics.monthlyPayments))}</div>${kpiBreakdown(metrics.projects, 'monthlyPayments', money)}</div>`;
     html += '</div>';
-    html += `<div class="dashboard-main-grid"><div class="card pad dashboard-panel"><div class="section-title"><div><h2>Требует внимания</h2><div class="muted mini">По текущим балансам</div></div></div><div class="attention dashboard-attention"><button class="warn dashboard-attention-row" onclick="navTo('balances')"><span>Осталось 1 занятие</span><b>${attention.low}</b></button><button class="zero dashboard-attention-row" onclick="navTo('balances')"><span>Осталось 0</span><b>${attention.zero}</b></button><button class="debt dashboard-attention-row" onclick="navTo('balances')"><span>Должники</span><b>${attention.debt}</b></button></div></div>${upcomingBlock(now)}</div>`;
     html += todayBlock(now);
+    html += `<div class="dashboard-main-grid"><div class="card pad dashboard-panel"><div class="section-title"><div><h2>Требует внимания</h2><div class="muted mini">По текущим балансам</div></div></div><div class="attention dashboard-attention"><button class="warn dashboard-attention-row" onclick="navTo('balances')"><span>Осталось 1 занятие</span><b>${attention.low}</b></button><button class="zero dashboard-attention-row" onclick="navTo('balances')"><span>Осталось 0</span><b>${attention.zero}</b></button><button class="debt dashboard-attention-row" onclick="navTo('balances')"><span>Должники</span><b>${attention.debt}</b></button></div></div>${tomorrowBlock(now)}</div>`;
     html += '</div>';
     return html;
   }
