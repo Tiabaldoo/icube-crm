@@ -185,23 +185,29 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
   const isDirector = (context = {}) => (context.roles ?? []).includes('director');
 
   async function createSite(body, context = {}) {
-    if (hasRentField(body) && !isDirector(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Ставку аренды может изменять только директор');
+    const siteValues = {
+      name: text(body.name, 'name'), shortName: nullable(body.shortName), type: nullable(body.type),
+      address: nullable(body.address), note: nullable(body.note), active: active(body.active),
+      projectId: chosenProject(context, body.projectId), actorId: context.userId ?? null,
+    };
+    if (!hasRentField(body)) {
+      const [result] = await pool.query(`INSERT INTO sites (name,short_name,type,address,note,active,project_id,created_by_user_id)
+        VALUES (:name,:shortName,:type,:address,:note,:active,COALESCE(:projectId,(SELECT id FROM projects WHERE code='icube-robots' LIMIT 1)),:actorId)`, siteValues);
+      return get('sites', result.insertId, context);
+    }
+    if (!isDirector(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Ставку аренды может изменять только директор');
     let siteId;
     await inTransaction(pool, async (connection) => {
-      const requestedProjectId = chosenProject(context, body.projectId);
-      const [projectRows] = requestedProjectId == null
+      const [projectRows] = siteValues.projectId == null
         ? await connection.query("SELECT id,code FROM projects WHERE code='icube-robots' LIMIT 1")
-        : await connection.query('SELECT id,code FROM projects WHERE id=:projectId LIMIT 1', { projectId: requestedProjectId });
+        : await connection.query('SELECT id,code FROM projects WHERE id=:projectId LIMIT 1', { projectId: siteValues.projectId });
       const project = projectRows[0];
       if (!project) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Проект площадки не найден');
-      if (hasRentField(body) && project.code !== 'icube-robots') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Аренда настраивается только для площадок iCube');
+      if (project.code !== 'icube-robots') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Аренда настраивается только для площадок iCube');
       const [result] = await connection.query(`INSERT INTO sites (name,short_name,type,address,note,active,project_id,created_by_user_id)
-        VALUES (:name,:shortName,:type,:address,:note,:active,:projectId,:actorId)`, {
-        name: text(body.name, 'name'), shortName: nullable(body.shortName), type: nullable(body.type), address: nullable(body.address), note: nullable(body.note), active: active(body.active),
-        projectId: project.id, actorId: context.userId ?? null,
-      });
+        VALUES (:name,:shortName,:type,:address,:note,:active,:projectId,:actorId)`, { ...siteValues, projectId: project.id });
       siteId = result.insertId;
-      if (hasRentField(body)) await siteRent.setRate(siteId, body.rentPerLesson, context, { executor: connection, baseline: false });
+      await siteRent.setRate(siteId, body.rentPerLesson, context, { executor: connection, baseline: false });
     });
     return get('sites', siteId, context);
   }
@@ -209,17 +215,22 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
   async function updateSite(resourceId, body, context = {}) {
     const current = await get('sites', resourceId, context);
     if (body.projectId != null && String(body.projectId) !== current.projectId) throw new ApiProblem(409, 'PROJECT_TRANSFER_REQUIRED', 'Проект площадки менять нельзя');
-    if (hasRentField(body) && !isDirector(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Ставку аренды может изменять только директор');
+    const values = {
+      id: current.id, name: body.name === undefined ? current.name : text(body.name, 'name'),
+      shortName: body.shortName === undefined ? current.shortName : nullable(body.shortName),
+      type: body.type === undefined ? current.type : nullable(body.type),
+      address: body.address === undefined ? current.address : nullable(body.address),
+      note: body.note === undefined ? current.note : nullable(body.note),
+      active: body.active === undefined ? current.active : Boolean(body.active),
+    };
+    if (!hasRentField(body)) {
+      await pool.query(`UPDATE sites SET name=:name,short_name=:shortName,type=:type,address=:address,note=:note,active=:active WHERE id=:id`, values);
+      return get('sites', current.id, context);
+    }
+    if (!isDirector(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Ставку аренды может изменять только директор');
     await inTransaction(pool, async (connection) => {
-      await connection.query(`UPDATE sites SET name=:name,short_name=:shortName,type=:type,address=:address,note=:note,active=:active WHERE id=:id`, {
-        id: current.id, name: body.name === undefined ? current.name : text(body.name, 'name'),
-        shortName: body.shortName === undefined ? current.shortName : nullable(body.shortName),
-        type: body.type === undefined ? current.type : nullable(body.type),
-        address: body.address === undefined ? current.address : nullable(body.address),
-        note: body.note === undefined ? current.note : nullable(body.note),
-        active: body.active === undefined ? current.active : Boolean(body.active),
-      });
-      if (hasRentField(body)) await siteRent.setRate(current.id, body.rentPerLesson, context, { executor: connection, baseline: true });
+      await connection.query(`UPDATE sites SET name=:name,short_name=:shortName,type=:type,address=:address,note=:note,active=:active WHERE id=:id`, values);
+      await siteRent.setRate(current.id, body.rentPerLesson, context, { executor: connection, baseline: true });
     });
     return get('sites', current.id, context);
   }
