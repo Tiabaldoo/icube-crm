@@ -8,8 +8,9 @@ test('dashboard attention remains a compact vertical list and upcoming lessons a
   const [source, css] = await Promise.all([read('../src/frontend/dashboard-ui.mjs'), read('../src/ui/dashboard.css')]);
   assert.match(source, /lessonRows\(now\)\.slice\(0, 3\)/);
   assert.match(source, /dashboard-attention-row/);
-  assert.match(css, /\.dashboard-attention\{display:grid;grid-template-columns:1fr;gap:0/);
-  assert.match(css, /\.dashboard-attention-row\+\.dashboard-attention-row\{border-top:/);
+  assert.match(css, /\.dashboard-attention\{display:grid;grid-template-columns:1fr;grid-template-rows:repeat\(3,minmax\(0,1fr\)\);gap:10px/);
+  assert.match(css, /\.dashboard-attention-row\{[^}]*border:1px solid var\(--line\);border-radius:10px/);
+  assert.match(css, /@media \(min-width:981px\)\{[\s\S]*\.dashboard-main-grid\{align-items:stretch\}[\s\S]*\.dashboard-attention\{flex:1\}/);
   assert.match(css, /\.dashboard-attention-row b\{display:block;margin:0 0 0 auto/);
 });
 
