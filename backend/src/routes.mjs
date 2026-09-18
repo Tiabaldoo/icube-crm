@@ -16,6 +16,7 @@ import { assertOwned, partnerProjectId } from './project-scope.mjs';
 import { createProjectTransfers } from './project-transfers.mjs';
 import { createDailyDashboard } from './daily-dashboard.mjs';
 import { createNotifications } from './notifications.mjs';
+import { createSiteRentService } from './site-rent.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -26,7 +27,8 @@ const run = (handler, status = 200) => async (request, response, next) => {
 };
 
 export function createApiRouter(pool, {
-  catalog = createMysqlCatalog(pool),
+  siteRent = createSiteRentService(pool),
+  catalog = createMysqlCatalog(pool, { siteRent }),
   deletions = createDeletionService(pool),
   payments = createMysqlPayments(pool),
   refunds = createMysqlRefunds(pool),
@@ -166,6 +168,7 @@ export function createApiRouter(pool, {
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));
   router.get('/salary-accruals', requirePermission('salary:read'), run((request) => lessons.salaryAccruals(request.query, lessonContext(request))));
+  router.get('/site-rent-report', requirePermission('site-rent:read'), run((request) => siteRent.report(request.query, request.auth)));
   router.get('/notifications', requirePermission('notifications:read'), run((request) => notifications.list(request.auth)));
   router.get('/notifications/:id', requirePermission('*'), notImplemented('notifications/:id'));
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(projectFilters(request))));
