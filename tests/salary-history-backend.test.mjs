@@ -9,7 +9,7 @@ function pool(handler) {
 const accrual = {
   id: 91, lesson_id: 44, teacher_id: 5, rate_version_id: 7, accrual_type: 'regular',
   present_children: 3, fixed_amount: '600.00', children_amount: '300.00', total_amount: '900.00',
-  starts_at: '2025-01-15 10:00:00', group_id: 12, group_name: 'Историческая группа',
+  starts_at: '2025-01-15 10:00:00', ends_at: '2025-01-15 11:30:00', group_id: 12, group_name: 'Историческая группа',
   project_id_snapshot: 1, project_name: 'iCubeRobots', site_id: 8, site_name: 'ДК «Океан»',
 };
 
@@ -34,7 +34,7 @@ test('salary-accruals returns self-contained historical amounts, project and eff
   assert.deepEqual(rows[0], {
     id: '91', lessonId: '44', teacherId: '5', rateVersionId: '7',
     type: 'regular', presentChildren: 3, fixedAmount: '600.00', childrenAmount: '300.00', totalAmount: '900.00',
-    startsAt: '2025-01-15T10:00:00Z', groupId: '12', groupName: 'Историческая группа',
+    startsAt: '2025-01-15T10:00:00Z', endsAt: '2025-01-15T11:30:00Z', groupId: '12', groupName: 'Историческая группа',
     projectId: '1', projectName: 'iCubeRobots', siteId: '8', siteName: 'ДК «Океан»',
   });
 });
