@@ -1,17 +1,60 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { dashboardLessonsForDate } from '../src/frontend/dashboard-ui.mjs';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
 
-test('dashboard attention remains a compact vertical list and upcoming lessons are capped at three', async () => {
+test('dashboard attention remains a compact vertical list and tomorrow lessons are capped at three', async () => {
   const [source, css] = await Promise.all([read('../src/frontend/dashboard-ui.mjs'), read('../src/ui/dashboard.css')]);
-  assert.match(source, /lessonRows\(now\)\.slice\(0, 3\)/);
+  assert.match(source, /tomorrowDate,[\s\S]*allowedProjectIds\(\),[\s\S]*\.filter\(\(lesson\) => lesson\.status !== 'Отменено'\)\.slice\(0, 3\)/);
   assert.match(source, /dashboard-attention-row/);
   assert.match(css, /\.dashboard-attention\{display:grid;grid-template-columns:1fr;grid-template-rows:repeat\(3,minmax\(0,1fr\)\);gap:10px/);
   assert.match(css, /\.dashboard-attention-row\{[^}]*border:1px solid var\(--line\);border-radius:10px/);
   assert.match(css, /@media \(min-width:981px\)\{[\s\S]*\.dashboard-main-grid\{align-items:stretch\}[\s\S]*\.dashboard-attention\{flex:1\}/);
   assert.match(css, /\.dashboard-attention-row b\{display:block;margin:0 0 0 auto/);
+});
+
+test('dashboard separates today and tomorrow and keeps partner project scope', async () => {
+  const groups = [
+    { id: 1, projectId: 1 },
+    { id: 2, projectId: 2 },
+  ];
+  const lessons = [
+    { id: 1, groupId: 1, date: '18.09.2026', time: '10:00–11:30' },
+    { id: 2, groupId: 2, date: '18.09.2026', time: '12:00–13:30' },
+    { id: 3, groupId: 1, date: '19.09.2026', time: '09:00–10:30' },
+    { id: 4, groupId: 2, date: '19.09.2026', time: '11:00–12:30' },
+    { id: 6, groupId: 1, date: '19.09.2026', time: '15:00–16:30' },
+    { id: 5, groupId: 2, date: '20.09.2026', time: '08:00–09:30' },
+  ];
+
+  assert.deepEqual(
+    dashboardLessonsForDate({ lessons, groups }, '18.09.2026').map((lesson) => lesson.id),
+    [1, 2],
+  );
+  const tomorrow = dashboardLessonsForDate({ lessons, groups }, '19.09.2026');
+  assert.deepEqual(tomorrow.map((lesson) => lesson.id), [3, 4, 6]);
+  assert.ok(tomorrow.every((lesson) => lesson.date === '19.09.2026'));
+  assert.ok(tomorrow.every((lesson) => ![1, 2].includes(lesson.id)));
+  assert.deepEqual(
+    dashboardLessonsForDate({ lessons, groups }, '19.09.2026', ['2']).map((lesson) => lesson.id),
+    [4],
+  );
+  assert.deepEqual(
+    dashboardLessonsForDate({ lessons, groups }, '19.09.2026', ['3']),
+    [],
+  );
+  assert.deepEqual(
+    dashboardLessonsForDate({ lessons, groups }, '21.09.2026'),
+    [],
+  );
+
+  const source = await read('../src/frontend/dashboard-ui.mjs');
+  assert.match(source, /<h2>Занятия завтра<\/h2>/);
+  assert.match(source, /Завтра занятий нет/);
+  assert.doesNotMatch(source, /Ближайшие занятия/);
+  assert.ok(source.indexOf('html += todayBlock(now);') < source.indexOf('dashboard-main-grid'));
 });
 
 test('dashboard lesson cards use effective site once and reuse group direction classes', async () => {
