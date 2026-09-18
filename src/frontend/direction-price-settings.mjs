@@ -286,7 +286,8 @@ function bindSettingsForm() {
     const title = block.querySelector('h3')?.textContent?.trim() ?? '';
     return title === 'Партнёрство' || title === 'Партнёрство · Зебра';
   });
-  if (!priceBlock || !salaryBlock || !partnerBlock) return;
+  const settingsCard = priceBlock?.closest('.card');
+  if (!priceBlock || !salaryBlock || !partnerBlock || !settingsCard || settingsCard.dataset.apiSettingsBound === 'true') return;
 
   const pageDescription = document.querySelector('.page-head .muted');
   if (pageDescription) pageDescription.textContent = SETTINGS_DESCRIPTION;
@@ -296,6 +297,7 @@ function bindSettingsForm() {
   syncPriceInputs(priceBlock);
   syncSalaryInputs(salaryBlock);
   syncPartnerInputs(partnerBlock);
+  settingsCard.dataset.apiSettingsBound = 'true';
   recalculateDirty();
 }
 
@@ -375,6 +377,7 @@ async function savePrices() {
       await api.create('price-versions', { directionId: item.current.directionId, packagePrice: item.value });
     }
     await loadPrices();
+    await window.icubeApi.reload({ render: false });
     if (block) {
       syncPriceInputs(block);
       setStatus(block, 'settings-price-status', priceLoaded ? 'Стоимость занятий сохранена.' : priceLoadError);
