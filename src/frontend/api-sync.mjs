@@ -33,6 +33,12 @@ export function statisticsDefaultPeriod(now = new Date()) {
   const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   return { from: localIso(new Date(now.getFullYear(), now.getMonth(), 1)), to: localIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
 }
+export function rentDefaultPeriod(now = new Date()) {
+  return {
+    from: localIsoDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: localIsoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
+  };
+}
 const initialPartnerPeriod = partnerDefaultPeriod();
 legacy.state.partnerDateFrom ||= initialPartnerPeriod.from;
 legacy.state.partnerDateTo ||= initialPartnerPeriod.to;
@@ -41,6 +47,14 @@ legacy.state.statisticsDateFrom ||= initialStatisticsPeriod.from;
 legacy.state.statisticsDateTo ||= initialStatisticsPeriod.to;
 legacy.state.statisticsProjectId ||= 'all';
 legacy.state.statisticsDirectionId ||= 'all';
+const initialRentPeriod = rentDefaultPeriod();
+legacy.state.rentSiteId ||= 'all';
+legacy.state.rentDateFrom ||= initialRentPeriod.from;
+legacy.state.rentDateTo ||= initialRentPeriod.to;
+legacy.state.rentReport ??= null;
+legacy.state.rentReportLoading = false;
+legacy.state.rentReportError ??= null;
+legacy.state.rentDetailsOpen = false;
 
 function element(selector) { return document.querySelector(selector); }
 function value(selector) { return element(selector)?.value ?? ''; }
@@ -240,6 +254,149 @@ async function applySalaryFiltersApi() {
   await loadSalaryReport({ teacherId, projectId, from, to }, { commit: true, render: true });
 }
 
+function rentAccountIsDirector() {
+  return Boolean(authProfile?.roles?.includes('director')) || (!authProfile && legacy.state.role === 'director');
+}
+
+function rentReportQuery(filters) {
+  const params = new URLSearchParams();
+  params.set('from', filters.from);
+  params.set('to', filters.to);
+  if (String(filters.siteId ?? 'all') !== 'all') params.set('siteId', String(filters.siteId));
+  return `?${params.toString()}`;
+}
+
+async function loadRentReport(filters, { commit = false, render = true } = {}) {
+  if (!rentAccountIsDirector() || legacy.state.rentReportLoading) return false;
+  const previousReport = legacy.state.rentReport;
+  const previousSiteId = legacy.state.rentSiteId;
+  const previousFrom = legacy.state.rentDateFrom;
+  const previousTo = legacy.state.rentDateTo;
+  legacy.state.rentReportLoading = true;
+  legacy.state.rentReportError = null;
+  if (render) legacy.render();
+  try {
+    const report = await api.request(`/site-rent-report${rentReportQuery(filters)}`);
+    if (commit) {
+      legacy.state.rentSiteId = String(filters.siteId ?? 'all');
+      legacy.state.rentDateFrom = filters.from;
+      legacy.state.rentDateTo = filters.to;
+    }
+    legacy.state.rentReport = report;
+    legacy.state.rentDetailsOpen = false;
+    legacy.state.rentReportError = null;
+    return true;
+  } catch (error) {
+    legacy.state.rentReport = previousReport;
+    legacy.state.rentSiteId = previousSiteId;
+    legacy.state.rentDateFrom = previousFrom;
+    legacy.state.rentDateTo = previousTo;
+    legacy.state.rentReportError = 'Не удалось рассчитать аренду за выбранный период. Попробуйте ещё раз.';
+    console.error(error);
+    return false;
+  } finally {
+    legacy.state.rentReportLoading = false;
+    if (render) legacy.render();
+  }
+}
+
+async function refreshAppliedRentReport({ render = false } = {}) {
+  if (!rentAccountIsDirector()) return false;
+  return loadRentReport({
+    siteId: legacy.state.rentSiteId ?? 'all',
+    from: legacy.state.rentDateFrom,
+    to: legacy.state.rentDateTo,
+  }, { commit: true, render });
+}
+
+async function calculateSiteRentReport() {
+  if (!rentAccountIsDirector() || legacy.state.rentReportLoading) return;
+  const siteId = value('#rent-site') || 'all';
+  const from = value('#rent-from');
+  const to = value('#rent-to');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return window.alert('Укажите период расчёта аренды');
+  if (from > to) return window.alert('Дата начала периода должна быть не позже даты окончания');
+  if (siteId !== 'all' && !/^[1-9]\d*$/.test(siteId)) return window.alert('Выберите площадку');
+  await loadRentReport({ siteId, from, to }, { commit: true, render: true });
+}
+
+function toggleSiteRentDetails() {
+  legacy.state.rentDetailsOpen = !legacy.state.rentDetailsOpen;
+  legacy.render();
+}
+
+const lessonCountLabel = (count) => {
+  const value = Number(count);
+  const lastTwo = value % 100;
+  const last = value % 10;
+  if (lastTwo >= 11 && lastTwo <= 14) return 'занятий';
+  if (last === 1) return 'занятие';
+  if (last >= 2 && last <= 4) return 'занятия';
+  return 'занятий';
+};
+
+function rentPage() {
+  if (legacy.state.role !== 'director') return '';
+  const icubeProject = (legacy.state.projects ?? []).find((project) => project.code === 'icube-robots');
+  const sites = (legacy.state.sites ?? [])
+    .filter((site) => Number(site.projectId) === Number(icubeProject?.id))
+    .slice().sort((left, right) => left.name.localeCompare(right.name, 'ru'));
+  const report = legacy.state.rentReport;
+  const siteOptions = ['<option value="all">Все площадки</option>'].concat(sites.map((site) =>
+    `<option value="${site.id}"${String(site.id) === String(legacy.state.rentSiteId) ? ' selected' : ''}>${html(site.name)}${site.active === false ? ' · неактивна' : ''}</option>`
+  )).join('');
+
+  let output = `${legacy.pageHead('Расчёты аренды', 'Фактически проведённые занятия iCube и исторические ставки площадок.')}
+    <div class="toolbar rent-toolbar">
+      <div class="field"><label>Площадка</label><select class="select" id="rent-site">${siteOptions}</select></div>
+      <div class="field"><label>Дата от</label><input class="input" id="rent-from" type="date" value="${html(legacy.state.rentDateFrom)}"></div>
+      <div class="field"><label>Дата до</label><input class="input" id="rent-to" type="date" value="${html(legacy.state.rentDateTo)}"></div>
+      <button class="btn primary" onclick="icubeApi.calculateSiteRentReport()"${legacy.state.rentReportLoading ? ' disabled' : ''}>${legacy.state.rentReportLoading ? 'Загрузка…' : 'Рассчитать'}</button>
+    </div>`;
+
+  if (legacy.state.rentReportError) output += `<div class="notice" style="margin-bottom:14px">${html(legacy.state.rentReportError)}</div>`;
+  if (!report) {
+    output += '<div class="card pad"><div class="empty">Расчёт аренды загружается.</div></div>';
+    return output;
+  }
+
+  output += `<div class="muted rent-period">${isoToRu(report.period.from)} — ${isoToRu(report.period.to)}</div>`;
+  if (!report.sites.length || Number(report.totalLessons) === 0) {
+    output += '<div class="card pad"><div class="empty">За выбранный период проведённых занятий для расчёта аренды нет.</div></div>';
+  } else {
+    output += '<div class="grid cols-2 rent-summary-grid">'+report.sites.map((site) =>
+      `<div class="card pad rent-summary-card"><div><h3>${html(site.siteName)}</h3><div class="muted">${site.lessonCount} ${lessonCountLabel(site.lessonCount)}</div></div><b class="rent-summary-amount">${displayMoney(site.amount)}</b></div>`
+    ).join('')+'</div>';
+  }
+
+  output += `<div class="card pad rent-total-card"><div><div class="muted">Итого за период</div><b>${report.totalLessons} ${lessonCountLabel(report.totalLessons)}</b></div><b class="rent-total-amount">${displayMoney(report.totalAmount)}</b></div>`;
+
+  if (report.details.length) {
+    output += `<div style="margin-top:14px"><button class="btn" onclick="icubeApi.toggleSiteRentDetails()">${legacy.state.rentDetailsOpen ? 'Скрыть подробности' : 'Подробная сводка'}</button></div>`;
+    if (legacy.state.rentDetailsOpen) {
+      const grouped = report.details.reduce((map, detail) => {
+        const key = String(detail.siteId);
+        if (!map.has(key)) map.set(key, { name: detail.siteName, rows: [] });
+        map.get(key).rows.push(detail);
+        return map;
+      }, new Map());
+      output += '<div class="rent-details">';
+      for (const group of [...grouped.values()].sort((a, b) => a.name.localeCompare(b.name, 'ru'))) {
+        output += `<div class="card pad rent-detail-group"><div class="section-title"><h2>${html(group.name)}</h2></div><div class="rent-detail-list">`;
+        output += group.rows.map((detail) => {
+          const time = detail.endsAt ? `${timestampTime(detail.startsAt)}–${timestampTime(detail.endsAt)}` : timestampTime(detail.startsAt);
+          return `<div class="rent-detail-row"><div><b>${isoToRu(timestampDate(detail.startsAt))} · ${time}</b><div class="muted mini">${html(detail.directionName)} · ${html(detail.groupName)}</div><div class="muted mini">${html(detail.siteName)}</div></div><div class="rent-detail-side">${detail.introGroup ? '<span class="badge amber">Ознакомительное</span>' : ''}<b>${displayMoney(detail.rentRate)}</b></div></div>`;
+        }).join('');
+        output += '</div></div>';
+      }
+      output += '</div>';
+    }
+  }
+  return output;
+}
+
+window.icubeRentPage = rentPage;
+
 async function reload({ render = true } = {}) {
   if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) return reloadTeacher({ render });
   const partner = authProfile?.roles?.includes('partner') && !authProfile.roles.includes('director');
@@ -283,6 +440,7 @@ async function reload({ render = true } = {}) {
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
   await refreshAppliedSalaryReport({ render: false });
+  if (rentAccountIsDirector() && !partner) await refreshAppliedRentReport({ render: false });
   if (render) legacy.render();
 }
 
@@ -314,6 +472,12 @@ async function saveSite(resourceId, returnToGroup) {
   try {
     const body = { name: value('#sf-name').trim(), shortName: value('#sf-short').trim(), type: value('#sf-type'), address: value('#sf-address').trim(), note: value('#sf-note').trim(), active: value('#sf-active') === 'true', projectId: value('#sf-project') || undefined };
     if (!body.name || !body.shortName) return window.alert('Укажите полное и короткое название площадки');
+    const project = (legacy.state.projects ?? []).find((item) => String(item.id) === String(body.projectId));
+    if (legacy.state.role === 'director' && project?.code === 'icube-robots' && element('#sf-rent')) {
+      const rent = value('#sf-rent').trim();
+      if (!/^\d{1,10}(?:\.\d{1,2})?$/.test(rent)) return window.alert('Укажите корректную ставку аренды от 0 ₽ с точностью до копеек');
+      body.rentPerLesson = rent;
+    }
     const saved = resourceId ? await api.update('sites', resourceId, body) : await api.create('sites', body);
     await reload({ render: false });
     if (returnToGroup) { legacy.state.pendingGroupDraft = { ...(legacy.state.pendingGroupDraft ?? {}), siteId: saved.id }; window.groupForm(legacy.state.pendingGroupDraft.id, legacy.state.pendingGroupDraft); }
@@ -1225,6 +1389,7 @@ window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment,
   transferDirectionBalanceForm, refreshBalanceTransferPreview, confirmBalanceTransfer,
   cancelBalanceTransferPrompt, cancelBalanceTransfer, loadStatistics,
   calculatePartnerSettlement, applySalaryFilters: applySalaryFiltersApi, refreshSalaryReport: refreshAppliedSalaryReport,
+  calculateSiteRentReport, toggleSiteRentDetails, refreshSiteRentReport: refreshAppliedRentReport,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
