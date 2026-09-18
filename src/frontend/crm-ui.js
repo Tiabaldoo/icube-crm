@@ -4370,14 +4370,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<div class="list"><div class="row header salary-row"><div>Дата / группа</div><div>Детей</div><div>Фикс</div><div>За детей</div><div>Итого</div></div>';
       html+=rows.map(function(x){
         const l=x.lesson,g=x.group,c=x.calc;
-        const site=g?byId(state.sites,g.siteId):null;
         const typeBadge=c.type==='Пустой выезд'
           ? '<span class="badge amber">Пустой выезд</span>'
           : c.type==='Ознакомительное занятие'
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+l.date+' · '+(g?g.name:'Группа')+'</b><div class="muted mini">'+l.time+(site?' · '+site.name:'')+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
