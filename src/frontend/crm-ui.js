@@ -195,7 +195,7 @@ function balances(){
 function salary(){
  const rows=[{date:'12.08',group:'Роботы · Чт 14:00',n:7,type:'normal'},{date:'19.08',group:'Роботы · Чт 14:00',n:5,type:'normal'},{date:'26.08',group:'Роботы · Чт 14:00',n:0,type:'empty'},{date:'02.09',group:'Роботы · Чт 14:00',n:6,type:'normal'}];
  let total=rows.reduce((s,r)=>s+(r.type==='empty'?state.settings.salaryEmpty:state.settings.salaryFix+r.n*state.settings.salaryChild),0);
- return pageHead('Зарплата','Табель по проведённым занятиям. Преподаватель этот раздел не видит.','<button class="btn">Скачать PDF</button>')+`<div class="toolbar"><select class="select" style="max-width:240px"><option>Иванов Сергей</option><option>Смирнова Алина</option></select><input class="input" type="date" value="2026-08-10" style="max-width:170px"><input class="input" type="date" value="2026-09-10" style="max-width:170px"><button class="btn primary">Применить</button></div><div class="card list"><div class="row header"><div>Дата / группа</div><div>Детей</div><div>Фикс</div><div>За детей</div><div>Итого</div></div>${rows.map(r=>{let fix=r.type==='empty'?state.settings.salaryEmpty:state.settings.salaryFix,child=r.type==='empty'?0:r.n*state.settings.salaryChild,total=fix+child;return `<div class="row"><div><b>${r.date}</b><div class="muted mini">${r.group}${r.type==='empty'?' · Пустой выезд':''}</div></div><div>${r.n}</div><div>${money(fix)}</div><div>${money(child)}</div><div class="money">${money(total)}</div></div>`}).join('')}</div><div class="card pad" style="margin-top:14px;display:flex;justify-content:space-between;font-size:18px"><b>Итого за период</b><b>${money(total)}</b></div>`;
+ return pageHead('Зарплата','Табель по проведённым занятиям. Преподаватель этот раздел не видит.','')+`<div class="toolbar"><select class="select" style="max-width:240px"><option>Иванов Сергей</option><option>Смирнова Алина</option></select><input class="input" type="date" value="2026-08-10" style="max-width:170px"><input class="input" type="date" value="2026-09-10" style="max-width:170px"><button class="btn primary">Применить</button></div><div class="card list"><div class="row header"><div>Дата / группа</div><div>Детей</div><div>Фикс</div><div>За детей</div><div>Итого</div></div>${rows.map(r=>{let fix=r.type==='empty'?state.settings.salaryEmpty:state.settings.salaryFix,child=r.type==='empty'?0:r.n*state.settings.salaryChild,total=fix+child;return `<div class="row"><div><b>${r.date}</b><div class="muted mini">${r.group}${r.type==='empty'?' · Пустой выезд':''}</div></div><div>${r.n}</div><div>${money(fix)}</div><div>${money(child)}</div><div class="money">${money(total)}</div></div>`}).join('')}</div><div class="card pad" style="margin-top:14px;display:flex;justify-content:space-between;font-size:18px"><b>Итого за период</b><b>${money(total)}</b></div>`;
 }
 function partner(){
  const pay=41000,tax=pay*state.settings.tax/100,salary=10000,dist=pay-tax-salary,icube=dist*state.settings.icubeShare/100,partner=dist*state.settings.partnerShare/100,cash=8000,transfer=partner-cash;
@@ -2227,7 +2227,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     let html=pageHead(
       'Зарплата',
       'Расчёт по фактически проведённым занятиям и фактическому преподавателю.',
-      '<button class="btn">Скачать PDF</button>'
+      ''
     );
 
     html+='<div class="toolbar">';
@@ -4276,14 +4276,102 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       });
   }
 
-  window.salary=function(){
+  function salaryProjectLabelV122(projectId){
+    if(String(projectId||'all')==='all') return 'Все';
+    const project=(state.projects||[]).find(function(p){return String(p.id)===String(projectId);});
+    const name=project?.name||'';
+    return name==='iCubeRobots'?'iCube':name==='Зебра'?'Зебра':name||'—';
+  }
+
+  function salaryRowProjectLabelV122(lesson,group){
+    const projectId=salaryLessonProjectIdV122(lesson);
+    const project=(state.projects||[]).find(function(p){return String(p.id)===String(projectId);});
+    const name=project?.name||lesson?.project||group?.project||'';
+    return name==='iCubeRobots'?'iCube':name==='Зебра'?'Зебра':name||'—';
+  }
+
+  function salaryAppliedViewV122(){
     const rows=salaryRowsV122();
-    const total=rows.reduce(function(sum,x){return sum+x.calc.total;},0);
+    return {
+      teacher:byId(state.teachers,Number(state.salaryTeacher)),
+      projectLabel:salaryProjectLabelV122(state.salaryProjectId||'all'),
+      from:state.salaryDateFrom,
+      to:state.salaryDateTo,
+      rows:rows,
+      total:rows.reduce(function(sum,x){return sum+x.calc.total;},0)
+    };
+  }
+
+  function salaryPrintDateV122(iso){
+    const p=String(iso||'').split('-');
+    return p.length===3?p[2]+'.'+p[1]+'.'+p[0]:String(iso||'');
+  }
+
+  function salaryPrintEscapeV122(value){
+    return String(value??'').replace(/[&<>"']/g,function(ch){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+    });
+  }
+
+  function salaryPrintHtmlV122(view){
+    const rows=view.rows.map(function(x){
+      const l=x.lesson,g=x.group,c=x.calc;
+      const site=g?byId(state.sites,g.siteId):null;
+      const children=c.type==='Пустой выезд'?'—':String(c.children??0);
+      return '<tr>'+
+        '<td>'+salaryPrintEscapeV122(l.date)+'</td>'+
+        '<td>'+salaryPrintEscapeV122(l.time)+'</td>'+
+        '<td>'+salaryPrintEscapeV122(g?.name||'Группа')+'</td>'+
+        '<td>'+salaryPrintEscapeV122(site?.name||'—')+'</td>'+
+        '<td>'+salaryPrintEscapeV122(salaryRowProjectLabelV122(l,g))+'</td>'+
+        '<td>'+salaryPrintEscapeV122(c.type||'Обычное занятие')+'</td>'+
+        '<td class="num">'+salaryPrintEscapeV122(children)+'</td>'+
+        '<td class="money">'+salaryPrintEscapeV122(money(c.total))+'</td>'+
+      '</tr>';
+    }).join('');
+    const body=rows||'<tr><td colspan="8" class="empty">Начислений за выбранный период нет</td></tr>';
+    return '<!doctype html><html lang="ru"><head><meta charset="UTF-8">'+
+      '<meta name="viewport" content="width=device-width,initial-scale=1">'+
+      '<title>Расчёт заработной платы</title><style>'+
+      '@page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{margin:0;color:#101828;font-family:Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.35}'+
+      'h1{margin:0 0 12px;font-size:20pt}.meta{display:grid;grid-template-columns:1fr 1fr;gap:5px 18px;margin-bottom:16px}.meta div:last-child{grid-column:1/-1}'+
+      'table{width:100%;border-collapse:collapse;table-layout:fixed}thead{display:table-header-group}th,td{border:1px solid #d0d5dd;padding:6px 7px;vertical-align:top;overflow-wrap:anywhere}th{background:#f2f4f7;text-align:left;font-size:9pt}'+
+      'tr{break-inside:avoid;page-break-inside:avoid}.num,.money{text-align:right;white-space:nowrap}.empty{text-align:center;padding:22px;color:#667085}.total{display:flex;justify-content:space-between;gap:20px;margin-top:16px;padding-top:10px;border-top:2px solid #101828;font-size:14pt;font-weight:700}'+
+      '.footer{margin-top:8px;color:#667085;font-size:8.5pt}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}'+
+      '</style></head><body>'+
+      '<h1>Расчёт заработной платы</h1>'+
+      '<div class="meta"><div><b>Преподаватель:</b> '+salaryPrintEscapeV122(view.teacher?.name||'—')+'</div>'+
+      '<div><b>Проект:</b> '+salaryPrintEscapeV122(view.projectLabel)+'</div>'+
+      '<div><b>Период:</b> '+salaryPrintEscapeV122(salaryPrintDateV122(view.from))+' – '+salaryPrintEscapeV122(salaryPrintDateV122(view.to))+'</div></div>'+
+      '<table><thead><tr><th style="width:10%">Дата</th><th style="width:11%">Время</th><th style="width:18%">Группа</th><th style="width:17%">Площадка</th><th style="width:9%">Проект</th><th style="width:16%">Тип</th><th style="width:8%">Присут.</th><th style="width:11%">Сумма</th></tr></thead><tbody>'+body+'</tbody></table>'+
+      '<div class="total"><span>Итого за период</span><span>'+salaryPrintEscapeV122(money(view.total))+'</span></div>'+
+      '</body></html>';
+  }
+
+  window.printSalaryAppliedV122=function(){
+    if(state.role!=='director') return;
+    const view=salaryAppliedViewV122();
+    const printWindow=window.open('','_blank');
+    if(!printWindow){
+      window.alert('Не удалось открыть печатную версию. Разрешите всплывающие окна для CRM.');
+      return;
+    }
+    printWindow.document.open();
+    printWindow.document.write(salaryPrintHtmlV122(view));
+    printWindow.document.close();
+    if(typeof printWindow.focus==='function') printWindow.focus();
+    printWindow.print();
+  };
+
+  window.salary=function(){
+    const view=salaryAppliedViewV122();
+    const rows=view.rows;
+    const total=view.total;
 
     let html=pageHead(
       'Зарплата',
       'Расчёт по проведённым занятиям и пустым выездам фактического преподавателя.',
-      '<button class="btn">Скачать PDF</button>'
+      ''
     );
 
     html+='<div class="toolbar">';
@@ -4305,6 +4393,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<input class="input" id="salary-from" type="date" value="'+state.salaryDateFrom+'" style="max-width:180px">';
     html+='<input class="input" id="salary-to" type="date" value="'+state.salaryDateTo+'" style="max-width:180px">';
     html+='<button class="btn primary" onclick="applySalaryFilters()">Применить</button>';
+    if(state.role==='director') html+='<button class="btn" onclick="printSalaryAppliedV122()">Печать / PDF</button>';
     html+='</div>';
 
     html+='<div class="card child-ledger-card">';
