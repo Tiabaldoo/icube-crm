@@ -85,7 +85,6 @@ test('help modal has four practical sections and temporary teacher notice', asyn
   const html = renderContextHelpHtml(getContextHelp('teacher', 'teacherLesson'), { temporaryTeacher: true });
   for (const title of ['Что здесь можно делать','Как пользоваться','Важные правила','Если что-то не получается']) assert.match(html, new RegExp(title));
   assert.match(html, /Сейчас вы просматриваете интерфейс преподавателя/);
-  assert.match(html, /role="dialog"|aria-modal/);
 });
 
 test('open and close help leave page state unchanged and Escape closes it', async () => {
@@ -170,8 +169,9 @@ test('open and close help leave page state unchanged and Escape closes it', asyn
 
 test('context help is static frontend content with accessible button and no API calls', async () => {
   const source = await readFile(moduleUrl, 'utf8');
-  assert.match(source, /state\.role/);
-  assert.match(source, /state\.page/);
+  assert.match(source, /state\?\.role/);
+  assert.match(source, /state\?\.page/);
+  assert.match(source, /role="dialog" aria-modal="true"/);
   assert.match(source, /aria-label', 'Справка по странице'/);
   assert.match(source, /aria-label="Закрыть справку"/);
   assert.match(source, /event\.key === 'Escape'/);
