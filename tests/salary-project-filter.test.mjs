@@ -52,7 +52,7 @@ function reportRow({
   siteId = 8,
   siteName = 'ДК «Океан»',
   date = '15.01.2025',
-  time = '10:00',
+  time = '10:00–11:30',
   type = 'Обычное занятие',
   children = 3,
   fixed = 600,
@@ -103,7 +103,7 @@ test('salary page renders historical server rows with state.lessons empty', asyn
 
   const html = context.salary();
   assert.match(html, /Историческая группа/);
-  assert.match(html, /10:00 · ДК «Океан» · iCube/);
+  assert.match(html, /10:00–11:30 · ДК «Океан» · iCube/);
   assert.match(html, /600 ₽/);
   assert.match(html, /300 ₽/);
   assert.match(html, /900 ₽/);
@@ -174,6 +174,7 @@ test('salary PDF uses the applied historical server report and ignores unapplied
 
   assert.match(printed, /Период:<\/b> 01\.01\.2025 – 31\.01\.2025/);
   assert.match(printed, /Историческая группа/);
+  assert.match(printed, /10:00–11:30/);
   assert.match(printed, /ДК «Океан»/);
   assert.match(printed, /iCube/);
   assert.match(printed, /Обычное занятие/);
