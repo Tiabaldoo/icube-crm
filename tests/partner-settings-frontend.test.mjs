@@ -2,40 +2,53 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-test('общая кнопка сохраняет партнёрские параметры через существующий settings flow', async () => {
-  const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
+const sourceUrl = new URL('../src/frontend/direction-price-settings.mjs', import.meta.url);
+
+test('salary settings use server versions, separate save action and sequential POSTs', async () => {
+  const source = await readFile(sourceUrl, 'utf8');
+  assert.match(source, /api\.list\('salary-rate-versions'\)/);
+  assert.match(source, /button\.textContent = label/);
+  assert.match(source, /ensureAction\(salaryBlock, 'salary', 'Сохранить ставки', saveSalaryRates\)/);
+  assert.match(source, /for \(const key of changedKeys\) \{\s*await api\.create\('salary-rate-versions'/);
+  assert.doesNotMatch(source, /Promise\.all\([^)]*salary-rate-versions/s);
+  assert.match(source, /const verified = await loadSalaryRates\(\)/);
+  assert.match(source, /state\.serverSalaryRates/);
+  assert.match(source, /input\.removeAttribute\('onchange'\)/);
+  assert.match(source, /step: '0\.01'/);
+});
+
+test('partner settings are Zebra-only, validated and saved through one server version request', async () => {
+  const source = await readFile(sourceUrl, 'utf8');
   assert.match(source, /api\.list\('partner-agreement-versions'\)/);
-  assert.match(source, /api\.create\('partner-agreement-versions'/);
-  assert.match(source, /projectCode: 'zebra'/);
-  assert.match(source, /settings-partner-tax/);
-  assert.match(source, /settings-partner-icube/);
-  assert.match(source, /settings-partner-share/);
-  assert.match(source, /taxPercent: normalizePercent\(currentPartnerValues\.taxPercent\)/);
-  assert.match(source, /icubePercent: normalizePercent\(currentPartnerValues\.icubePercent\)/);
-  assert.match(source, /partnerPercent: normalizePercent\(currentPartnerValues\.partnerPercent\)/);
-  assert.match(source, /dirty = Object\.keys\(baseline\)\.some/);
-  assert.match(source, /input\.addEventListener\('input', recalculateDirty\)/);
-  assert.equal((source.match(/button\.textContent = 'Сохранить настройки'/g) ?? []).length, 1);
-  assert.doesNotMatch(source, /Сохранить партнёрские настройки/);
+  assert.match(source, /ensureAction\(partnerBlock, 'partner', 'Сохранить условия', savePartnerAgreement\)/);
+  assert.match(source, /title\.textContent = 'Партнёрство · Зебра'/);
+  assert.match(source, /Доли iCube и партнёра в сумме должны составлять 100%\./);
+  assert.match(source, /api\.create\('partner-agreement-versions', \{\s*projectId: currentPartnerAgreement\.projectId,/);
+  assert.match(source, /const verified = await loadPartnerAgreement\(\)/);
+  assert.match(source, /step: '0\.001'/);
+  assert.doesNotMatch(source, /DEFAULT_PARTNER_VALUES/);
 });
 
-test('zebra без partner_id не блокирует загрузку и сохранение цен/зарплаты', async () => {
-  const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
-  assert.match(source, /const \[prices, salaryRates\] = await Promise\.all\(\[\s*api\.list\('price-versions'\),\s*api\.list\('salary-rate-versions'\),\s*\]\);/);
-  assert.match(source, /await loadPartnerAgreement\(\);/);
-  assert.match(source, /\['PARTNER_NOT_CONFIGURED', 'PARTNER_AGREEMENT_NOT_CONFIGURED'\]\.includes\(error\.code\)/);
-  assert.match(source, /applyPartnerAgreement\(null\);/);
-  assert.match(source, /DEFAULT_PARTNER_VALUES[\s\S]*?taxPercent: '4\.000'[\s\S]*?icubePercent: '40\.000'[\s\S]*?partnerPercent: '60\.000'/);
-  assert.match(source, /Сначала настройте партнёра проекта «Зебра»/);
-  assert.match(source, /if \(partnerSettingsAvailable && currentPartnerAgreement\)/);
+test('settings load errors are isolated and disable fake frontend saves', async () => {
+  const source = await readFile(sourceUrl, 'utf8');
+  assert.match(source, /Не удалось загрузить ставки зарплаты\. Обновите страницу или попробуйте ещё раз\./);
+  assert.match(source, /Не удалось загрузить условия партнёрства\. Обновите страницу или попробуйте ещё раз\./);
+  assert.match(source, /button\.disabled = !salaryLoaded \|\| savingSalary/);
+  assert.match(source, /button\.disabled = !partnerLoaded \|\| !partnerSettingsAvailable \|\| savingPartner/);
+  assert.match(source, /await Promise\.all\(\[loadPrices\(\), loadSalaryRates\(\), loadPartnerAgreement\(\)\]\)/);
+  assert.match(source, /window\.icubeFinancialSettingsReady = initializeSettings\(\)/);
+});
+
+test('price version flow remains on existing price-versions API and reloads CRM state', async () => {
+  const source = await readFile(sourceUrl, 'utf8');
+  assert.match(source, /api\.list\('price-versions'\)/);
   assert.match(source, /api\.create\('price-versions'/);
-  assert.match(source, /api\.create\('salary-rate-versions'/);
-  assert.doesNotMatch(source, /if \(!currentPartnerAgreement\) return window\.alert/);
+  assert.match(source, /await window\.icubeApi\.reload\(\{ render: false \}\)/);
+  assert.match(source, /Базовая цена абонемента за 4 занятия/);
 });
 
-test('страница заменяет верхнюю техническую подпись и удаляет production-подпись', async () => {
-  const source = await readFile(new URL('../src/frontend/direction-price-settings.mjs', import.meta.url), 'utf8');
-  assert.match(source, /Основные параметры работы CRM: цены, зарплаты и условия партнёрских проектов\./);
-  assert.match(source, /pageDescription\.textContent = SETTINGS_DESCRIPTION/);
-  assert.match(source, /productionNotice\?\.remove\(\)/);
+test('settings module only starts privileged financial loads for directors', async () => {
+  const source = await readFile(sourceUrl, 'utf8');
+  assert.match(source, /if \(authenticatedUser\?\.roles\?\.includes\('director'\)\) \{/);
+  assert.doesNotMatch(source, /localStorage/);
 });
