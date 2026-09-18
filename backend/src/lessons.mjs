@@ -677,16 +677,37 @@ export function createMysqlLessons(pool) {
   async function salaryAccruals(filters = {}, context = {}) {
     if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав для просмотра зарплаты');
     const conditions = ['sa.reversed_at IS NULL']; const params = {};
-    const projectId = partnerProjectId(context);
+    const authProjectId = partnerProjectId(context);
+    const requestedProjectId = !authProjectId && filters.projectId ? identifier(filters.projectId, 'projectId') : null;
+    const projectId = authProjectId ?? requestedProjectId;
     if (projectId) { conditions.push('l.project_id_snapshot=:projectId'); params.projectId = projectId; }
     if (filters.teacherId) { conditions.push('sa.teacher_id=:teacherId'); params.teacherId = identifier(filters.teacherId, 'teacherId'); }
-    if (filters.from) { conditions.push('DATE(l.starts_at)>=:from'); params.from = dateOnly(filters.from, 'from'); }
-    if (filters.to) { conditions.push('DATE(l.starts_at)<=:to'); params.to = dateOnly(filters.to, 'to'); }
-    const [rows] = await pool.query(`SELECT sa.*,l.starts_at,g.name group_name FROM salary_accruals sa JOIN lessons l ON l.id=sa.lesson_id
-      JOIN study_groups g ON g.id=l.group_id WHERE ${conditions.join(' AND ')} ORDER BY l.starts_at,sa.id`, params);
-    return rows.map((row) => ({ id: String(row.id), lessonId: String(row.lesson_id), teacherId: String(row.teacher_id), rateVersionId: row.rate_version_id == null ? null : String(row.rate_version_id),
-      type: row.accrual_type, presentChildren: Number(row.present_children), fixedAmount: String(row.fixed_amount), childrenAmount: String(row.children_amount), totalAmount: String(row.total_amount),
-      startsAt: isoDateTime(row.starts_at), groupName: row.group_name }));
+    const from = filters.from ? dateOnly(filters.from, 'from') : null;
+    const to = filters.to ? dateOnly(filters.to, 'to') : null;
+    if (from && to && from > to) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Дата начала периода должна быть не позже даты окончания');
+    if (from) { conditions.push('DATE(l.starts_at)>=:from'); params.from = from; }
+    if (to) { conditions.push('DATE(l.starts_at)<=:to'); params.to = to; }
+    const [rows] = await pool.query(`SELECT sa.id,sa.lesson_id,sa.teacher_id,sa.rate_version_id,sa.accrual_type,sa.present_children,
+        sa.fixed_amount,sa.children_amount,sa.total_amount,l.starts_at,l.group_id,l.project_id_snapshot,
+        g.name group_name,p.name project_name,COALESCE(l.site_override_id,l.site_id_snapshot) site_id,
+        COALESCE(os.name,ss.name) site_name
+      FROM salary_accruals sa
+      JOIN lessons l ON l.id=sa.lesson_id
+      JOIN study_groups g ON g.id=l.group_id
+      JOIN projects p ON p.id=l.project_id_snapshot
+      JOIN sites ss ON ss.id=l.site_id_snapshot
+      LEFT JOIN sites os ON os.id=l.site_override_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY l.starts_at,sa.id`, params);
+    return rows.map((row) => ({
+      id: String(row.id), lessonId: String(row.lesson_id), teacherId: String(row.teacher_id),
+      rateVersionId: row.rate_version_id == null ? null : String(row.rate_version_id),
+      type: row.accrual_type, presentChildren: Number(row.present_children),
+      fixedAmount: String(row.fixed_amount), childrenAmount: String(row.children_amount), totalAmount: String(row.total_amount),
+      startsAt: isoDateTime(row.starts_at), groupId: String(row.group_id), groupName: row.group_name,
+      projectId: String(row.project_id_snapshot), projectName: row.project_name,
+      siteId: String(row.site_id), siteName: row.site_name,
+    }));
   }
 
   async function notifications(context = {}) {

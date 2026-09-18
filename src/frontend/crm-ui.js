@@ -2212,12 +2212,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   };
 
   window.applySalaryFilters = function () {
-    state.salaryTeacher=document.querySelector('#salary-teacher').value;
-    const project=document.querySelector('#salary-project');
-    if(project) state.salaryProjectId=project.value;
-    state.salaryDateFrom=document.querySelector('#salary-from').value;
-    state.salaryDateTo=document.querySelector('#salary-to').value;
-    render();
+    if(window.icubeApi?.applySalaryFilters) return window.icubeApi.applySalaryFilters();
   };
 
   window.salary = function () {
@@ -2262,14 +2257,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<div class="list"><div class="row header salary-row"><div>Дата / группа</div><div>Детей</div><div>Фикс</div><div>За детей</div><div>Итого</div></div>';
       html+=rows.map(function(x){
         const l=x.lesson,g=x.group,c=x.calc;
-        const site=g?byId(state.sites,g.siteId):null;
         const typeBadge=c.type==='Пустой выезд'
           ? '<span class="badge amber">Пустой выезд</span>'
           : c.type==='Ознакомительное занятие'
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+l.date+' · '+(g?g.name:'Группа')+'</b><div class="muted mini">'+l.time+(site?' · '+site.name:'')+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+' · '+salaryRowProjectLabelV122(l,g)+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
@@ -4243,37 +4237,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return new Date(p[0],p[1]-1,p[2]);
   }
 
-  function salaryLessonProjectIdV122(lesson){
-    if(lesson?.projectId!=null) return lesson.projectId;
-    const group=byId(state.groups,lesson?.groupId);
-    if(group?.projectId!=null) return group.projectId;
-    const project=(state.projects||[]).find(function(p){return p.name===group?.project;});
-    return project?.id??null;
-  }
-
   function salaryRowsV122(){
-    const teacherId=Number(state.salaryTeacher);
-    const projectId=state.role==='director'?String(state.salaryProjectId||'all'):'all';
-    const from=isoToDateV122(state.salaryDateFrom);
-    const to=isoToDateV122(state.salaryDateTo);
-    to.setHours(23,59,59,999);
-
-    return (state.lessons||[])
-      .filter(function(l){
-        // Normal salary rows need done; empty trip does not.
-        if(!l.emptyTrip && (!l.done || l.cancelled)) return false;
-        if(Number(l.teacherId)!==teacherId) return false;
-        if(projectId!=='all' && String(salaryLessonProjectIdV122(l))!==projectId) return false;
-        const d=parseSalaryDateV122(l.date);
-        return d>=from && d<=to;
-      })
-      .map(function(l){
-        return {lesson:l,group:byId(state.groups,l.groupId),calc:salaryCalculation(l)};
-      })
-      .sort(function(a,b){
-        return parseSalaryDateV122(a.lesson.date)-parseSalaryDateV122(b.lesson.date) ||
-          String(a.lesson.time).localeCompare(String(b.lesson.time));
-      });
+    return Array.isArray(state.salaryReportRows) ? state.salaryReportRows : [];
   }
 
   function salaryProjectLabelV122(projectId){
@@ -4284,9 +4249,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function salaryRowProjectLabelV122(lesson,group){
-    const projectId=salaryLessonProjectIdV122(lesson);
-    const project=(state.projects||[]).find(function(p){return String(p.id)===String(projectId);});
-    const name=project?.name||lesson?.project||group?.project||'';
+    const name=lesson?.projectName||lesson?.project||group?.project||'';
     return name==='iCubeRobots'?'iCube':name==='Зебра'?'Зебра':name||'—';
   }
 
@@ -4298,7 +4261,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       from:state.salaryDateFrom,
       to:state.salaryDateTo,
       rows:rows,
-      total:rows.reduce(function(sum,x){return sum+x.calc.total;},0)
+      total:Number(state.salaryReportTotal ?? rows.reduce(function(sum,x){return sum+x.calc.total;},0))
     };
   }
 
@@ -4316,13 +4279,12 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function salaryPrintHtmlV122(view){
     const rows=view.rows.map(function(x){
       const l=x.lesson,g=x.group,c=x.calc;
-      const site=g?byId(state.sites,g.siteId):null;
       const children=c.type==='Пустой выезд'?'—':String(c.children??0);
       return '<tr>'+
         '<td>'+salaryPrintEscapeV122(l.date)+'</td>'+
         '<td>'+salaryPrintEscapeV122(l.time)+'</td>'+
-        '<td>'+salaryPrintEscapeV122(g?.name||'Группа')+'</td>'+
-        '<td>'+salaryPrintEscapeV122(site?.name||'—')+'</td>'+
+        '<td>'+salaryPrintEscapeV122(l?.groupName||g?.name||'Группа')+'</td>'+
+        '<td>'+salaryPrintEscapeV122(l?.siteName||g?.siteName||'—')+'</td>'+
         '<td>'+salaryPrintEscapeV122(salaryRowProjectLabelV122(l,g))+'</td>'+
         '<td>'+salaryPrintEscapeV122(c.type||'Обычное занятие')+'</td>'+
         '<td class="num">'+salaryPrintEscapeV122(children)+'</td>'+
@@ -4349,7 +4311,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   window.printSalaryAppliedV122=function(){
-    if(state.role!=='director') return;
+    if(state.role!=='director' || state.salaryReportLoading) return;
     const view=salaryAppliedViewV122();
     const printWindow=window.open('','_blank');
     if(!printWindow){
@@ -4392,9 +4354,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }
     html+='<input class="input" id="salary-from" type="date" value="'+state.salaryDateFrom+'" style="max-width:180px">';
     html+='<input class="input" id="salary-to" type="date" value="'+state.salaryDateTo+'" style="max-width:180px">';
-    html+='<button class="btn primary" onclick="applySalaryFilters()">Применить</button>';
-    if(state.role==='director') html+='<button class="btn" onclick="printSalaryAppliedV122()">Печать / PDF</button>';
+    html+='<button class="btn primary" onclick="applySalaryFilters()"'+(state.salaryReportLoading?' disabled':'')+'>'+(state.salaryReportLoading?'Загрузка…':'Применить')+'</button>';
+    if(state.role==='director') html+='<button class="btn" onclick="printSalaryAppliedV122()"'+(state.salaryReportLoading?' disabled':'')+'>Печать / PDF</button>';
     html+='</div>';
+    if(state.salaryReportError) html+='<div class="notice" style="margin-top:12px">'+state.salaryReportError+'</div>';
 
     html+='<div class="card child-ledger-card">';
     html+='<div class="child-ledger-head"><div><h2>Табель</h2><div class="muted mini child-ledger-count">'+rows.length+' начислений</div></div>';
@@ -4407,14 +4370,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<div class="list"><div class="row header salary-row"><div>Дата / группа</div><div>Детей</div><div>Фикс</div><div>За детей</div><div>Итого</div></div>';
       html+=rows.map(function(x){
         const l=x.lesson,g=x.group,c=x.calc;
-        const site=g?byId(state.sites,g.siteId):null;
         const typeBadge=c.type==='Пустой выезд'
           ? '<span class="badge amber">Пустой выезд</span>'
           : c.type==='Ознакомительное занятие'
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+l.date+' · '+(g?g.name:'Группа')+'</b><div class="muted mini">'+l.time+(site?' · '+site.name:'')+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+' · '+salaryRowProjectLabelV122(l,g)+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
