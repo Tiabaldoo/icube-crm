@@ -2263,7 +2263,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+' · '+salaryRowProjectLabelV122(l,g)+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
