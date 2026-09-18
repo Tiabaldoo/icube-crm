@@ -103,7 +103,7 @@ test('salary page renders historical server rows with state.lessons empty', asyn
 
   const html = context.salary();
   assert.match(html, /Историческая группа/);
-  assert.match(html, /ДК «Океан»/);
+  assert.match(html, /10:00 · ДК «Океан» · iCube/);
   assert.match(html, /600 ₽/);
   assert.match(html, /300 ₽/);
   assert.match(html, /900 ₽/);
