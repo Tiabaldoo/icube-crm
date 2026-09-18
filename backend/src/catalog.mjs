@@ -79,12 +79,16 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
   async function sites(context = {}) {
     const projectId = partnerProject(context);
     const includeRent = (context.roles ?? []).includes('director');
+    if (!includeRent) {
+      return (await rows(`SELECT id,project_id,name,short_name,type,address,note,active FROM sites
+        WHERE deleted_at IS NULL AND (:projectId IS NULL OR project_id=:projectId) ORDER BY name`, { projectId })).map(mapSite);
+    }
     const siteRows = await rows(`SELECT s.id,s.project_id,s.name,s.short_name,s.type,s.address,s.note,s.active,p.code project_code,
       (SELECT rr.rate FROM site_rent_rate_versions rr WHERE rr.site_id=s.id AND rr.valid_to IS NULL ORDER BY rr.valid_from DESC,rr.id DESC LIMIT 1) rent_per_lesson,
       EXISTS(SELECT 1 FROM site_rent_rate_versions rh WHERE rh.site_id=s.id) rent_configured
       FROM sites s JOIN projects p ON p.id=s.project_id
       WHERE s.deleted_at IS NULL AND (:projectId IS NULL OR s.project_id=:projectId) ORDER BY s.name`, { projectId });
-    return siteRows.map((row) => mapSite(row, { includeRent }));
+    return siteRows.map((row) => mapSite(row, { includeRent: true }));
   }
 
   async function teachers(context = {}) {
