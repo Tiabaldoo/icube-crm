@@ -56,10 +56,10 @@ function openLesson(id,teacher=false){state.selectedLesson=id;state.page=teacher
 function modal(html){state.modal=html;render()}
 function closeModal(){state.modal=null;render()}
 const navItems=[
- ['dashboard','Главная'],['children','Дети'],['groups','Группы'],['calendar','Календарь'],['payments','Оплаты'],['refunds','Возвраты'],['balances','Балансы / долги'],['teachers','Преподаватели'],['sites','Площадки'],['salary','Зарплата'],['settlements','Расчёты'],['partner','Партнёр'],['stats','Статистика'],['settings','Настройки']
+ ['dashboard','Главная'],['children','Дети'],['groups','Группы'],['calendar','Календарь'],['payments','Оплаты'],['refunds','Возвраты'],['balances','Балансы / долги'],['teachers','Преподаватели'],['sites','Площадки'],['salary','Зарплата'],['rent','Расчёты аренды'],['settlements','Расчёты'],['partner','Партнёр'],['stats','Статистика'],['settings','Настройки']
 ];
 function shell(content,title='iCube CRM'){
- const visibleNav=navItems.filter(([p])=>state.role==='partner'?!['partner','stats','settings'].includes(p):p!=='settlements');
+ const visibleNav=navItems.filter(([p])=>state.role==='partner'?!['partner','rent','stats','settings'].includes(p):p!=='settlements');
  return `<div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">iC</div><div>iCube CRM</div></div><div class="nav">${visibleNav.map(([p,l],i)=>`${i===7?'<small>Управление</small>':''}<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></aside><main class="main"><header class="topbar"><div class="crumb">${title}</div><div class="top-actions"><div><select class="role-switch" onchange="state.role=this.value; state.page=this.value==='teacher'?'teacherToday':'dashboard'; render()"><option value="director" ${state.role==='director'?'selected':''}>Директор</option><option value="teacher" ${state.role==='teacher'?'selected':''}>Преподаватель</option></select><div class="muted mini">Режим прототипа</div></div><div class="avatar">ИЯ</div></div></header><div class="content">${content}</div><div class="mobile-nav">${[['dashboard','Главная'],['children','Дети'],['calendar','Календарь'],['payments','Оплаты'],[state.role==='partner'?'groups':'settings','Ещё']].map(([p,l])=>`<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></main></div>`;
 }
 function pageHead(title,sub='',action=''){return `<div class="page-head"><div><h1>${title}</h1><div class="muted">${sub}</div></div>${action}</div>`}
@@ -197,6 +197,7 @@ function salary(){
  let total=rows.reduce((s,r)=>s+(r.type==='empty'?state.settings.salaryEmpty:state.settings.salaryFix+r.n*state.settings.salaryChild),0);
  return pageHead('Зарплата','Табель по проведённым занятиям. Преподаватель этот раздел не видит.','')+`<div class="toolbar"><select class="select" style="max-width:240px"><option>Иванов Сергей</option><option>Смирнова Алина</option></select><input class="input" type="date" value="2026-08-10" style="max-width:170px"><input class="input" type="date" value="2026-09-10" style="max-width:170px"><button class="btn primary">Применить</button></div><div class="card list"><div class="row header"><div>Дата / группа</div><div>Детей</div><div>Фикс</div><div>За детей</div><div>Итого</div></div>${rows.map(r=>{let fix=r.type==='empty'?state.settings.salaryEmpty:state.settings.salaryFix,child=r.type==='empty'?0:r.n*state.settings.salaryChild,total=fix+child;return `<div class="row"><div><b>${r.date}</b><div class="muted mini">${r.group}${r.type==='empty'?' · Пустой выезд':''}</div></div><div>${r.n}</div><div>${money(fix)}</div><div>${money(child)}</div><div class="money">${money(total)}</div></div>`}).join('')}</div><div class="card pad" style="margin-top:14px;display:flex;justify-content:space-between;font-size:18px"><b>Итого за период</b><b>${money(total)}</b></div>`;
 }
+function rent(){return typeof window.icubeRentPage==='function'?window.icubeRentPage():pageHead('Расчёты аренды','Расходы iCube на аренду площадок')+'<div class="card pad"><div class="empty">Загрузка расчёта…</div></div>'}
 function partner(){
  const pay=41000,tax=pay*state.settings.tax/100,salary=10000,dist=pay-tax-salary,icube=dist*state.settings.icubeShare/100,partner=dist*state.settings.partnerShare/100,cash=8000,transfer=partner-cash;
  return pageHead('Партнёрский расчёт','Проект «Зебра» · произвольный период')+`<div class="toolbar"><input class="input" type="date" value="2026-08-25" style="max-width:180px"><input class="input" type="date" value="2026-09-25" style="max-width:180px"><button class="btn primary">Рассчитать</button></div><div class="grid cols-2"><div class="card pad"><div class="section-title"><h2>Расчёт прибыли</h2></div><div class="partner-calc"><div class="calc-line"><span>Все оплаты</span><b>${money(pay)}</b></div><div class="calc-line"><span>Налог ${state.settings.tax}%</span><b class="negative">−${money(tax)}</b></div><div class="calc-line"><span>ЗП преподавателя</span><b class="negative">−${money(salary)}</b></div><div class="calc-line total"><span>К распределению</span><span>${money(dist)}</span></div><div class="calc-line"><span>iCube ${state.settings.icubeShare}%</span><b>${money(icube)}</b></div><div class="calc-line"><span>Екатерина ${state.settings.partnerShare}%</span><b>${money(partner)}</b></div></div></div><div class="card pad"><div class="section-title"><h2>Кто кому переводит</h2></div><div class="calc-line"><span>Доля Екатерины</span><b>${money(partner)}</b></div><div class="calc-line"><span>Уже у Екатерины наличными</span><b>${money(cash)}</b></div><div style="margin-top:18px;padding:18px;border-radius:12px;background:var(--greenbg)"><div class="muted">Перевести Екатерине</div><div style="font-size:30px;font-weight:800;color:var(--green)">${money(transfer)}</div></div><div class="muted mini" style="margin-top:10px">Если наличных у партнёра станет больше итоговой доли, блок автоматически должен показывать сумму к передаче iCube.</div></div></div>`;
@@ -209,7 +210,7 @@ function settings(){
 function render(){
  let content='',title='iCube CRM';
  if(state.role==='teacher'){if(!['teacherToday','teacherLesson'].includes(state.page))state.page='teacherToday';content=state.page==='teacherLesson'?teacherLesson():teacherToday();document.querySelector('#app').innerHTML=teacherShell(content)+(state.modal?`<div class="modal-backdrop"><div class="modal">${state.modal}</div></div>`:'');return}
- const pages={dashboard,children,child,groups,group,sites,teachers,calendar,lesson,payments,refunds,balances,salary,partner,stats,settings};content=(pages[state.page]||dashboard)();document.querySelector('#app').innerHTML=shell(content,title)+(state.modal?`<div class="modal-backdrop"><div class="modal">${state.modal}</div></div>`:'');
+ const pages={dashboard,children,child,groups,group,sites,teachers,calendar,lesson,payments,refunds,balances,salary,rent,partner,stats,settings};content=(pages[state.page]||dashboard)();document.querySelector('#app').innerHTML=shell(content,title)+(state.modal?`<div class="modal-backdrop"><div class="modal">${state.modal}</div></div>`:'');
 }
 render();
 
@@ -1721,7 +1722,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       document.querySelector('#app').innerHTML=teacherShell(content)+(state.modal?'<div class="modal-backdrop"><div class="modal">'+state.modal+'</div></div>':'');
       return;
     }
-    const pages={dashboard:dashboard,children:children,child:child,groups:groups,group:group,sites:sites,teachers:teachers,calendar:calendar,lesson:lesson,payments:payments,refunds:refunds,balances:balances,salary:salary,settlements:function(){return typeof window.partnerSettlementPage==='function'?window.partnerSettlementPage():partner();},partner:partner,stats:stats,settings:settings};
+    const pages={dashboard:dashboard,children:children,child:child,groups:groups,group:group,sites:sites,teachers:teachers,calendar:calendar,lesson:lesson,payments:payments,refunds:refunds,balances:balances,salary:salary,rent:rent,settlements:function(){return typeof window.partnerSettlementPage==='function'?window.partnerSettlementPage():partner();},partner:partner,stats:stats,settings:settings};
     content=(pages[state.page]||dashboard)();
     document.querySelector('#app').innerHTML=shell(content,title)+(state.modal?'<div class="modal-backdrop"><div class="modal">'+state.modal+'</div></div>':'');
   };
@@ -1842,6 +1843,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     } else {state.modal=null;state.page='teachers';render();}
   };
 
+  window.refreshSiteRentField=function(){
+    const wrap=document.querySelector('#sf-rent-wrap');
+    if(!wrap) return;
+    const projectId=document.querySelector('#sf-project')?.value;
+    const project=(state.projects||[]).find(function(p){return String(p.id)===String(projectId);});
+    wrap.hidden=!(state.role==='director'&&project?.code==='icube-robots');
+  };
+
   window.siteForm = function(id, returnToGroup) {
     const s=id?byId(state.sites,id):null;
     let html='<h3>'+(s?'Редактировать площадку':'Новая площадка')+'</h3><div class="form-grid">';
@@ -1849,7 +1858,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const projects=state.projects||[];
     const defaultProject=projects.find(function(p){return p.code==='icube-robots';})||projects[0];
     const selectedProject=s?.projectId||defaultProject?.id;
-    html+='<div class="field"><label>Проект</label>'+(s?'<input type="hidden" id="sf-project" value="'+selectedProject+'"><b>'+projects.find(function(p){return p.id===selectedProject;})?.name+'</b>':'<select class="select" id="sf-project">'+projects.map(function(p){return '<option value="'+p.id+'"'+(p.id===selectedProject?' selected':'')+'>'+p.name+'</option>';}).join('')+'</select>')+'</div>';
+    const selectedProjectRow=projects.find(function(p){return String(p.id)===String(selectedProject);});
+    html+='<div class="field"><label>Проект</label>'+(s?'<input type="hidden" id="sf-project" value="'+selectedProject+'"><b>'+selectedProjectRow?.name+'</b>':'<select class="select" id="sf-project" onchange="refreshSiteRentField()">'+projects.map(function(p){return '<option value="'+p.id+'"'+(String(p.id)===String(selectedProject)?' selected':'')+'>'+p.name+'</option>';}).join('')+'</select>')+'</div>';
     html+='<div class="field"><label>Короткое название</label><input class="input" id="sf-short" value="'+(s?.shortName||'')+'" placeholder="Зебра"></div>';
     html+='<div class="field"><label>Тип</label><select class="select" id="sf-type">';
     ['Школа','ДК','Развивающий центр','Другое'].forEach(function(x){html+='<option'+(s?.type===x?' selected':'')+'>'+x+'</option>';});
@@ -1857,6 +1867,15 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Адрес</label><input class="input" id="sf-address" value="'+(s?.address||'')+'"></div>';
     html+='<div class="field span-2"><label>Примечание</label><textarea class="textarea" id="sf-note">'+(s?.note||'')+'</textarea></div>';
     html+='<div class="field span-2"><label>Статус</label><select class="select" id="sf-active"><option value="true"'+(s?.active!==false?' selected':'')+'>Активна</option><option value="false"'+(s?.active===false?' selected':'')+'>Неактивна</option></select></div>';
+    if(state.role==='director'){
+      const showRent=selectedProjectRow?.code==='icube-robots';
+      const rentHint=s
+        ? (s.rentConfigured
+          ? 'Изменение ставки создаст новую историческую версию. Прошлые занятия останутся по прежней ставке.'
+          : 'Это первая ставка для площадки. Она станет базовой и будет использована также для уже проведённых занятий этой площадки.')
+        : '0 ₽ — площадка бесплатная. Аренда начисляется только за фактически проведённые занятия iCube.';
+      html+='<div class="field span-2" id="sf-rent-wrap"'+(showRent?'':' hidden')+'><label>Аренда за проведённое занятие, ₽</label><input class="input" id="sf-rent" type="number" min="0" step="0.01" value="'+(s?.rentPerLesson??'0')+'"><div class="muted mini" style="margin-top:6px">'+rentHint+'</div></div>';
+    }
     html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="icubeApi.saveSite('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
     modal(html);
   };
@@ -1892,7 +1911,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const sorted=state.sites.slice().sort(function(a,b){return Number(b.active!==false)-Number(a.active!==false)||a.name.localeCompare(b.name);});
     let html=pageHead('Площадки','Площадки не удаляются: неиспользуемую площадку можно сделать неактивной.','<button class="btn primary" onclick="siteForm(null,false)">+ Площадка</button>');
     html+='<div class="grid cols-3">';
-    html+=sorted.map(function(s){return '<div class="card pad clickable group-card" onclick="siteForm('+s.id+',false)"><div style="display:flex;justify-content:space-between;gap:8px"><span class="badge gray">'+s.type+'</span><span class="badge '+(s.active?'green':'gray')+'">'+(s.active?'Активна':'Неактивна')+'</span></div><h3 style="margin-bottom:4px">'+s.name+'</h3><div class="badge blue">'+s.shortName+'</div><div class="muted" style="margin-top:12px">'+(s.address||'Адрес не указан')+'</div><div style="margin-top:13px">'+(s.note||'')+'</div><div class="muted mini" style="margin-top:12px">'+state.groups.filter(function(g){return g.siteId===s.id;}).length+' групп</div><div class="group-card-hint">Редактировать →</div></div>';}).join('');
+    html+=sorted.map(function(s){
+      const project=(state.projects||[]).find(function(p){return Number(p.id)===Number(s.projectId);});
+      const rentLine=state.role==='director'&&project?.code==='icube-robots'
+        ? '<div class="muted mini" style="margin-top:5px">'+(s.rentConfigured?'Аренда: '+money(Number(s.rentPerLesson||0))+' / занятие':'Аренда: не настроена')+'</div>'
+        : '';
+      return '<div class="card pad clickable group-card" onclick="siteForm('+s.id+',false)"><div style="display:flex;justify-content:space-between;gap:8px"><span class="badge gray">'+s.type+'</span><span class="badge '+(s.active?'green':'gray')+'">'+(s.active?'Активна':'Неактивна')+'</span></div><h3 style="margin-bottom:4px">'+s.name+'</h3><div class="badge blue">'+s.shortName+'</div><div class="muted" style="margin-top:12px">'+(s.address||'Адрес не указан')+'</div><div style="margin-top:13px">'+(s.note||'')+'</div><div class="muted mini" style="margin-top:12px">'+state.groups.filter(function(g){return g.siteId===s.id;}).length+' групп</div>'+rentLine+'<div class="group-card-hint">Редактировать →</div></div>';
+    }).join('');
     html+='</div>'; return html;
   };
 
@@ -5951,6 +5976,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     ['teachers','Преподаватели'],
     ['sites','Площадки'],
     ['salary','Зарплата'],
+    ['rent','Расчёты аренды'],
     ['settlements','Расчёты'],
     ['partner','Партнёр'],
     ['stats','Статистика'],
@@ -5971,7 +5997,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       '<aside class="mobile-drawer" onclick="event.stopPropagation()">'+
         '<div class="mobile-drawer-head"><div class="brand"><div class="brand-mark">iC</div><div>iCube CRM</div></div><button class="mobile-drawer-close" onclick="closeMobileMenuV129()">×</button></div>'+
         '<div class="mobile-drawer-nav">'+
-          mobileNavItems.filter(function(x){return state.role==='partner'?!['partner','stats','settings'].includes(x[0]):x[0]!=='settlements';}).map(function(x,i){
+          mobileNavItems.filter(function(x){return state.role==='partner'?!['partner','rent','stats','settings'].includes(x[0]):x[0]!=='settlements';}).map(function(x,i){
             return (i===7?'<div class="mobile-drawer-section">Управление</div>':'')+
               '<button class="'+(state.page===x[0]?'active':'')+'" onclick="mobileNavToV129(\''+x[0]+'\')">'+x[1]+'</button>';
           }).join('')+

@@ -101,6 +101,6 @@ test('partner has a dedicated read-only settlements page without project selecto
   assert.match(apiSource, /К переводу/);
   assert.match(apiSource, /Взаиморасчёт закрыт/);
   assert.match(uiSource, /\['settlements','Расчёты'\]/);
-  assert.match(uiSource, /state\.role==='partner'\?\!\['partner','stats','settings'\]\.includes\(p\):p!=='settlements'/);
+  assert.match(uiSource, /state\.role==='partner'\?\!\['partner','rent','stats','settings'\]\.includes\(p\):p!=='settlements'/);
   assert.match(css, /\.page-partner \.toolbar,\.page-settlements \.toolbar/);
 });

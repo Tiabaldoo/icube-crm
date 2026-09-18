@@ -1,4 +1,5 @@
 import { inTransaction } from './db.mjs';
+import { createSiteRentService } from './site-rent.mjs';
 
 export class ApiProblem extends Error {
   constructor(status, code, message, details) {
@@ -30,7 +31,14 @@ const rowId = (row) => String(row.id);
 
 function mapProject(row) { return { id: rowId(row), code: row.code, name: row.name, partnerId: row.partner_id == null ? null : String(row.partner_id), active: Boolean(row.active) }; }
 function mapDirection(row) { return { id: rowId(row), code: row.code, name: row.name, active: Boolean(row.active) }; }
-function mapSite(row) { return { id: rowId(row), projectId: String(row.project_id), name: row.name, shortName: row.short_name, type: row.type, address: row.address, note: row.note, active: Boolean(row.active) }; }
+function mapSite(row, { includeRent = false } = {}) {
+  const result = { id: rowId(row), projectId: String(row.project_id), name: row.name, shortName: row.short_name, type: row.type, address: row.address, note: row.note, active: Boolean(row.active) };
+  if (includeRent && row.project_code === 'icube-robots') {
+    result.rentPerLesson = row.rent_per_lesson == null ? '0.00' : String(row.rent_per_lesson);
+    result.rentConfigured = Boolean(row.rent_configured);
+  }
+  return result;
+}
 
 function mysqlError(error) {
   if (error instanceof ApiProblem) return error;
@@ -40,7 +48,7 @@ function mysqlError(error) {
   return error;
 }
 
-export function createMysqlCatalog(pool) {
+export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool) } = {}) {
   async function rows(sql, params = {}) { const [result] = await pool.query(sql, params); return result; }
   async function one(sql, params = {}) { return (await rows(sql, params))[0] ?? null; }
   function scopedTeacherId(context = {}) {
@@ -68,8 +76,20 @@ export function createMysqlCatalog(pool) {
   async function projects(context = {}) { const projectId = partnerProject(context); return (await rows(`SELECT id, code, name, partner_id, active FROM projects
     WHERE (:projectId IS NULL OR id=:projectId) ORDER BY name`, { projectId })).map(mapProject); }
   async function directions() { return (await rows('SELECT id, code, name, active FROM directions ORDER BY name')).map(mapDirection); }
-  async function sites(context = {}) { const projectId = partnerProject(context); return (await rows(`SELECT id,project_id,name,short_name,type,address,note,active FROM sites
-    WHERE deleted_at IS NULL AND (:projectId IS NULL OR project_id=:projectId) ORDER BY name`, { projectId })).map(mapSite); }
+  async function sites(context = {}) {
+    const projectId = partnerProject(context);
+    const includeRent = (context.roles ?? []).includes('director');
+    if (!includeRent) {
+      return (await rows(`SELECT id,project_id,name,short_name,type,address,note,active FROM sites
+        WHERE deleted_at IS NULL AND (:projectId IS NULL OR project_id=:projectId) ORDER BY name`, { projectId })).map(mapSite);
+    }
+    const siteRows = await rows(`SELECT s.id,s.project_id,s.name,s.short_name,s.type,s.address,s.note,s.active,p.code project_code,
+      (SELECT rr.rate FROM site_rent_rate_versions rr WHERE rr.site_id=s.id AND rr.valid_to IS NULL ORDER BY rr.valid_from DESC,rr.id DESC LIMIT 1) rent_per_lesson,
+      EXISTS(SELECT 1 FROM site_rent_rate_versions rh WHERE rh.site_id=s.id) rent_configured
+      FROM sites s JOIN projects p ON p.id=s.project_id
+      WHERE s.deleted_at IS NULL AND (:projectId IS NULL OR s.project_id=:projectId) ORDER BY s.name`, { projectId });
+    return siteRows.map((row) => mapSite(row, { includeRent: true }));
+  }
 
   async function teachers(context = {}) {
     const projectId = partnerProject(context);
@@ -165,17 +185,57 @@ export function createMysqlCatalog(pool) {
     try { await pool.query('UPDATE directions SET code=:code,name=:name,active=:active WHERE id=:id', { id: current.id, code: body.code === undefined ? current.code : text(body.code, 'code'), name: body.name === undefined ? current.name : text(body.name, 'name'), active: body.active === undefined ? current.active : Boolean(body.active) }); return get('directions', current.id); }
     catch (error) { throw mysqlError(error); }
   }
+  const hasRentField = (body) => Object.prototype.hasOwnProperty.call(body ?? {}, 'rentPerLesson');
+  const isDirector = (context = {}) => (context.roles ?? []).includes('director');
+
   async function createSite(body, context = {}) {
-    const [result] = await pool.query(`INSERT INTO sites (name,short_name,type,address,note,active,project_id,created_by_user_id)
-      VALUES (:name,:shortName,:type,:address,:note,:active,COALESCE(:projectId,(SELECT id FROM projects WHERE code='icube-robots' LIMIT 1)),:actorId)`, {
-      name: text(body.name, 'name'), shortName: nullable(body.shortName), type: nullable(body.type), address: nullable(body.address), note: nullable(body.note), active: active(body.active),
-      projectId: chosenProject(context, body.projectId), actorId: context.userId ?? null });
-    return get('sites', result.insertId, context);
+    const siteValues = {
+      name: text(body.name, 'name'), shortName: nullable(body.shortName), type: nullable(body.type),
+      address: nullable(body.address), note: nullable(body.note), active: active(body.active),
+      projectId: chosenProject(context, body.projectId), actorId: context.userId ?? null,
+    };
+    if (!hasRentField(body)) {
+      const [result] = await pool.query(`INSERT INTO sites (name,short_name,type,address,note,active,project_id,created_by_user_id)
+        VALUES (:name,:shortName,:type,:address,:note,:active,COALESCE(:projectId,(SELECT id FROM projects WHERE code='icube-robots' LIMIT 1)),:actorId)`, siteValues);
+      return get('sites', result.insertId, context);
+    }
+    if (!isDirector(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Ставку аренды может изменять только директор');
+    let siteId;
+    await inTransaction(pool, async (connection) => {
+      const [projectRows] = siteValues.projectId == null
+        ? await connection.query("SELECT id,code FROM projects WHERE code='icube-robots' LIMIT 1")
+        : await connection.query('SELECT id,code FROM projects WHERE id=:projectId LIMIT 1', { projectId: siteValues.projectId });
+      const project = projectRows[0];
+      if (!project) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Проект площадки не найден');
+      if (project.code !== 'icube-robots') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Аренда настраивается только для площадок iCube');
+      const [result] = await connection.query(`INSERT INTO sites (name,short_name,type,address,note,active,project_id,created_by_user_id)
+        VALUES (:name,:shortName,:type,:address,:note,:active,:projectId,:actorId)`, { ...siteValues, projectId: project.id });
+      siteId = result.insertId;
+      await siteRent.setRate(siteId, body.rentPerLesson, context, { executor: connection, baseline: false });
+    });
+    return get('sites', siteId, context);
   }
+
   async function updateSite(resourceId, body, context = {}) {
     const current = await get('sites', resourceId, context);
     if (body.projectId != null && String(body.projectId) !== current.projectId) throw new ApiProblem(409, 'PROJECT_TRANSFER_REQUIRED', 'Проект площадки менять нельзя');
-    await pool.query(`UPDATE sites SET name=:name,short_name=:shortName,type=:type,address=:address,note=:note,active=:active WHERE id=:id`, { id: current.id, name: body.name === undefined ? current.name : text(body.name, 'name'), shortName: body.shortName === undefined ? current.shortName : nullable(body.shortName), type: body.type === undefined ? current.type : nullable(body.type), address: body.address === undefined ? current.address : nullable(body.address), note: body.note === undefined ? current.note : nullable(body.note), active: body.active === undefined ? current.active : Boolean(body.active) });
+    const values = {
+      id: current.id, name: body.name === undefined ? current.name : text(body.name, 'name'),
+      shortName: body.shortName === undefined ? current.shortName : nullable(body.shortName),
+      type: body.type === undefined ? current.type : nullable(body.type),
+      address: body.address === undefined ? current.address : nullable(body.address),
+      note: body.note === undefined ? current.note : nullable(body.note),
+      active: body.active === undefined ? current.active : Boolean(body.active),
+    };
+    if (!hasRentField(body)) {
+      await pool.query(`UPDATE sites SET name=:name,short_name=:shortName,type=:type,address=:address,note=:note,active=:active WHERE id=:id`, values);
+      return get('sites', current.id, context);
+    }
+    if (!isDirector(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Ставку аренды может изменять только директор');
+    await inTransaction(pool, async (connection) => {
+      await connection.query(`UPDATE sites SET name=:name,short_name=:shortName,type=:type,address=:address,note=:note,active=:active WHERE id=:id`, values);
+      await siteRent.setRate(current.id, body.rentPerLesson, context, { executor: connection, baseline: true });
+    });
     return get('sites', current.id, context);
   }
   async function assertIds(connection, table, ids, field) {
