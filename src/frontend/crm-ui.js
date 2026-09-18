@@ -2213,7 +2213,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   window.applySalaryFilters = function () {
     state.salaryTeacher=document.querySelector('#salary-teacher').value;
-    state.salaryProjectId=document.querySelector('#salary-project').value;
+    const project=document.querySelector('#salary-project');
+    if(project) state.salaryProjectId=project.value;
     state.salaryDateFrom=document.querySelector('#salary-from').value;
     state.salaryDateTo=document.querySelector('#salary-to').value;
     render();
@@ -2235,14 +2236,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<option value="'+t.id+'"'+(String(t.id)===String(state.salaryTeacher)?' selected':'')+'>'+t.name+(t.active===false?' · неактивен':'')+'</option>';
     });
     html+='</select>';
-    html+='<select class="select" id="salary-project" style="max-width:170px" onchange="setSalaryProjectDefaults(this.value)">';
-    html+='<option value="all"'+(String(state.salaryProjectId)==='all'?' selected':'')+'>Все</option>';
-    ['iCubeRobots','Зебра'].forEach(function(name){
-      const p=(state.projects||[]).find(function(project){return project.name===name;});
-      if(!p) return;
-      html+='<option value="'+p.id+'"'+(String(p.id)===String(state.salaryProjectId)?' selected':'')+'>'+(name==='iCubeRobots'?'iCube':'Зебра')+'</option>';
-    });
-    html+='</select>';
+    if(state.role==='director'){
+      html+='<select class="select" id="salary-project" style="max-width:170px" onchange="setSalaryProjectDefaults(this.value)">';
+      html+='<option value="all"'+(String(state.salaryProjectId)==='all'?' selected':'')+'>Все</option>';
+      ['iCubeRobots','Зебра'].forEach(function(name){
+        const p=(state.projects||[]).find(function(project){return project.name===name;});
+        if(!p) return;
+        html+='<option value="'+p.id+'"'+(String(p.id)===String(state.salaryProjectId)?' selected':'')+'>'+(name==='iCubeRobots'?'iCube':'Зебра')+'</option>';
+      });
+      html+='</select>';
+    }
     html+='<input class="input" id="salary-from" type="date" value="'+state.salaryDateFrom+'" style="max-width:180px">';
     html+='<input class="input" id="salary-to" type="date" value="'+state.salaryDateTo+'" style="max-width:180px">';
     html+='<button class="btn primary" onclick="applySalaryFilters()">Применить</button>';
@@ -4250,7 +4253,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function salaryRowsV122(){
     const teacherId=Number(state.salaryTeacher);
-    const projectId=String(state.salaryProjectId||'all');
+    const projectId=state.role==='director'?String(state.salaryProjectId||'all'):'all';
     const from=isoToDateV122(state.salaryDateFrom);
     const to=isoToDateV122(state.salaryDateTo);
     to.setHours(23,59,59,999);
