@@ -102,6 +102,19 @@ test('Apply requests arbitrary historical dates and numeric director projectId, 
   } finally { setup.restore(); }
 });
 
+test('salary time falls back to start time when endsAt is absent', async () => {
+  const setup = setupFrontend({ responseRows: [{ ...historicalRow, endsAt: null }] });
+  try {
+    setup.set('#salary-teacher', '5');
+    setup.set('#salary-project', '1');
+    setup.set('#salary-from', '2025-01-01');
+    setup.set('#salary-to', '2025-01-31');
+    await loadApi(setup, 'time-fallback');
+    await globalThis.window.icubeApi.applySalaryFilters();
+    assert.equal(setup.state.salaryReportRows[0].time, '10:00');
+  } finally { setup.restore(); }
+});
+
 test('director Все omits projectId and partner frontend never sends arbitrary projectId', async () => {
   for (const [role, projectValue] of [['director', 'all'], ['partner', '1']]) {
     const setup = setupFrontend({ role, responseRows: [] });
