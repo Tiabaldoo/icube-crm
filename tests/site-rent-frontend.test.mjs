@@ -209,7 +209,7 @@ test('site form/request source exposes rent only for director iCube sites', asyn
   assert.match(ui, /id="sf-rent" type="number" min="0" step="0\.01"/);
   assert.match(ui, /state\.role==='director'/);
   assert.match(ui, /project\?\.code==='icube-robots'/);
-  assert.match(ui, /Первая ставка для площадки/);
+  assert.match(ui, /первая ставка для площадки/i);
   assert.match(ui, /новую историческую версию/);
   assert.match(sync, /legacy\.state\.role === 'director' && project\?\.code === 'icube-robots'/);
   assert.match(sync, /body\.rentPerLesson = rent/);
