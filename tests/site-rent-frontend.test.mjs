@@ -130,6 +130,28 @@ test('specific site request sends numeric siteId', async () => {
   } finally { setup.restore(); }
 });
 
+test('selected site with no lessons renders 0 lessons and 0 ₽ as a successful result', async () => {
+  const zeroReport = {
+    period: { from: '2026-09-01', to: '2026-09-30' },
+    selectedSiteId: '5',
+    totalLessons: 0,
+    totalAmount: '0.00',
+    sites: [{ siteId: '5', siteName: 'Школа №1', lessonCount: 0, amount: '0.00' }],
+    details: [],
+  };
+  const setup = setupFrontend({ rentResponse: zeroReport });
+  try {
+    setup.state.rentSiteId = '5';
+    setup.state.rentReport = zeroReport;
+    await loadApi('selected-zero');
+    const page = globalThis.window.icubeRentPage();
+    assert.match(page, /Школа №1/);
+    assert.match(page, /0 занятий/);
+    assert.match(page, /0,00 ₽/);
+    assert.match(page, /проведённых занятий для расчёта аренды нет/);
+  } finally { setup.restore(); }
+});
+
 test('failed rent calculation preserves previous report and applied filters', async () => {
   const setup = setupFrontend({ rentFail: true });
   try {
@@ -213,6 +235,15 @@ test('site form/request source exposes rent only for director iCube sites', asyn
   assert.match(ui, /новую историческую версию/);
   assert.match(sync, /legacy\.state\.role === 'director' && project\?\.code === 'icube-robots'/);
   assert.match(sync, /body\.rentPerLesson = rent/);
+});
+
+test('director reload refreshes applied rent report while role guards prevent partner/teacher rent refresh', async () => {
+  const setup = setupFrontend({ role: 'director' });
+  try {
+    await loadApi('director-reload-source');
+    await globalThis.window.icubeApi.reload();
+    assert.ok(setup.requests.some((item) => item.path.endsWith('/site-rent-report')));
+  } finally { setup.restore(); }
 });
 
 test('desktop and mobile navigation expose rent only outside partner filter', async () => {
