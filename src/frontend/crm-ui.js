@@ -4292,6 +4292,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<option value="'+t.id+'"'+(String(t.id)===String(state.salaryTeacher)?' selected':'')+'>'+t.name+(t.active===false?' · неактивен':'')+'</option>';
     });
     html+='</select>';
+    if(state.role==='director'){
+      html+='<select class="select" id="salary-project" style="max-width:170px" onchange="setSalaryProjectDefaults(this.value)">';
+      html+='<option value="all"'+(String(state.salaryProjectId)==='all'?' selected':'')+'>Все</option>';
+      ['iCubeRobots','Зебра'].forEach(function(name){
+        const p=(state.projects||[]).find(function(project){return project.name===name;});
+        if(!p) return;
+        html+='<option value="'+p.id+'"'+(String(p.id)===String(state.salaryProjectId)?' selected':'')+'>'+(name==='iCubeRobots'?'iCube':'Зебра')+'</option>';
+      });
+      html+='</select>';
+    }
     html+='<input class="input" id="salary-from" type="date" value="'+state.salaryDateFrom+'" style="max-width:180px">';
     html+='<input class="input" id="salary-to" type="date" value="'+state.salaryDateTo+'" style="max-width:180px">';
     html+='<button class="btn primary" onclick="applySalaryFilters()">Применить</button>';
