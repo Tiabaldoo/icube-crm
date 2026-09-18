@@ -15,9 +15,19 @@ let balanceTransferKey = null;
 let authProfile = null;
 let resolveAuthReady = null;
 
+const localIsoDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
 export function partnerDefaultPeriod(now = new Date()) {
-  const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  return { from: localIso(new Date(now.getFullYear(), now.getMonth() - 1, 26)), to: localIso(new Date(now.getFullYear(), now.getMonth(), 25)) };
+  return { from: localIsoDate(new Date(now.getFullYear(), now.getMonth() - 1, 26)), to: localIsoDate(new Date(now.getFullYear(), now.getMonth(), 25)) };
+}
+export function salaryDefaultPeriod(projectName, now = new Date()) {
+  const name = String(projectName ?? '');
+  const startDay = name === 'Зебра' ? 26 : (name === 'iCubeRobots' || name === 'iCube') ? 11 : null;
+  if (startDay == null) return null;
+  const currentOrPreviousMonth = now.getDate() >= startDay ? now.getMonth() : now.getMonth() - 1;
+  const start = new Date(now.getFullYear(), currentOrPreviousMonth, startDay);
+  const end = new Date(now.getFullYear(), currentOrPreviousMonth + 1, startDay - 1);
+  return { from: localIsoDate(start), to: localIsoDate(end) };
 }
 export function statisticsDefaultPeriod(now = new Date()) {
   const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -86,7 +96,8 @@ function mapLesson(lesson) {
   const date = isoToRu(timestampDate(lesson.startsAt)); const time = `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`;
   const status = lesson.status === 'completed' ? 'Проведено' : lesson.status === 'in_progress' ? 'Идёт' : lesson.status === 'cancelled' ? 'Отменено' : 'Запланировано';
   return {
-    id: Number(lesson.id), groupId: Number(lesson.groupId), teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
+    id: Number(lesson.id), groupId: Number(lesson.groupId), projectId: lesson.projectId == null ? null : Number(lesson.projectId), project: lesson.projectName ?? '',
+    teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
     plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
     siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
     date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
@@ -1138,6 +1149,7 @@ window.saveLessonEdit = window.icubeApi.saveLessonEdit;
 window.lToggle = window.icubeApi.lessonToggle;
 window.confirmDeleteVisitV121 = window.icubeApi.deleteVisit;
 window.salaryCalculation = window.icubeApi.salaryCalculation;
+window.icubeSalaryDefaultPeriod = salaryDefaultPeriod;
 window.icubeAuthLogin = loginFromForm;
 window.icubeAuthLogout = logout;
 window.icubeReturnToHome = returnFromTemporaryTeacherView;
