@@ -210,6 +210,7 @@ test('director site DTO contains rent data while partner site DTO omits it', asy
     project_code: 'icube-robots', rent_per_lesson: '300.00', rent_configured: 1 };
   const pool = { query: async (sql) => {
     if (sql.includes('FROM sites s JOIN projects p')) return [[row]];
+    if (sql.includes('FROM sites') && !sql.includes('JOIN projects')) return [[row]];
     throw new Error(`Unexpected SQL: ${sql}`);
   } };
   const catalog = createMysqlCatalog(pool, { siteRent: {} });
