@@ -110,6 +110,134 @@ function mapLesson(lesson) {
   };
 }
 
+const salaryTypeLabel = {
+  regular: 'Обычное занятие',
+  intro: 'Ознакомительное занятие',
+  empty_trip: 'Пустой выезд',
+};
+
+function decimalCents(value) {
+  const match = String(value ?? '0').trim().match(/^(\d+)(?:\.(\d{1,2}))?$/);
+  if (!match) return 0n;
+  return BigInt(match[1]) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'));
+}
+
+function mapSalaryReportRow(row) {
+  const date = isoToRu(timestampDate(row.startsAt));
+  const time = timestampTime(row.startsAt);
+  const type = salaryTypeLabel[row.type] ?? row.type;
+  const fixedAmount = String(row.fixedAmount ?? '0.00');
+  const childrenAmount = String(row.childrenAmount ?? '0.00');
+  const totalAmount = String(row.totalAmount ?? '0.00');
+  return {
+    id: Number(row.id), lessonId: Number(row.lessonId), teacherId: Number(row.teacherId),
+    rateVersionId: row.rateVersionId == null ? null : Number(row.rateVersionId),
+    projectId: Number(row.projectId), projectName: row.projectName ?? '',
+    siteId: Number(row.siteId), siteName: row.siteName ?? '',
+    groupId: Number(row.groupId), groupName: row.groupName ?? 'Группа',
+    startsAt: row.startsAt, date, time,
+    fixedAmount, childrenAmount, totalAmount, presentChildren: Number(row.presentChildren ?? 0), typeCode: row.type,
+    lesson: {
+      id: Number(row.lessonId), date, time, groupId: Number(row.groupId), groupName: row.groupName ?? 'Группа',
+      projectId: Number(row.projectId), project: row.projectName ?? '', projectName: row.projectName ?? '',
+      siteId: Number(row.siteId), siteName: row.siteName ?? '',
+    },
+    group: {
+      id: Number(row.groupId), name: row.groupName ?? 'Группа', projectId: Number(row.projectId),
+      project: row.projectName ?? '', siteId: Number(row.siteId), siteName: row.siteName ?? '',
+    },
+    calc: {
+      type, children: Number(row.presentChildren ?? 0),
+      fixed: Number(fixedAmount), childrenPay: Number(childrenAmount), total: Number(totalAmount),
+    },
+  };
+}
+
+function salaryReportTotal(rows) {
+  const cents = (rows ?? []).reduce((sum, row) => sum + decimalCents(row.totalAmount), 0n);
+  return Number(cents) / 100;
+}
+
+function salaryAccountIsPartner() {
+  return Boolean(authProfile?.roles?.includes('partner') && !authProfile?.roles?.includes('director'));
+}
+
+function salaryAccountIsDirector() {
+  return Boolean(authProfile?.roles?.includes('director')) || (!authProfile && legacy.state.role === 'director');
+}
+
+function ensureSalaryTeacher() {
+  const teachers = legacy.state.teachers ?? [];
+  if (teachers.some((teacher) => String(teacher.id) === String(legacy.state.salaryTeacher))) return String(legacy.state.salaryTeacher);
+  const teacher = teachers.find((item) => item.active !== false) ?? teachers[0] ?? null;
+  legacy.state.salaryTeacher = teacher ? String(teacher.id) : '';
+  return legacy.state.salaryTeacher;
+}
+
+function salaryReportQuery(filters) {
+  const params = new URLSearchParams();
+  params.set('teacherId', String(filters.teacherId));
+  params.set('from', filters.from);
+  params.set('to', filters.to);
+  if (salaryAccountIsDirector() && String(filters.projectId ?? 'all') !== 'all') params.set('projectId', String(filters.projectId));
+  return `?${params.toString()}`;
+}
+
+async function loadSalaryReport(filters, { commit = false, render = true } = {}) {
+  const previousRows = legacy.state.salaryReportRows ?? [];
+  const previousTotal = legacy.state.salaryReportTotal ?? salaryReportTotal(previousRows);
+  legacy.state.salaryReportLoading = true;
+  legacy.state.salaryReportError = null;
+  if (render) legacy.render();
+  try {
+    const rows = await api.list('salary-accruals', salaryReportQuery(filters));
+    const mapped = rows.map(mapSalaryReportRow);
+    if (commit) {
+      legacy.state.salaryTeacher = String(filters.teacherId);
+      if (salaryAccountIsDirector()) legacy.state.salaryProjectId = String(filters.projectId ?? 'all');
+      legacy.state.salaryDateFrom = filters.from;
+      legacy.state.salaryDateTo = filters.to;
+    }
+    legacy.state.salaryReportRows = mapped;
+    legacy.state.salaryReportTotal = salaryReportTotal(mapped);
+    legacy.state.salaryReportError = null;
+    return true;
+  } catch (error) {
+    legacy.state.salaryReportRows = previousRows;
+    legacy.state.salaryReportTotal = previousTotal;
+    legacy.state.salaryReportError = 'Не удалось загрузить зарплату за выбранный период. Попробуйте ещё раз.';
+    console.error(error);
+    return false;
+  } finally {
+    legacy.state.salaryReportLoading = false;
+    if (render) legacy.render();
+  }
+}
+
+async function refreshAppliedSalaryReport({ render = false } = {}) {
+  const teacherId = ensureSalaryTeacher();
+  if (!teacherId || !legacy.state.salaryDateFrom || !legacy.state.salaryDateTo) return false;
+  return loadSalaryReport({
+    teacherId,
+    projectId: legacy.state.salaryProjectId ?? 'all',
+    from: legacy.state.salaryDateFrom,
+    to: legacy.state.salaryDateTo,
+  }, { commit: true, render });
+}
+
+async function applySalaryFiltersApi() {
+  if (legacy.state.salaryReportLoading) return;
+  const teacherId = value('#salary-teacher');
+  const projectId = salaryAccountIsDirector() ? (value('#salary-project') || 'all') : 'all';
+  const from = value('#salary-from');
+  const to = value('#salary-to');
+  if (!/^[1-9]\d*$/.test(String(teacherId))) return window.alert('Выберите преподавателя');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) return window.alert('Укажите период зарплаты');
+  if (from > to) return window.alert('Дата начала периода должна быть не позже даты окончания');
+  if (salaryAccountIsDirector() && projectId !== 'all' && !/^[1-9]\d*$/.test(String(projectId))) return window.alert('Выберите проект');
+  await loadSalaryReport({ teacherId, projectId, from, to }, { commit: true, render: true });
+}
+
 async function reload({ render = true } = {}) {
   if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) return reloadTeacher({ render });
   const partner = authProfile?.roles?.includes('partner') && !authProfile.roles.includes('director');
@@ -152,6 +280,7 @@ async function reload({ render = true } = {}) {
   legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
+  await refreshAppliedSalaryReport({ render: false });
   if (render) legacy.render();
 }
 
@@ -1093,7 +1222,7 @@ window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment,
   confirmAddChildren: confirmAddChildrenApi, deleteLesson: deleteLessonApi,
   transferDirectionBalanceForm, refreshBalanceTransferPreview, confirmBalanceTransfer,
   cancelBalanceTransferPrompt, cancelBalanceTransfer, loadStatistics,
-  calculatePartnerSettlement,
+  calculatePartnerSettlement, applySalaryFilters: applySalaryFiltersApi, refreshSalaryReport: refreshAppliedSalaryReport,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
@@ -1142,6 +1271,7 @@ window.confirmTransferDirectionBalanceV142 = window.icubeApi.confirmBalanceTrans
 window.child = childPageWithTransferHistory;
 window.stats = statisticsPage;
 window.applyStatsFiltersV125 = window.icubeApi.loadStatistics;
+window.applySalaryFilters = window.icubeApi.applySalaryFilters;
 window.partner = partnerPage;
 window.partnerSettlementPage = partnerSettlementPage;
 window.applyPartnerFiltersV123 = window.icubeApi.calculatePartnerSettlement;
