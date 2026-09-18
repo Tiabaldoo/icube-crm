@@ -25,6 +25,7 @@ test('dashboard separates today and tomorrow and keeps partner project scope', a
     { id: 2, groupId: 2, date: '18.09.2026', time: '12:00–13:30' },
     { id: 3, groupId: 1, date: '19.09.2026', time: '09:00–10:30' },
     { id: 4, groupId: 2, date: '19.09.2026', time: '11:00–12:30' },
+    { id: 6, groupId: 1, date: '19.09.2026', time: '15:00–16:30' },
     { id: 5, groupId: 2, date: '20.09.2026', time: '08:00–09:30' },
   ];
 
@@ -33,7 +34,7 @@ test('dashboard separates today and tomorrow and keeps partner project scope', a
     [1, 2],
   );
   const tomorrow = dashboardLessonsForDate({ lessons, groups }, '19.09.2026');
-  assert.deepEqual(tomorrow.map((lesson) => lesson.id), [3, 4]);
+  assert.deepEqual(tomorrow.map((lesson) => lesson.id), [3, 4, 6]);
   assert.ok(tomorrow.every((lesson) => lesson.date === '19.09.2026'));
   assert.ok(tomorrow.every((lesson) => ![1, 2].includes(lesson.id)));
   assert.deepEqual(
