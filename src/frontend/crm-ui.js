@@ -1853,7 +1853,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   window.siteForm = function(id, returnToGroup) {
     const s=id?byId(state.sites,id):null;
     let html='<h3>'+(s?'Редактировать площадку':'Новая площадка')+'</h3><div class="form-grid site-form-grid">';
-    html+='<div class="field span-2"><label>Название площадки</label><input class="input" id="sf-name" value="'+(s?.name||'')+'" placeholder="ДК Океан"></div>';
+    html+='<div class="field span-2"><label>Название площадки</label><input class="input" id="sf-name" value="'+(s?.name||'')+'" placeholder="Название площадки"></div>';
     const projects=state.projects||[];
     const defaultProject=projects.find(function(p){return p.code==='icube-robots';})||projects[0];
     const selectedProject=s?.projectId||defaultProject?.id;
@@ -5852,11 +5852,28 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(e.moved) return '<span class="badge amber">Перенесено</span>';
     return '';
   }
+  function calendarWeekdayShort(date,groupDay){
+    const parts=String(date||'').split('.').map(Number);
+    if(parts.length===3 && parts.every(Number.isFinite)){
+      const d=new Date(parts[2],parts[1]-1,parts[0]);
+      if(!Number.isNaN(d.getTime())) return ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'][d.getDay()];
+    }
+    const days={'Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
+    return days[groupDay]||groupDay||'—';
+  }
+  function calendarDirectionShort(direction){
+    if(direction==='Робототехника') return 'Р';
+    if(direction==='Программирование') return 'П';
+    return String(direction||'').slice(0,1)||'—';
+  }
   function eventHtml(e,role){
     const g=byId(state.groups,e.groupId)||(state.calendarForeignGroups||[]).find(function(group){return group.id===e.groupId;}); if(!g) return '';
+    const siteName=e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'Без площадки';
+    const eventTime=timeStart(e.time||g.time||g.startTime||'')||'—';
+    const eventMeta=calendarWeekdayShort(e.date,g.day)+' '+eventTime+' · ('+calendarDirectionShort(g.direction)+')';
     return '<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\''+role+'\')">'+
-      '<div class="calendar-event-top"><b>'+(e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'')+'</b><span>'+ (e.project==='Зебра'?'Зебра':'iCube') +'</span></div>'+
-      '<div class="calendar-event-name">'+g.name+'</div>'+
+      '<div class="calendar-event-site">'+siteName+'</div>'+
+      '<div class="calendar-event-meta">'+eventMeta+'</div>'+
       (statusHtml(e)?'<div class="calendar-event-status">'+statusHtml(e)+'</div>':'')+
     '</div>';
   }
@@ -6673,7 +6690,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           '</div>'+
           '<span class="badge '+(g.active!==false?'green':'gray')+'">'+(g.active!==false?'Активна':'Неактивна')+'</span>'+
         '</div>'+
-        '<h3 style="margin:14px 0 5px">'+g.name+'</h3>'+
+        '<h3 style="margin:14px 0 5px">'+groupTitle(g)+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0]||'—')+'–'+(g.endTime||String(g.time||'').split('–')[1]||'—')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+(site?.shortName||site?.name||'—')+'</b></div>'+

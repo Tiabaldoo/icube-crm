@@ -37,10 +37,12 @@ test('both child group selectors and group cards use the shared display title', 
   assert.match(manageOptions, /!projectId\|\|g\.projectId===projectId/);
   assert.match(manageOptions, /selected/);
 
-  const groupsStart = ui.indexOf('window.groups = function ()', ui.indexOf('// Groups: project filter'));
-  const groupsEnd = ui.indexOf('// Wrap the latest calendar renderer', groupsStart);
+  const groupsStart = ui.lastIndexOf('window.groups=function()');
+  const groupsEnd = ui.indexOf('\n\n  render();', groupsStart);
   const groupsPage = ui.slice(groupsStart, groupsEnd);
-  assert.match(groupsPage, /<h3[^>]*>' \+ groupTitle\(g\)/);
+  assert.ok(groupsStart >= 0 && groupsEnd > groupsStart);
+  assert.match(groupsPage, /<h3[^>]*>'\+groupTitle\(g\)/);
+  assert.doesNotMatch(groupsPage, /<h3[^>]*>'\+g\.name/);
   assert.match(groupsPage, /g\.direction/);
   assert.match(groupsPage, /g\.project/);
 });
@@ -52,6 +54,8 @@ test('site form exposes one visible name and keeps rent/project behavior', async
   const form = ui.slice(formStart, formEnd);
 
   assert.match(form, /Название площадки/);
+  assert.match(form, /placeholder="Название площадки"/);
+  assert.doesNotMatch(form, /placeholder="ДК Океан"/);
   assert.match(form, /id="sf-name"/);
   assert.doesNotMatch(form, /Короткое название|id="sf-short"/);
   assert.match(form, /<label>Проект<\/label>/);
@@ -70,13 +74,30 @@ test('site form exposes one visible name and keeps rent/project behavior', async
   assert.match(save, /body\.rentPerLesson = rent/);
 });
 
-test('medium desktop calendar prevents intra-word splitting without changing mobile breakpoint', async () => {
+test('desktop calendar keeps full site, weekday, time and short direction visible', async () => {
   const [css, ui] = await Promise.all([readFile(cssUrl, 'utf8'), readFile(uiUrl, 'utf8')]);
-  assert.match(css, /\.event\{[^}]*word-break:normal;overflow-wrap:normal/);
-  assert.match(css, /@media\(min-width:761px\) and \(max-width:1300px\)/);
-  assert.match(css, /@media\(min-width:761px\) and \(max-width:1100px\)/);
-  assert.match(css, /\.calendar-event-top b\{[^}]*text-overflow:ellipsis;white-space:nowrap;word-break:normal/);
-  assert.match(css, /\.calendar-event-name\{white-space:nowrap;word-break:normal;overflow-wrap:normal\}/);
+  const calendarCssStart = css.indexOf('/* Calendar redesign v1.1.18 */');
+  const calendarCssEnd = css.indexOf('/* Mobile director UX v1.1.19 */', calendarCssStart);
+  const calendarCss = css.slice(calendarCssStart, calendarCssEnd);
+  const eventStart = ui.indexOf('function calendarWeekdayShort');
+  const eventEnd = ui.indexOf('function eventListForDay', eventStart);
+  const eventHelper = ui.slice(eventStart, eventEnd);
+
+  assert.ok(calendarCssStart >= 0 && calendarCssEnd > calendarCssStart);
+  assert.ok(eventStart >= 0 && eventEnd > eventStart);
+  assert.match(eventHelper, /split\('\.'\)/);
+  assert.match(eventHelper, /new Date\(parts\[2\],parts\[1\]-1,parts\[0\]\)/);
+  assert.match(eventHelper, /direction==='Робототехника'\) return 'Р'/);
+  assert.match(eventHelper, /direction==='Программирование'\) return 'П'/);
+  assert.match(eventHelper, /calendarWeekdayShort\(e\.date,g\.day\)/);
+  assert.match(eventHelper, /timeStart\(e\.time\|\|g\.time\|\|g\.startTime/);
+  assert.match(eventHelper, /calendar-event-site/);
+  assert.match(eventHelper, /calendar-event-meta/);
+  assert.match(calendarCss, /\.calendar-event-site\{[^}]*white-space:normal;word-break:normal;overflow-wrap:normal/);
+  assert.match(calendarCss, /\.calendar-event-meta\{[^}]*white-space:normal;word-break:normal;overflow-wrap:normal/);
+  assert.doesNotMatch(calendarCss, /text-overflow:ellipsis/);
+  assert.match(calendarCss, /@media\(min-width:761px\) and \(max-width:1300px\)/);
+  assert.match(calendarCss, /@media\(min-width:761px\) and \(max-width:1100px\)/);
   assert.match(css, /@media\(max-width:760px\)[\s\S]*?\.calendar-desktop\{display:none\}[\s\S]*?\.calendar-mobile\{display:block\}/);
   assert.doesNotMatch(ui, /\.teacher-content:has\(\.calendar\) \.event\{\s*overflow-wrap:anywhere/);
   assert.match(ui, /\.teacher-content:has\(\.calendar\) \.event\{\s*overflow-wrap:normal;\s*word-break:normal/);
