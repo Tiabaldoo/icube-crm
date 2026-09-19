@@ -663,7 +663,7 @@ render();
     if (!box) return;
     let html = '<option value="">Без группы</option>';
     state.groups.filter(function(g){return g.direction===d && g.active;}).forEach(function(g){
-      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + g.name + '</option>';
+      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + groupTitle(g) + '</option>';
     });
     box.innerHTML = html;
     if (selectedGroupId == null) box.value = '';
@@ -724,7 +724,7 @@ render();
     let html = '<option value="">Без группы</option>';
     const projectId=document.querySelector('#cf-project')?.value;
     state.groups.filter(function(g){return g.direction===direction && g.active && (!projectId || String(g.projectId)===projectId);}).forEach(function(g){
-      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + g.name + '</option>';
+      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + groupTitle(g) + '</option>';
     });
     box.innerHTML = html;
     if (selectedGroupId == null) box.value = '';
@@ -1246,7 +1246,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids = groupChildren(g.id);
       return '<div class="card pad clickable group-card" onclick="openGroup(' + g.id + ')">' +
         '<div style="display:flex;justify-content:space-between;gap:8px"><span class="badge ' + (g.project==='Зебра'?'purple':'blue') + '">' + g.project + '</span><span class="badge ' + (g.active?'green':'gray') + '">' + (g.active?'Активна':'Неактивна') + '</span></div>' +
-        '<h3 style="margin:14px 0 5px">' + g.name + '</h3>' +
+        '<h3 style="margin:14px 0 5px">' + groupTitle(g) + '</h3>' +
         '<div class="muted">' + g.direction + '</div>' +
         '<div class="info-list" style="margin-top:12px">' +
           '<div class="info-line"><span>Время</span><b>' + g.startTime + '–' + g.endTime + '</b></div>' +
