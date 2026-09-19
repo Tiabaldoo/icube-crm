@@ -74,13 +74,14 @@ test('единый frontend загружается и рендерит все т
   const dateText = `${String(today.getDate()).padStart(2, '0')}.${String(today.getMonth() + 1).padStart(2, '0')}.${today.getFullYear()}`;
   context.__crmProbe.state.calendarCursor = todayIso;
   context.__crmProbe.state.calendarProject = 'iCubeRobots';
-  context.__crmProbe.state.calendarForeignGroups = [{ id: 999, name: 'Чужая группа', project: 'iCubeRobots' }];
+  context.__crmProbe.state.calendarForeignGroups = [{ id: 999, name: 'Чужая группа', project: 'iCubeRobots', direction: 'Робототехника' }];
   context.sharedCalendarEvents = () => [{ key: `999|${dateText}`, groupId: 999, project: 'iCubeRobots', date: dateText,
     time: '10:00–11:00', lesson: { readOnly: true, siteName: 'Школа' } }];
   context.__crmProbe.state.role = 'partner';
   context.__crmProbe.state.page = 'calendar';
   context.__crmProbe.render();
-  assert.match(app.innerHTML, /Чужая группа/, 'read-only занятие другого проекта видно в календаре партнёра');
+  assert.match(app.innerHTML, /calendar-event-site">Школа/, 'read-only занятие другого проекта видно в календаре партнёра');
+  assert.match(app.innerHTML, /10:00 · \(Р\)/, 'read-only занятие сохраняет время и короткое направление');
   assert.doesNotMatch(app.innerHTML, /onclick="navTo\('(partner|stats|settings)'\)"/, 'партнёру не показаны директорские разделы');
   context.__crmProbe.state.role = 'teacher';
   context.__crmProbe.state.page = 'teacherToday';
