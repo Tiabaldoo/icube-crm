@@ -46,6 +46,26 @@ Ubuntu 24.04 + FASTPANEL управляет доменами и TLS. Nginx/Apach
 
 Минимальные меры до production: SSH-ключи без парольного root-входа, firewall, unattended security updates, ежедневная зашифрованная off-server копия MySQL, проверка восстановления, ротация журналов, мониторинг свободного места, uptime и ошибок API.
 
+## Приватное хранилище фотографий
+
+Задайте отдельный каталог вне web root и права только системному пользователю Node-процесса:
+
+```dotenv
+PHOTO_STORAGE_DIR=/var/lib/icube-crm/lesson-photos
+PHOTO_RETENTION_DAYS=30
+PHOTO_MAX_UPLOAD_MB=5
+```
+
+Для test используйте другой каталог, например `/var/lib/icube-crm-test/lesson-photos`. Каталог нельзя публиковать через Nginx/FASTPANEL как static files: скачивание идёт только через авторизованный API. Включите мониторинг свободного места и ошибок записи; каталог с файлами включите в политику резервного копирования с учётом 30-дневного retention.
+
+Команда `npm run photos:cleanup` удаляет с диска просроченные и ранее помеченные удалёнными файлы, сохраняя metadata. Запускайте её ежедневно отдельным systemd timer или cron от того же пользователя и с тем же `.env`, что у API. Пример cron для релизного каталога:
+
+```cron
+17 3 * * * cd /opt/icube-crm/current && /usr/bin/env bash -lc 'set -a; . ./.env; set +a; npm run photos:cleanup' >> /var/log/icube-photo-cleanup.log 2>&1
+```
+
+После миграции `015_lesson_photo_storage.sql` до выкладки frontend проверьте запись в `PHOTO_STORAGE_DIR`, upload/download/delete на `icube_test` и успешный ручной запуск cleanup. Production не очищается миграцией: срок считается от `created_at` для уже существующей metadata.
+
 ## Миграции
 
 После создания пустой базы и пользователя в панели таблицы создаются автоматически:

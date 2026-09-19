@@ -23,6 +23,14 @@ test('production отклоняет placeholder пароля БД', () => {
   assert.throws(() => loadConfig({ ...base, APP_ENV: 'production', DB_NAME: 'icube_prod', DB_PASSWORD: 'replace_me' }), /DB_PASSWORD/);
 });
 
+test('настройки хранилища фотографий имеют безопасные defaults и валидацию', () => {
+  const config = loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_test' });
+  assert.equal(config.photos.retentionDays, 30);
+  assert.equal(config.photos.maxUploadBytes, 5 * 1024 * 1024);
+  assert.throws(() => loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_test', PHOTO_RETENTION_DAYS: '0' }), /PHOTO_RETENTION_DAYS/);
+  assert.throws(() => loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_test', PHOTO_MAX_UPLOAD_MB: 'nope' }), /PHOTO_MAX_UPLOAD_MB/);
+});
+
 test('модель ролей содержит текущие и будущие роли', () => {
   assert.ok(permissions.director.has('*'));
   for (const permission of [

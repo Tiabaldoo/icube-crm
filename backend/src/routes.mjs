@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
 import { clearSessionCookieOptions, createAuthService, parseSessionCookie, SESSION_COOKIE, sessionCookieOptions } from './auth-service.mjs';
 import { ApiProblem, createMysqlCatalog } from './catalog.mjs';
@@ -17,6 +17,7 @@ import { createProjectTransfers } from './project-transfers.mjs';
 import { createDailyDashboard } from './daily-dashboard.mjs';
 import { createNotifications } from './notifications.mjs';
 import { createSiteRentService } from './site-rent.mjs';
+import { createLessonPhotoService } from './lesson-photos.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -35,7 +36,8 @@ export function createApiRouter(pool, {
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
-  lessons = createMysqlLessons(pool),
+  lessonPhotos = createLessonPhotoService(pool),
+  lessons = createMysqlLessons(pool, { lessonPhotos }),
   balanceTransfers = createBalanceTransfers(pool),
   projectTransfers = createProjectTransfers(pool, balanceTransfers),
   dailyDashboard = createDailyDashboard(pool),
@@ -155,8 +157,25 @@ export function createApiRouter(pool, {
   router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), run((request) => lessons.quickChild(request.params.id, request.body, lessonContext(request)), 201));
   router.post('/lessons/:id/extras', requirePermission('lessons:extras'), run((request) => lessons.addExtra(request.params.id, request.body, lessonContext(request)), 201));
   router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), run((request) => lessons.removeExtra(request.params.id, request.params.childId, lessonContext(request)), 200));
-  router.post('/lessons/:id/photos', requirePermission('lessons:photos'), notImplemented('lesson photo upload'));
-  router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), notImplemented('lesson photo delete'));
+  router.get('/lessons/:id/photos', requirePermission('lessons:read'), run((request) => lessonPhotos.list(request.params.id, lessonContext(request))));
+  router.post('/lessons/:id/photos', requirePermission('lessons:photos'),
+    express.raw({ type: () => true, limit: lessonPhotos.maxUploadBytes }),
+    run((request) => lessonPhotos.upload(request.params.id, {
+      childId: request.get('x-child-id'), buffer: request.body, mimeType: request.get('content-type')?.split(';')[0],
+      originalFilename: request.get('x-original-filename'), replacePhotoId: request.get('x-replaces-photo-id'),
+      clientUploadId: request.get('x-upload-id'), capturedAt: request.get('x-captured-at'),
+    }, lessonContext(request)), 201));
+  router.get('/lessons/:id/photos/:photoId/file', requirePermission('lessons:read'), async (request, response, next) => {
+    try {
+      const result = await lessonPhotos.file(request.params.id, request.params.photoId, lessonContext(request));
+      response.set('Content-Type', result.mimeType);
+      response.set('Content-Length', String(result.data.length));
+      response.set('Cache-Control', 'private, max-age=300');
+      response.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+      response.send(result.data);
+    } catch (error) { next(error); }
+  });
+  router.delete('/lessons/:id/photos/:photoId', requirePermission('lessons:photos'), run((request) => lessonPhotos.remove(request.params.id, request.params.photoId, lessonContext(request)), 204));
   router.get('/balance-transfers/preview', requirePermission('balance-transfers:read'), run(async (request) => { await assertOwned(pool, 'enrollments', request.query.sourceEnrollmentId, request.auth); await assertOwned(pool, 'enrollments', request.query.targetEnrollmentId, request.auth); return balanceTransfers.preview(request.query.sourceEnrollmentId, request.query.targetEnrollmentId); }));
   router.get('/balance-transfers', requirePermission('balance-transfers:read'), run((request) => balanceTransfers.list(projectFilters(request))));
   router.post('/balance-transfers', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.body.sourceEnrollmentId, request.auth); await assertOwned(pool, 'enrollments', request.body.targetEnrollmentId, request.auth); return balanceTransfers.create(request.body, {

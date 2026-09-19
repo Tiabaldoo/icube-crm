@@ -17,6 +17,12 @@ function required(name, env = process.env) {
   return value;
 }
 
+function positiveNumber(name, value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error(`${name} должен быть положительным числом`);
+  return number;
+}
+
 export function loadConfig(env = process.env) {
   const appEnv = env.APP_ENV ?? 'development';
   const database = {
@@ -35,6 +41,11 @@ export function loadConfig(env = process.env) {
     appEnv,
     port: Number(env.PORT ?? 3000),
     trustProxy: Number(env.TRUST_PROXY ?? 1),
+    photos: {
+      storageDir: env.PHOTO_STORAGE_DIR,
+      retentionDays: positiveNumber('PHOTO_RETENTION_DAYS', env.PHOTO_RETENTION_DAYS ?? 30),
+      maxUploadBytes: positiveNumber('PHOTO_MAX_UPLOAD_MB', env.PHOTO_MAX_UPLOAD_MB ?? 5) * 1024 * 1024,
+    },
     database,
   };
 }

@@ -43,7 +43,7 @@ function lessonKind(row) {
   return 'regular';
 }
 
-export function createMysqlLessons(pool) {
+export function createMysqlLessons(pool, { lessonPhotos = null } = {}) {
   const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
     pt.full_name planned_teacher_name,act.full_name actual_teacher_name
     FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
@@ -548,7 +548,8 @@ export function createMysqlLessons(pool) {
         }
         await connection.query('UPDATE salary_accruals SET supersedes_accrual_id=NULL WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query('DELETE FROM salary_accruals WHERE lesson_id=:lessonId', { lessonId: lesson.id });
-        await connection.query('DELETE FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId: lesson.id });
+        if (lessonPhotos) await lessonPhotos.purgeLesson(connection, lesson.id);
+        else await connection.query('DELETE FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query('DELETE FROM attendances WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query(`UPDATE lessons SET deleted_at=NOW(6),lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });

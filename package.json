@@ -9,6 +9,7 @@
     "migrate": "node database/migrate.mjs",
     "create-director": "node scripts/create-director.mjs",
     "create-partner": "node scripts/create-partner.mjs",
+    "photos:cleanup": "node scripts/cleanup-lesson-photos.mjs",
     "start:api": "node backend/src/server.mjs"
   },
   "engines": {

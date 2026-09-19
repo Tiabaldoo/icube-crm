@@ -924,7 +924,8 @@ async function reloadLesson(lessonId, page = legacy.state.page) {
     const lesson = await api.get('lessons', lessonId);
     legacy.state.lessons.push(mapLesson(lesson));
   }
-  legacy.state.selectedLesson = Number(lessonId); legacy.state.page = page; legacy.state.modal = null; legacy.render();
+  legacy.state.selectedLesson = Number(lessonId); legacy.state.page = page; legacy.state.modal = null;
+  await window.icubePhotos?.loadLessonPhotos(lessonId, { render: false }); legacy.render();
 }
 async function lessonCommand(path, body, page = legacy.state.page) {
   const lessonId = currentLesson()?.id;
@@ -963,7 +964,8 @@ async function openCalendarEvent(key, role) {
       legacy.render(); return;
     }
     if (role === 'teacher' && temporaryTeacherParentRole() && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
-    legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson'; legacy.render();
+    legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson';
+    await window.icubePhotos?.loadLessonPhotos(lesson.id, { render: false }); legacy.render();
   } catch (error) { fail(error); }
 }
 
@@ -1030,9 +1032,15 @@ async function finishLessonApi() {
     legacy.state.modal = `<h3>Нет присутствующих</h3><div class="notice">Обычное или ознакомительное занятие нельзя завершить без присутствующих детей. Отмените занятие${legacy.state.role === 'director' ? ' или оформите «Пустой выезд»' : ''}.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn danger" onclick="icubeApi.cancelCurrentLesson()">Отменить занятие</button>${legacy.state.role === 'director' ? '<button class="btn primary" onclick="icubeApi.markCurrentLessonEmptyTrip()">Пустой выезд</button>' : ''}</div>`;
     legacy.render(); return;
   }
-  const missing = present.filter((id) => !lesson.photos?.[id]).length;
+  const hasPhoto = (id) => window.icubePhotos?.hasPhoto ? window.icubePhotos.hasPhoto(lesson, id) : Boolean(lesson.photos?.[id]);
+  const missing = present.filter((id) => !hasPhoto(id)).length;
+  const pending = window.icubePhotos?.pendingCount?.(lesson) ?? 0;
   if (missing) {
-    legacy.state.modal = `<h3>Не у всех есть фотографии</h3><div class="notice">У ${missing} детей отсутствуют фотографии. Всё равно завершить занятие?</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn primary" onclick="icubeApi.confirmFinishLesson()">Завершить всё равно</button></div>`;
+    legacy.state.modal = `<h3>Не у всех есть фотографии</h3><div class="notice">У ${missing} детей отсутствуют фотографии. Всё равно завершить занятие?${pending ? `<br><br>${pending} фото ожидают загрузки и будут отправлены при восстановлении интернета.` : ''}</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn primary" onclick="icubeApi.confirmFinishLesson()">Завершить всё равно</button></div>`;
+    legacy.render(); return;
+  }
+  if (pending) {
+    legacy.state.modal = `<h3>Фото ожидают загрузки</h3><div class="notice">${pending} фото сохранены на устройстве и будут отправлены при восстановлении интернета. Занятие можно завершить.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Вернуться</button><button class="btn primary" onclick="icubeApi.confirmFinishLesson()">Завершить занятие</button></div>`;
     legacy.render(); return;
   }
   await confirmFinishLessonApi();

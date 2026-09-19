@@ -39,6 +39,31 @@ export class ApiClient {
     return payload?.data ?? payload;
   }
 
+  async requestRaw(path, { method = 'POST', body, headers = {}, signal } = {}) {
+    const token = await this.getAccessToken();
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method, headers: { Accept: 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...headers },
+      body, credentials: 'same-origin', signal,
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new ApiError(payload?.error?.message ?? 'Ошибка API', {
+      status: response.status, code: payload?.error?.code, details: payload?.error?.details,
+    });
+    return payload?.data ?? payload;
+  }
+
+  async blob(path, { signal } = {}) {
+    const token = await this.getAccessToken();
+    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}, credentials: 'same-origin', signal,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new ApiError(payload?.error?.message ?? 'Файл недоступен', { status: response.status, code: payload?.error?.code });
+    }
+    return response.blob();
+  }
+
   list(resource, query = '') { return this.request(`/${resource}${query}`); }
   get(resource, id) { return this.request(`/${resource}/${encodeURIComponent(id)}`); }
   create(resource, value, idempotencyKey) { return this.request(`/${resource}`, { method: 'POST', body: value, idempotencyKey }); }

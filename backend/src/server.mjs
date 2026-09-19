@@ -3,6 +3,8 @@ import helmet from 'helmet';
 import { loadConfig } from './config.mjs';
 import { createPool } from './db.mjs';
 import { createApiRouter } from './routes.mjs';
+import { createMysqlLessons } from './lessons.mjs';
+import { createLessonPhotoService } from './lesson-photos.mjs';
 
 export function createApp({ config, pool }) {
   const app = express();
@@ -10,7 +12,9 @@ export function createApp({ config, pool }) {
   app.set('trust proxy', config.trustProxy);
   app.use(helmet());
   app.use(express.json({ limit: '1mb' }));
-  app.use('/api/v1', createApiRouter(pool));
+  const lessonPhotos = createLessonPhotoService(pool, config.photos);
+  const lessons = createMysqlLessons(pool, { lessonPhotos });
+  app.use('/api/v1', createApiRouter(pool, { lessonPhotos, lessons }));
   app.use((error, _request, response, _next) => {
     if (!error.status) console.error(error);
     response.status(error.status ?? 500).json({ error: {

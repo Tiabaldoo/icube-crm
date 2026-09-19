@@ -106,3 +106,15 @@ test('auth migration привязывает существующие и новы
   assert.match(sql, /MODIFY token_version INT UNSIGNED NOT NULL/);
   assert.doesNotMatch(sql, /DROP DATABASE|DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
+
+test('photo storage migration добавляет retention metadata без destructive reset', async () => {
+  const sql = await readFile(new URL('../database/migrations/015_lesson_photo_storage.sql', import.meta.url), 'utf8');
+  for (const column of ['client_upload_id', 'original_filename', 'width', 'height', 'uploaded_at', 'expires_at', 'purged_at']) {
+    assert.match(sql, new RegExp(`ADD COLUMN ${column}\\b`), `нет поля ${column}`);
+  }
+  assert.match(sql, /expires_at=DATE_ADD\(created_at,INTERVAL 30 DAY\)/);
+  assert.match(sql, /idx_lesson_photos_lesson_child/);
+  assert.match(sql, /idx_lesson_photos_expiry/);
+  assert.match(sql, /UNIQUE KEY uq_lesson_photos_client_upload \(client_upload_id\)/);
+  assert.doesNotMatch(sql, /DROP DATABASE|DROP TABLE|TRUNCATE|DELETE FROM/i);
+});
