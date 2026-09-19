@@ -7,7 +7,7 @@ CREATE TABLE site_rent_rate_versions (
   created_by_user_id BIGINT UNSIGNED NULL,
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
   current_site_id BIGINT UNSIGNED
-    GENERATED ALWAYS AS (CASE WHEN valid_to IS NULL THEN site_id ELSE NULL END) STORED,
+    GENERATED ALWAYS AS (CASE WHEN valid_to IS NULL THEN site_id ELSE NULL END) VIRTUAL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_site_rent_rate_current (current_site_id),
   KEY idx_site_rent_rate_lookup (site_id, valid_from, valid_to),
