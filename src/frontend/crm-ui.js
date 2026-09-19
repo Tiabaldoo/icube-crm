@@ -7250,7 +7250,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         min-width:0;
       }
       .teacher-content:has(.calendar) .event{
-        overflow-wrap:anywhere;
+        overflow-wrap:normal;
+        word-break:normal;
       }
     }
   `;
