@@ -392,9 +392,8 @@ render();
   window.groupTitle = function (g) {
     if (!g) return 'Без группы';
     const site = byId(state.sites, g.siteId);
-    const siteName = site ? (site.shortName || site.name) : 'Без площадки';
-    return (DIR_SHORT[g.direction] || g.direction) + ', ' +
-      (DAY_SHORT[g.day] || g.day) + ', ' + siteName + ', ' + (g.startTime || '—');
+    const siteName = site?.name || 'Без площадки';
+    return siteName + ' · ' + (DAY_SHORT[g.day] || g.day || '—') + ' ' + (g.startTime || '—');
   };
 
   function normalizeSite(site, shortName) {
@@ -544,7 +543,7 @@ render();
         const kids = groupChildren(g.id);
         return '<div class="card pad clickable" onclick="openGroup(' + g.id + ')">' +
           '<div style="display:flex;justify-content:space-between;gap:8px"><span class="badge ' + (g.project==='Зебра'?'purple':'blue') + '">' + g.project + '</span><span class="badge ' + (g.active?'green':'gray') + '">' + (g.active?'Активна':'Неактивна') + '</span></div>' +
-          '<h3 style="margin:14px 0 5px">' + g.name + '</h3>' +
+          '<h3 style="margin:14px 0 5px">' + groupTitle(g) + '</h3>' +
           '<div class="muted">' + g.direction + '</div>' +
           '<div class="info-list" style="margin-top:12px">' +
             '<div class="info-line"><span>Время</span><b>' + g.startTime + '–' + g.endTime + '</b></div>' +
@@ -664,7 +663,7 @@ render();
     if (!box) return;
     let html = '<option value="">Без группы</option>';
     state.groups.filter(function(g){return g.direction===d && g.active;}).forEach(function(g){
-      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + g.name + '</option>';
+      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + groupTitle(g) + '</option>';
     });
     box.innerHTML = html;
     if (selectedGroupId == null) box.value = '';
@@ -725,7 +724,7 @@ render();
     let html = '<option value="">Без группы</option>';
     const projectId=document.querySelector('#cf-project')?.value;
     state.groups.filter(function(g){return g.direction===direction && g.active && (!projectId || String(g.projectId)===projectId);}).forEach(function(g){
-      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + g.name + '</option>';
+      html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + groupTitle(g) + '</option>';
     });
     box.innerHTML = html;
     if (selectedGroupId == null) box.value = '';
@@ -1247,7 +1246,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids = groupChildren(g.id);
       return '<div class="card pad clickable group-card" onclick="openGroup(' + g.id + ')">' +
         '<div style="display:flex;justify-content:space-between;gap:8px"><span class="badge ' + (g.project==='Зебра'?'purple':'blue') + '">' + g.project + '</span><span class="badge ' + (g.active?'green':'gray') + '">' + (g.active?'Активна':'Неактивна') + '</span></div>' +
-        '<h3 style="margin:14px 0 5px">' + g.name + '</h3>' +
+        '<h3 style="margin:14px 0 5px">' + groupTitle(g) + '</h3>' +
         '<div class="muted">' + g.direction + '</div>' +
         '<div class="info-list" style="margin-top:12px">' +
           '<div class="info-line"><span>Время</span><b>' + g.startTime + '–' + g.endTime + '</b></div>' +
@@ -1853,14 +1852,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   window.siteForm = function(id, returnToGroup) {
     const s=id?byId(state.sites,id):null;
-    let html='<h3>'+(s?'Редактировать площадку':'Новая площадка')+'</h3><div class="form-grid">';
-    html+='<div class="field span-2"><label>Полное название</label><input class="input" id="sf-name" value="'+(s?.name||'')+'" placeholder="Развивающий центр «Зебра»"></div>';
+    let html='<h3>'+(s?'Редактировать площадку':'Новая площадка')+'</h3><div class="form-grid site-form-grid">';
+    html+='<div class="field span-2"><label>Название площадки</label><input class="input" id="sf-name" value="'+(s?.name||'')+'" placeholder="ДК Океан"></div>';
     const projects=state.projects||[];
     const defaultProject=projects.find(function(p){return p.code==='icube-robots';})||projects[0];
     const selectedProject=s?.projectId||defaultProject?.id;
     const selectedProjectRow=projects.find(function(p){return String(p.id)===String(selectedProject);});
-    html+='<div class="field"><label>Проект</label>'+(s?'<input type="hidden" id="sf-project" value="'+selectedProject+'"><b>'+selectedProjectRow?.name+'</b>':'<select class="select" id="sf-project" onchange="refreshSiteRentField()">'+projects.map(function(p){return '<option value="'+p.id+'"'+(String(p.id)===String(selectedProject)?' selected':'')+'>'+p.name+'</option>';}).join('')+'</select>')+'</div>';
-    html+='<div class="field"><label>Короткое название</label><input class="input" id="sf-short" value="'+(s?.shortName||'')+'" placeholder="Зебра"></div>';
+    html+='<div class="field"><label>Проект</label>'+(s?'<input type="hidden" id="sf-project" value="'+selectedProject+'"><div class="site-project-readonly">'+(selectedProjectRow?.name||'—')+'</div>':'<select class="select" id="sf-project" onchange="refreshSiteRentField()">'+projects.map(function(p){return '<option value="'+p.id+'"'+(String(p.id)===String(selectedProject)?' selected':'')+'>'+p.name+'</option>';}).join('')+'</select>')+'</div>';
     html+='<div class="field"><label>Тип</label><select class="select" id="sf-type">';
     ['Школа','ДК','Развивающий центр','Другое'].forEach(function(x){html+='<option'+(s?.type===x?' selected':'')+'>'+x+'</option>';});
     html+='</select></div>';
@@ -1881,9 +1879,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   };
 
   window.saveSite = function(id, returnToGroup) {
-    const name=document.querySelector('#sf-name').value.trim(), shortName=document.querySelector('#sf-short').value.trim();
-    if(!name||!shortName){alert('Укажите полное и короткое название площадки');return;}
-    const data={name:name,shortName:shortName,type:document.querySelector('#sf-type').value,address:document.querySelector('#sf-address').value.trim(),note:document.querySelector('#sf-note').value.trim(),active:document.querySelector('#sf-active').value==='true'};
+    const name=document.querySelector('#sf-name').value.trim();
+    if(!name){alert('Укажите название площадки');return;}
+    const data={name:name,shortName:name,type:document.querySelector('#sf-type').value,address:document.querySelector('#sf-address').value.trim(),note:document.querySelector('#sf-note').value.trim(),active:document.querySelector('#sf-active').value==='true'};
     let s;
     if(id){s=byId(state.sites,id);Object.assign(s,data);}
     else{const next=state.sites.length?Math.max.apply(null,state.sites.map(function(x){return x.id;}))+1:1;s=Object.assign({id:next},data);state.sites.push(s);}
@@ -2552,7 +2550,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     let html='<option value="">Без группы</option>';
     const projectId=explicitProjectId||enrollment?.projectId;
     state.groups.filter(function(g){return g.active && g.direction===direction && (!projectId||g.projectId===projectId);}).forEach(function(g){
-      html+='<option value="'+g.id+'"'+(Number(selectedGroupId)===Number(g.id)?' selected':'')+'>'+g.name+'</option>';
+      html+='<option value="'+g.id+'"'+(Number(selectedGroupId)===Number(g.id)?' selected':'')+'>'+groupTitle(g)+'</option>';
     });
     return html;
   }
@@ -6141,7 +6139,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     (state.groups||[]).filter(function(g){
       return g.active!==false && g.direction===direction && (!projectId||String(g.projectId)===projectId);
     }).forEach(function(g){
-      html+='<option value="'+g.id+'">'+g.name+'</option>';
+      html+='<option value="'+g.id+'">'+groupTitle(g)+'</option>';
     });
     return html;
   }
@@ -7252,7 +7250,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         min-width:0;
       }
       .teacher-content:has(.calendar) .event{
-        overflow-wrap:anywhere;
+        overflow-wrap:normal;
+        word-break:normal;
       }
     }
   `;

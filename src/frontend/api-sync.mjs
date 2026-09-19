@@ -473,8 +473,9 @@ async function reloadTeacher({ render = true } = {}) {
 
 async function saveSite(resourceId, returnToGroup) {
   try {
-    const body = { name: value('#sf-name').trim(), shortName: value('#sf-short').trim(), type: value('#sf-type'), address: value('#sf-address').trim(), note: value('#sf-note').trim(), active: value('#sf-active') === 'true', projectId: value('#sf-project') || undefined };
-    if (!body.name || !body.shortName) return window.alert('Укажите полное и короткое название площадки');
+    const name = value('#sf-name').trim();
+    const body = { name, shortName: name, type: value('#sf-type'), address: value('#sf-address').trim(), note: value('#sf-note').trim(), active: value('#sf-active') === 'true', projectId: value('#sf-project') || undefined };
+    if (!body.name) return window.alert('Укажите название площадки');
     const project = (legacy.state.projects ?? []).find((item) => String(item.id) === String(body.projectId));
     if (legacy.state.role === 'director' && project?.code === 'icube-robots' && element('#sf-rent')) {
       const rent = value('#sf-rent').trim();
