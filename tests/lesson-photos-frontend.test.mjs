@@ -139,7 +139,7 @@ test('lesson child card uses explicit six-slot grid without display contents or 
   assert.match(fixed, /grid-template-columns:32px minmax\(0,1fr\) 52px!important;/);
   assert.match(fixed, /grid-template-rows:52px 34px!important;/);
   assert.match(fixed, />\.lesson-student-attendance-slot\{[\s\S]*grid-column:1!important;[\s\S]*grid-row:1!important;/);
-  assert.match(fixed, />\.lesson-student-name-cell\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:1!important;/);
+  assert.match(fixed, /\.teacher-content \.student-check\.lesson-student-card>\.lesson-student-name-cell\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:1!important;/);
   assert.match(fixed, />\.lesson-photo-summary-slot\{[\s\S]*grid-column:3!important;[\s\S]*grid-row:1!important;/);
   assert.match(fixed, />\.lesson-student-more-slot\{[\s\S]*grid-column:1!important;[\s\S]*grid-row:2!important;/);
   assert.match(fixed, />\.lesson-student-trial-slot\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:2!important;/);
