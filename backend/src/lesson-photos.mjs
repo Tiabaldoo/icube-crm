@@ -62,15 +62,15 @@ function safeOriginalFilename(value) {
 }
 
 function mapPhoto(row, context, lesson) {
-  const teacherOwn = hasRole(context, 'teacher') && String(context.teacherId ?? '') === String(lesson.actual_teacher_id ?? lesson.planned_teacher_id);
-  const canDelete = hasRole(context, 'director') || hasRole(context, 'partner')
-    || (teacherOwn && lesson.status !== 'completed' && String(row.uploaded_by_user_id) === String(context.userId));
+  const teacherLessonAccess = hasRole(context, 'teacher')
+    && [lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id ?? '') === String(context.teacherId ?? ''));
+  const canDelete = hasRole(context, 'director') || hasRole(context, 'partner') || teacherLessonAccess;
   const expired = row.purged_at != null || row.deleted_at != null || new Date(row.expires_at).getTime() <= Date.now();
   return {
     id: String(row.id), lessonId: String(row.lesson_id), childId: String(row.child_id), mimeType: row.mime_type,
     sizeBytes: Number(row.size_bytes), width: row.width == null ? null : Number(row.width), height: row.height == null ? null : Number(row.height),
     originalFilename: row.original_filename, uploadedAt: iso(row.uploaded_at ?? row.created_at), expiresAt: iso(row.expires_at),
-    expired, canDelete, canReplace: !expired && canDelete && lesson.status !== 'completed',
+    expired, canDelete, canReplace: !expired && canDelete,
     fileUrl: expired ? null : `/api/v1/lessons/${row.lesson_id}/photos/${row.id}/file`,
   };
 }
@@ -110,7 +110,7 @@ export function createLessonPhotoService(pool, {
   async function upload(lessonId, { childId, buffer, mimeType, originalFilename, replacePhotoId = null, clientUploadId, capturedAt }, context = {}) {
     childId = identifier(childId, 'childId');
     clientUploadId = clientId(clientUploadId);
-    capturedAt = capturedTimestamp(capturedAt);
+    capturedTimestamp(capturedAt);
     if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new ApiProblem(400, 'PHOTO_REQUIRED', 'Файл фотографии не передан');
     if (buffer.length > maxUploadBytes) throw new ApiProblem(413, 'PHOTO_TOO_LARGE', `После обработки фотография должна быть не больше ${Math.ceil(maxUploadBytes / 1024 / 1024)} МБ`);
     const detected = detectImage(buffer);
@@ -137,11 +137,6 @@ export function createLessonPhotoService(pool, {
           if (existing.deleted_at != null) throw new ApiProblem(409, 'PHOTO_ALREADY_DELETED', 'Эта фотография уже была удалена');
           return String(existing.id);
         }
-        const queuedBeforeCompletion = lesson.status === 'completed' && lesson.completed_at != null
-          && capturedAt.getTime() <= new Date(lesson.completed_at).getTime();
-        if (hasRole(context, 'teacher') && lesson.status === 'completed' && !queuedBeforeCompletion) {
-          throw new ApiProblem(409, 'LESSON_COMPLETED', 'После завершения занятия можно догрузить только ранее сохранённую фотографию');
-        }
         const [present] = await connection.query(`SELECT a.id FROM attendances a WHERE a.lesson_id=:lessonId
           AND a.child_id=:childId AND a.present=TRUE LIMIT 1`, { lessonId: lesson.id, childId });
         if (!present.length) throw new ApiProblem(409, 'CHILD_NOT_PRESENT', 'Фотографию можно добавить только присутствующему ребёнку');
@@ -151,9 +146,7 @@ export function createLessonPhotoService(pool, {
             AND child_id=:childId AND deleted_at IS NULL FOR UPDATE`, { photoId: identifier(replacePhotoId, 'replacePhotoId'), lessonId: lesson.id, childId });
           replacement = rows[0];
           if (!replacement) throw new ApiProblem(404, 'PHOTO_NOT_FOUND', 'Заменяемая фотография не найдена');
-          const teacherQueuedReplacement = queuedBeforeCompletion && hasRole(context, 'teacher')
-            && String(replacement.uploaded_by_user_id) === actorId;
-          if (!mapPhoto(replacement, context, lesson).canReplace && !teacherQueuedReplacement) throw new ApiProblem(403, 'FORBIDDEN', 'Заменить эту фотографию нельзя');
+          if (!mapPhoto(replacement, context, lesson).canReplace) throw new ApiProblem(403, 'FORBIDDEN', 'Заменить эту фотографию нельзя');
         }
         const [counts] = await connection.query(`SELECT COUNT(*) count FROM lesson_photos
           WHERE lesson_id=:lessonId AND child_id=:childId AND deleted_at IS NULL

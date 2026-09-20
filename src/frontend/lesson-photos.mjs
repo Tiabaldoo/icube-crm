@@ -197,7 +197,19 @@ function retake(token) {
   URL.revokeObjectURL(value.previewUrl); staged.delete(token); legacy.state.modal = null; openFilePicker(value.childId, value.replacePhotoId);
 }
 
-async function removePhoto(photoId, localId = null) {
+function removePhoto(photoId, localId = null) {
+  const lesson = currentLesson(); if (!lesson) return;
+  const pending = Boolean(localId);
+  const photoArg = photoId == null ? 'null' : `'${String(photoId)}'`;
+  const localArg = localId == null ? 'null' : `'${String(localId)}'`;
+  legacy.state.modal = `<h3>Удалить фотографию?</h3><div class="notice">${pending
+    ? 'Она ещё не была загружена в CRM. После удаления фотография исчезнет с этого устройства.'
+    : 'Восстановить её будет нельзя.'}</div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubePhotos.confirmRemove(${photoArg},${localArg})">Удалить</button></div>`;
+  legacy.render();
+}
+
+async function confirmRemove(photoId, localId = null) {
   const lesson = currentLesson(); if (!lesson) return;
   try {
     if (localId) { await queue.remove(localId); const url = objectUrls.get(localId); if (url) URL.revokeObjectURL(url); objectUrls.delete(localId); }
@@ -242,7 +254,7 @@ function openPhoto(childId, key) {
 function control(child, lesson, present) {
   const photos = photoItems(lesson, child.id); const count = photos.filter((photo) => !photo.expired).length;
   const thumbs = photos.map((photo) => `<button class="lesson-photo-thumb ${photo.localId ? `is-${photo.status}` : ''} ${photo.expired ? 'is-expired' : ''}" onclick="icubePhotos.open(${child.id},'${esc(photo.id ?? photo.localId)}')" title="Открыть фотографию">${photo.previewUrl || photo.fileUrl ? `<img src="${esc(photo.previewUrl || photo.fileUrl)}" alt="Фото">` : '<span class="lesson-photo-expired-mark">⌛</span>'}<span>${photo.localId ? (photo.status === 'error' ? '!' : '↻') : photo.expired ? '×' : '✓'}</span></button>`).join('');
-  const add = present && !lesson.done && count < MAX_PHOTOS ? `<button class="photo ${count ? 'done' : ''}" onclick="icubePhotos.capture(${child.id})">${count ? '+ Добавить ещё' : '📷 Добавить фото'}</button>` : '';
+  const add = present && count < MAX_PHOTOS ? `<button class="photo ${count ? 'done' : ''}" onclick="icubePhotos.capture(${child.id})">${count ? '+ Добавить ещё' : '📷 Добавить фото'}</button>` : '';
   return `<div class="lesson-photo-control"><div class="lesson-photo-thumbs">${thumbs}</div>${add}${count >= MAX_PHOTOS ? '<span class="muted mini">Максимум 5 фото</span>' : ''}</div>`;
 }
 
@@ -271,7 +283,7 @@ if (typeof originalOpenLesson === 'function') window.openLesson = function (less
 };
 
 window.togglePhoto = (childId) => openFilePicker(childId);
-window.icubePhotos = { capture: openFilePicker, confirm, retake, open: openPhoto, remove: removePhoto, retry, retryAll, download,
+window.icubePhotos = { capture: openFilePicker, confirm, retake, open: openPhoto, remove: removePhoto, confirmRemove, retry, retryAll, download,
   loadLessonPhotos, hasPhoto, pendingCount, control };
 window.addEventListener('online', () => retryAll().catch(console.error));
 window.icubeAuthReady?.then((profile) => { if (profile) retryAll().catch(console.error); });

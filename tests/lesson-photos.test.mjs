@@ -84,6 +84,7 @@ test('teacher and partner cannot access a foreign lesson', async (t) => {
   await assert.rejects(f.service.list(10, { roles: ['teacher'], userId: '8', teacherId: '99' }), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(f.service.list(10, { ...partner, projectIds: ['1'] }), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(f.service.upload(10, uploadInput(), { roles: ['teacher'], userId: '8', teacherId: '99' }), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(f.service.upload(10, uploadInput(), { ...partner, projectIds: ['1'] }), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(f.service.file(10, 1, { ...partner, projectIds: ['1'] }), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(f.service.list(10, { roles: [], userId: '8' }), { status: 403, code: 'FORBIDDEN' });
   assert.deepEqual(await f.service.list(10, partner), []);
@@ -96,22 +97,37 @@ test('upload requires actual presence and enforces five photos per lesson and ch
   await assert.rejects(full.service.upload(10, uploadInput(), teacher), { status: 409, code: 'PHOTO_LIMIT' });
 });
 
-test('teacher cannot capture after completion or delete there, director can delete', async (t) => {
-  const f = await fixture({ lesson: { status: 'completed', completed_at: new Date('2026-09-19T13:00:00Z') }, photos: [{}] }); t.after(f.close);
-  await assert.rejects(f.service.upload(10, uploadInput({ capturedAt: '2026-09-19T14:00:00Z' }), teacher), { status: 409, code: 'LESSON_COMPLETED' });
-  await assert.rejects(f.service.remove(10, 1, teacher), { status: 403, code: 'FORBIDDEN' });
-  await f.service.remove(10, 1, director); assert.ok(f.pool.state.photos[0].deleted_at);
+test('completed lesson allows new uploads for director, teacher and partner with lesson access', async (t) => {
+  for (const [label, context] of [['director', director], ['teacher', teacher], ['partner', partner]]) {
+    const f = await fixture({ lesson: { status: 'completed', completed_at: new Date('2026-09-19T13:00:00Z') } }); t.after(f.close);
+    const photo = await f.service.upload(10, uploadInput({ clientUploadId: `completed-${label}`, capturedAt: '2026-09-19T14:00:00Z' }), context);
+    assert.ok(photo.id, label);
+  }
 });
 
-test('teacher can delete own photo before lesson completion', async (t) => {
-  const f = await fixture({ photos: [{}] }); t.after(f.close);
-  await f.service.remove(10, 1, teacher);
-  assert.ok(f.pool.state.photos[0].deleted_at); assert.ok(f.pool.state.photos[0].purged_at);
+test('teacher, director and partner can delete photos after completion within lesson access', async (t) => {
+  for (const [label, context] of [['teacher', teacher], ['director', director], ['partner', partner]]) {
+    const f = await fixture({ lesson: { status: 'completed', completed_at: new Date('2026-09-19T13:00:00Z') },
+      photos: [{ uploaded_by_user_id: label === 'teacher' ? 1 : 9 }] }); t.after(f.close);
+    await f.service.remove(10, 1, context);
+    assert.ok(f.pool.state.photos[0].deleted_at, label);
+  }
 });
 
-test('offline photo captured before finish uploads idempotently after completion', async (t) => {
+test('completed photo metadata allows replace for all scoped roles and teacher can replace any accessible photo', async (t) => {
+  const f = await fixture({ lesson: { status: 'completed', completed_at: new Date('2026-09-19T13:00:00Z') },
+    photos: [{ uploaded_by_user_id: 1 }] }); t.after(f.close);
+  for (const context of [teacher, director, partner]) {
+    const [metadata] = await f.service.list(10, context);
+    assert.equal(metadata.canDelete, true); assert.equal(metadata.canReplace, true);
+  }
+  const replacement = await f.service.upload(10, uploadInput({ replacePhotoId: 1, capturedAt: '2026-09-19T14:05:00Z' }), teacher);
+  assert.notEqual(replacement.id, '1'); assert.ok(f.pool.state.photos[0].deleted_at);
+});
+
+test('offline photo captured after finish uploads idempotently after completion', async (t) => {
   const f = await fixture({ lesson: { status: 'completed', completed_at: new Date('2026-09-19T13:00:00Z') } }); t.after(f.close);
-  const input = uploadInput({ clientUploadId: 'offline-upload-1', capturedAt: '2026-09-19T12:55:00Z' });
+  const input = uploadInput({ clientUploadId: 'offline-upload-1', capturedAt: '2026-09-19T14:00:00Z' });
   const first = await f.service.upload(10, input, teacher);
   const repeated = await f.service.upload(10, input, teacher);
   assert.equal(repeated.id, first.id); assert.equal(f.pool.state.photos.length, 1);
