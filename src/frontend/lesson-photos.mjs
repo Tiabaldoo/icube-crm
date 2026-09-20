@@ -80,6 +80,13 @@ function photoItems(lesson, childId) {
   return Array.isArray(value) ? value : [];
 }
 
+function visiblePhotoItems(lesson, childId) {
+  return photoItems(lesson, childId).filter((photo) => {
+    if (photo?.localId) return true;
+    return photo?.expired !== true && photo?.purged !== true && photo?.deleted !== true;
+  });
+}
+
 function setServerPhotos(lesson, photos) {
   const pending = Object.values(lesson.photos ?? {}).flat().filter((photo) => photo?.localId);
   lesson.photos = {};
@@ -264,7 +271,7 @@ function photoStatus(photo) {
 }
 
 function openGallery(childId) {
-  const lesson = currentLesson(); const photos = photoItems(lesson, childId); if (!lesson || !photos.length) return;
+  const lesson = currentLesson(); const photos = visiblePhotoItems(lesson, childId); if (!lesson || !photos.length) return;
   const items = photos.map((photo) => {
     const key = esc(photo.id ?? photo.localId); const status = photoStatus(photo);
     return `<button class="lesson-photo-gallery-item ${status.cls}" onclick="icubePhotos.open(${childId},'${key}')" aria-label="Открыть фотографию" title="Открыть фотографию">
@@ -277,7 +284,7 @@ function openGallery(childId) {
 }
 
 function control(child, lesson, present) {
-  const photos = photoItems(lesson, child.id); const activeCount = photos.filter((photo) => !photo.expired).length;
+  const photos = visiblePhotoItems(lesson, child.id); const activeCount = photos.length;
   const representative = [...photos].reverse().find((photo) => photo.previewUrl || photo.fileUrl) || photos.at(-1);
   const attention = photos.find((photo) => photo.localId && photo.status === 'error')
     || photos.find((photo) => photo.localId)
@@ -311,7 +318,10 @@ if (typeof originalStudentCheck === 'function') window.studentCheck = function (
 const originalLesson = window.lesson;
 if (typeof originalLesson === 'function') window.lesson = function () {
   const output = originalLesson(); const lesson = currentLesson(); if (!lesson || lesson.readOnly) return output;
-  const children = [...new Set(Object.keys(lesson.photos ?? {}).map(Number))].map((childId) => legacy.state.children.find((child) => child.id === childId)).filter(Boolean);
+  const children = [...new Set(Object.keys(lesson.photos ?? {}).map(Number))]
+    .filter((childId) => visiblePhotoItems(lesson, childId).length)
+    .map((childId) => legacy.state.children.find((child) => child.id === childId))
+    .filter(Boolean);
   if (!children.length) return output;
   return `${output}<div class="card pad" style="margin-top:16px"><h2>Фотографии занятия</h2>${children.map((child) => `<div class="kpi-line"><b>${esc(child.name)}</b>${control(child, lesson, false)}</div>`).join('')}</div>`;
 };

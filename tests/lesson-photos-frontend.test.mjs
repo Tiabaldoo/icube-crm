@@ -56,7 +56,68 @@ test('compact photo control renders 0, 1, 3 and 5-photo states', () => {
   assert.match(completed, />📷\+<\/button>/);
 });
 
-test('photo stack gallery shows uploaded, pending, error and expired statuses and keeps existing actions', () => {
+test('expired server photos are excluded from card stack, count and add-button limit', () => {
+  const child = { id: 4, name: 'Ребёнок' };
+  const expired = Array.from({ length: 5 }, (_, index) => ({ id: `old-${index + 1}`, expired: true }));
+  const lesson = { photos: { 4: [...expired, { id: 'active-1', fileUrl: '/active.jpg' }] } };
+
+  const html = window.icubePhotos.control(child, lesson, true);
+  assert.equal((html.match(/<button class="lesson-photo-summary /g) ?? []).length, 1);
+  assert.match(html, /aria-label="Открыть фотографии: 1"/);
+  assert.doesNotMatch(html, /lesson-photo-count/);
+  assert.doesNotMatch(html, /is-expired/);
+  assert.match(html, />📷\+<\/button>/);
+});
+
+test('only expired server photos render exactly like zero photos and still allow adding for a present child', () => {
+  const child = { id: 4, name: 'Ребёнок' };
+  const lesson = { photos: { 4: [
+    { id: 'old-1', expired: true },
+    { id: 'old-2', expired: true },
+  ] } };
+
+  const html = window.icubePhotos.control(child, lesson, true);
+  assert.doesNotMatch(html, /lesson-photo-summary /);
+  assert.doesNotMatch(html, /lesson-photo-count/);
+  assert.doesNotMatch(html, /is-expired/);
+  assert.doesNotMatch(html, /⌛|×/);
+  assert.match(html, />📷\+<\/button>/);
+});
+
+test('pending local photo remains visible even when expired server photos are hidden', () => {
+  const child = { id: 4, name: 'Ребёнок' };
+  const lesson = { photos: { 4: [
+    { id: 'old-1', expired: true },
+    { localId: 'local-1', previewUrl: '/pending.jpg', status: 'waiting' },
+  ] } };
+
+  const html = window.icubePhotos.control(child, lesson, true);
+  assert.match(html, /aria-label="Открыть фотографии: 1"/);
+  assert.match(html, /is-waiting/);
+  assert.doesNotMatch(html, /lesson-photo-count/);
+  assert.doesNotMatch(html, /is-expired/);
+});
+
+test('gallery excludes expired server photos from mixed and all-expired collections', () => {
+  state.lessons = [{ id: 11, photos: { 4: [
+    { id: 'active', fileUrl: '/active.jpg' },
+    { id: 'old', expired: true },
+  ], 5: [
+    { id: 'old-only', expired: true },
+  ] } }];
+  state.selectedLesson = 11; state.modal = null;
+
+  window.icubePhotos.gallery(4);
+  assert.match(state.modal, /Фотографии · 1/);
+  assert.match(state.modal, /active\.jpg/);
+  assert.doesNotMatch(state.modal, /is-expired|old-only/);
+
+  state.modal = 'unchanged';
+  window.icubePhotos.gallery(5);
+  assert.equal(state.modal, 'unchanged');
+});
+
+test('photo stack gallery shows only active server and local queue photos and keeps existing actions', () => {
   state.lessons = [{ id: 10, photos: { 4: [
     { id: '1', fileUrl: '/one.jpg', canReplace: true, canDelete: true, expiresAt: '2026-10-19T00:00:00Z' },
     { localId: 'local-2', previewUrl: '/pending.jpg', status: 'waiting' },
@@ -66,16 +127,16 @@ test('photo stack gallery shows uploaded, pending, error and expired statuses an
   state.selectedLesson = 10; state.modal = null;
 
   window.icubePhotos.gallery(4);
-  assert.match(state.modal, /Фотографии · 4/);
-  assert.equal((state.modal.match(/lesson-photo-gallery-item/g) ?? []).length, 4);
+  assert.match(state.modal, /Фотографии · 3/);
+  assert.equal((state.modal.match(/lesson-photo-gallery-item/g) ?? []).length, 3);
   assert.match(state.modal, /lesson-photo-gallery-item is-uploaded/);
   assert.match(state.modal, /lesson-photo-state-mark">✓<\/span>/);
   assert.match(state.modal, /lesson-photo-gallery-item is-waiting/);
   assert.match(state.modal, /lesson-photo-state-mark">↻<\/span>/);
   assert.match(state.modal, /lesson-photo-gallery-item is-error/);
   assert.match(state.modal, /lesson-photo-state-mark">!<\/span>/);
-  assert.match(state.modal, /lesson-photo-gallery-item is-expired/);
-  assert.match(state.modal, /lesson-photo-state-mark">×<\/span>/);
+  assert.doesNotMatch(state.modal, /is-expired/);
+  assert.doesNotMatch(state.modal, /lesson-photo-state-mark">×<\/span>/);
 
   window.icubePhotos.open(4, '1');
   assert.match(state.modal, />Скачать<\/button>/);
@@ -164,6 +225,15 @@ test('lesson child card uses explicit six-slot grid without display contents or 
   assert.match(photoSource, /lesson-photo-control-slot/);
   assert.match(photoSource, /lesson-photo-summary-slot/);
   assert.match(photoSource, /lesson-photo-add-slot/);
+});
+
+test('frontend presentation filters expired server photos without mutating stored lesson metadata', async () => {
+  const source = await readFile(new URL('../src/frontend/lesson-photos.mjs', import.meta.url), 'utf8');
+  assert.match(source, /function visiblePhotoItems\([\s\S]*photo\?\.localId[\s\S]*photo\?\.expired !== true/);
+  assert.match(source, /function openGallery\([\s\S]*visiblePhotoItems\(lesson, childId\)/);
+  assert.match(source, /function control\([\s\S]*visiblePhotoItems\(lesson, child\.id\)/);
+  assert.match(source, /\.filter\(\(childId\) => visiblePhotoItems\(lesson, childId\)\.length\)/);
+  assert.match(source, /function setServerPhotos\([\s\S]*lesson\.photos = \{\}/);
 });
 
 test('frontend source keeps IndexedDB blobs, optimization and reconnect retry contracts', async () => {
