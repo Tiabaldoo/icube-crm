@@ -74,7 +74,7 @@ export function createParentNotifications(pool) {
     const [rows] = await connection.query(`SELECT DISTINCT child_id FROM (
       SELECT lrm.child_id FROM lesson_roster_members lrm WHERE lrm.lesson_id=:lessonId
       UNION ALL
-      SELECT gm.child_id FROM group_memberships gm JOIN child_enrollments e ON e.id=gm.enrollment_id
+      SELECT e.child_id FROM group_memberships gm JOIN child_enrollments e ON e.id=gm.enrollment_id
         WHERE gm.group_id=:groupId AND gm.started_on<=DATE(:startsAt)
           AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(:startsAt)) AND e.status='active' AND e.superseded_at IS NULL
     ) children`, { lessonId: lesson.id, groupId: lesson.group_id, startsAt: lesson.starts_at });
@@ -119,13 +119,13 @@ export function createParentNotifications(pool) {
   }
 
   async function generateDayBefore(targetDate, connection = pool) {
-    const [rows] = await connection.query(`SELECT l.id lesson_id,l.starts_at,gm.child_id,e.id enrollment_id,e.balance_lessons
+    const [rows] = await connection.query(`SELECT l.id lesson_id,l.starts_at,e.child_id,e.id enrollment_id,e.balance_lessons
       FROM lessons l JOIN group_memberships gm ON gm.group_id=l.group_id
         AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
       JOIN child_enrollments e ON e.id=gm.enrollment_id AND e.status='active' AND e.superseded_at IS NULL
-      JOIN children c ON c.id=gm.child_id AND c.deleted_at IS NULL
+      JOIN children c ON c.id=e.child_id AND c.deleted_at IS NULL
       WHERE DATE(l.starts_at)=:targetDate AND l.status='scheduled' AND l.deleted_at IS NULL
-      ORDER BY l.id,gm.child_id`, { targetDate });
+      ORDER BY l.id,e.child_id`, { targetDate });
     let created = 0;
     for (const row of rows) {
       created += await createForChild(connection, {

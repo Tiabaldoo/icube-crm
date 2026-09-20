@@ -3,8 +3,9 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import { createParentPortal } from '../backend/src/parent-portal.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
+import { createMysqlLessons } from '../backend/src/lessons.mjs';
 import { permissions } from '../backend/src/auth.mjs';
-import { parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
+import { parentScheduleCalendar, parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
 import { localDate, nextDate } from '../scripts/generate-parent-notifications.mjs';
 
 const parent = { userId: '50', roles: ['parent'] };
@@ -46,7 +47,7 @@ function portalFixture() {
       { id: 70, group_id: 100, scheduled_starts_at: '2026-09-22 17:00:00', starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
       { id: 71, group_id: 100, scheduled_starts_at: '2026-09-23 17:00:00', starts_at: '2026-09-24 18:00:00', ends_at: '2026-09-24 19:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
       { id: 72, group_id: 100, scheduled_starts_at: '2026-09-25 17:00:00', starts_at: '2026-09-25 17:00:00', ends_at: '2026-09-25 18:00:00', status: 'cancelled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
-      { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 17:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
+      { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 15:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
     ]];
     if (sql.includes('FROM attendances a JOIN lessons')) {
       const childId = Number(params.childId); return [[{ lesson_id: childId * 10, starts_at: `2026-09-${childId === 10 ? '10' : '11'} 17:00:00`, is_trial: childId === 11, direction_name: 'Робототехника', group_name: `Группа ${childId}` }]];
@@ -97,6 +98,19 @@ test('parent schedule materializes only linked current group and exposes no futu
   assert.equal(parentScheduleStatus(rows[1]), 'Перенесено');
   assert.equal(parentScheduleStatus(rows[2]), 'Отменено');
   assert.equal(parentScheduleStatus(rows[3]), 'Проведено');
+});
+
+test('parent schedule uses the shared calendar layout in read-only mode and completed overrides moved', () => {
+  const rows = [
+    { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', status: 'scheduled', moved: false, group: 'Группа 1', site: 'Площадка', teacher: 'Учитель' },
+    { id: '71', startsAt: '2026-09-24T18:00:00', endsAt: '2026-09-24T19:00:00', status: 'completed', moved: true, group: 'Группа 1', site: 'Площадка', teacher: 'Учитель' },
+  ];
+  const html = parentScheduleCalendar(rows, '2026-09-15');
+  assert.match(html, /calendar-desktop/); assert.match(html, /calendar calendar-grid/); assert.match(html, /calendar-mobile/);
+  assert.match(html, /data-action="schedule-prev"/); assert.match(html, /data-action="lesson-info"/);
+  assert.doesNotMatch(html, /attendance|Изменить|Редактировать/);
+  assert.equal(parentScheduleStatus(rows[1]), 'Проведено');
+  assert.match(html, /badge green">Проведено/); assert.doesNotMatch(html, /badge amber">Перенесено/);
 });
 
 test('parent role has no universal CRM or mutation permissions', () => {
@@ -176,6 +190,7 @@ test('director creates one-time credentials, links a second child and reset revo
 function notificationFixture({ disabled = new Set(), balance = '0.00000000' } = {}) {
   const state = { notifications: [], balance };
   async function query(sql, params = {}) {
+    assert.doesNotMatch(sql, /gm\.child_id/, 'group_memberships has no child_id column');
     if (sql.includes('FROM child_guardians cg JOIN guardians')) return [disabled.has(params.type) ? [] : [{ user_id: 50, guardian_id: 5, enabled: 1 }]];
     if (sql.startsWith('INSERT IGNORE INTO notifications')) {
       if (state.notifications.some((item) => item.userId === params.userId && item.dedupKey === params.dedupKey)) return [{ affectedRows: 0 }];
@@ -188,6 +203,45 @@ function notificationFixture({ disabled = new Set(), balance = '0.00000000' } = 
   }
   const pool = { query };
   return { state, service: createParentNotifications(pool), pool };
+}
+
+function lessonOperationFixture({ hasParent = true, disabled = new Set() } = {}) {
+  const lesson = {
+    id: 70, group_id: 100, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    site_override_id: null, planned_teacher_id: 5, actual_teacher_id: 5,
+    scheduled_starts_at: '2026-09-20 13:00:00', scheduled_ends_at: '2026-09-20 14:00:00',
+    starts_at: '2026-09-20 13:00:00', ends_at: '2026-09-20 14:00:00', status: 'scheduled', deleted_at: null,
+    topic: null, is_intro_group: 0, is_empty_trip: 0, roster_frozen_at: null, attendance_applied_at: null,
+    completed_at: null, cancelled_at: null, lock_version: 1,
+  };
+  const state = { lesson, notifications: [] };
+  async function query(sql, params = {}) {
+    assert.doesNotMatch(sql, /gm\.child_id/, 'group_memberships has no child_id column');
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[{ ...lesson }]];
+    if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: params.id }]];
+    if (sql.startsWith('UPDATE lessons SET starts_at=')) {
+      lesson.starts_at = `${params.date} ${params.start}:00`; lesson.ends_at = `${params.date} ${params.end}:00`;
+      lesson.actual_teacher_id = params.teacherId; return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith("UPDATE lessons SET status='cancelled'")) { lesson.status = 'cancelled'; lesson.cancelled_at = '2026-09-20 12:00:00'; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('SELECT * FROM salary_accruals WHERE lesson_id=')) return [[]];
+    if (sql.includes('SELECT DISTINCT child_id FROM')) {
+      assert.match(sql, /SELECT e\.child_id FROM group_memberships gm JOIN child_enrollments e ON e\.id=gm\.enrollment_id/);
+      return [[{ child_id: 10 }]];
+    }
+    if (sql.includes('FROM child_guardians cg JOIN guardians')) return [hasParent && !disabled.has(params.type) ? [{ user_id: 50, guardian_id: 5, enabled: 1 }] : []];
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) {
+      if (state.notifications.some((item) => item.dedupKey === params.dedupKey && item.userId === params.userId)) return [{ affectedRows: 0 }];
+      state.notifications.push(params); return [{ affectedRows: 1 }];
+    }
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа 1', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка', site_override_name: null, planned_teacher_name: 'Учитель', actual_teacher_name: 'Учитель' }]];
+    if (sql.includes('FROM lesson_roster_members') || sql.includes('FROM attendances WHERE lesson_id IN') || sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
+    throw new Error(`Unexpected lesson operation SQL: ${sql}`);
+  }
+  const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+  const pool = { query, getConnection: async () => connection };
+  const notifications = createParentNotifications(pool);
+  return { state, service: createMysqlLessons(pool, { parentNotifications: notifications }) };
 }
 
 test('parent notifications respect settings, destinations and deduplicate event triggers', async () => {
@@ -205,6 +259,27 @@ test('parent notifications respect settings, destinations and deduplicate event 
   assert.equal(fixture.state.notifications.find((item) => item.type === 'last_paid_lesson').destination, 'payments');
 });
 
+test('lesson move and cancellation complete and notify the linked parent', async () => {
+  const fixture = lessonOperationFixture();
+  const moved = await fixture.service.update(70, { date: '2026-09-21' }, { roles: ['director'] });
+  assert.equal(moved.startsAt.slice(0, 10), '2026-09-21');
+  const cancelled = await fixture.service.cancel(70, { roles: ['director'] });
+  assert.equal(cancelled.status, 'cancelled');
+  assert.deepEqual(fixture.state.notifications.map((item) => item.type), ['lesson_move', 'lesson_cancel']);
+});
+
+test('missing parent account and disabled notification settings never break lesson operations', async () => {
+  const withoutParent = lessonOperationFixture({ hasParent: false });
+  await withoutParent.service.update(70, { date: '2026-09-21' }, { roles: ['director'] });
+  await withoutParent.service.cancel(70, { roles: ['director'] });
+  assert.equal(withoutParent.state.lesson.status, 'cancelled'); assert.deepEqual(withoutParent.state.notifications, []);
+
+  const disabled = lessonOperationFixture({ disabled: new Set(['lesson_move', 'lesson_cancel']) });
+  await disabled.service.update(70, { date: '2026-09-21' }, { roles: ['director'] });
+  await disabled.service.cancel(70, { roles: ['director'] });
+  assert.equal(disabled.state.lesson.status, 'cancelled'); assert.deepEqual(disabled.state.notifications, []);
+});
+
 test('day-before scheduler creates reminder and zero-balance payment reminder only once', async () => {
   const fixture = notificationFixture();
   const first = await fixture.service.generateDayBefore('2026-09-21'); const second = await fixture.service.generateDayBefore('2026-09-21');
@@ -216,6 +291,18 @@ test('day-before scheduler creates reminder and zero-balance payment reminder on
   assert.deepEqual(paid.state.notifications.map((item) => item.type), ['reminder_day_before']);
   const debt = notificationFixture({ balance: '-1.00000000' }); await debt.service.generateDayBefore('2026-09-21');
   assert.deepEqual(debt.state.notifications.map((item) => item.type), ['reminder_day_before', 'payment_reminder']);
+});
+
+test('parent notification SQL only references columns present in the real group_memberships schema', async () => {
+  const [schema, source] = await Promise.all([
+    readFile(new URL('../database/migrations/001_initial.sql', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/parent-notifications.mjs', import.meta.url), 'utf8'),
+  ]);
+  const table = schema.match(/CREATE TABLE group_memberships \(([\s\S]*?)\n\) ENGINE=/)?.[1] ?? '';
+  const columns = new Set([...table.matchAll(/^\s{2}([a-z_][a-z0-9_]*)\s+[A-Z]/gm)].map((match) => match[1]));
+  assert.ok(columns.has('enrollment_id')); assert.equal(columns.has('child_id'), false);
+  for (const match of source.matchAll(/gm\.([a-z_][a-z0-9_]*)/g)) assert.ok(columns.has(match[1]), `Unknown group_memberships column: ${match[1]}`);
+  assert.doesNotMatch(source, /gm\.child_id/);
 });
 
 test('parent migration and UI keep many-to-many links, deduplication and mobile-only read model', async () => {

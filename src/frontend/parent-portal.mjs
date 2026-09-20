@@ -6,7 +6,7 @@ const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
   ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, payment: null, touchX: null };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, payment: null, lessonInfo: null, scheduleCursor: null, touchX: null };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
@@ -16,9 +16,24 @@ const selectedChild = () => state.profile?.children?.find((child) => String(chil
 
 export function parentScheduleStatus(lesson) {
   if (lesson.status === 'cancelled') return 'Отменено';
-  if (lesson.moved) return 'Перенесено';
   if (lesson.status === 'completed') return 'Проведено';
+  if (lesson.moved) return 'Перенесено';
   return '';
+}
+
+const pad = (value) => String(value).padStart(2, '0');
+const localIsoDate = (date = new Date()) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+function parseIsoDate(value) {
+  const [year, month, day] = String(value ?? '').split('-').map(Number);
+  const date = new Date(year, month - 1, day || 1);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+function scheduleRange(cursor) {
+  const date = parseIsoDate(cursor);
+  const start = new Date(date.getFullYear(), date.getMonth(), 1);
+  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return { start, end, from: localIsoDate(start), to: localIsoDate(end),
+    title: new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(date) };
 }
 
 function errorMessage(error) {
@@ -39,7 +54,7 @@ function shell(content) {
     <header class="parent-header"><div><b>iCube</b><span>Кабинет родителя</span></div>${childSelector()}<button class="parent-bell" data-action="notifications" aria-label="Уведомления">🔔${unread ? `<i>${unread}</i>` : ''}</button></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main>
     <nav class="parent-nav">${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav>
-    ${viewerHtml()}${paymentModalHtml()}
+    ${viewerHtml()}${paymentModalHtml()}${lessonInfoHtml()}
   </div>`;
 }
 
@@ -55,12 +70,45 @@ function homeHtml(data) {
     <article class="parent-card"><h2>О ребёнке</h2>${about || empty('Информация о направлениях пока не добавлена.')}</article>`;
 }
 
+function scheduleEventHtml(lesson) {
+  const status = parentScheduleStatus(lesson);
+  const statusClass = status === 'Отменено' ? 'red' : status === 'Перенесено' ? 'amber' : 'green';
+  return `<button class="event parent-calendar-event${status === 'Проведено' ? ' done' : ''}" data-action="lesson-info" data-lesson="${lesson.id}">
+    <span class="calendar-event-site">${escapeHtml(lesson.site ?? 'Площадка не указана')}</span>
+    <span class="calendar-event-meta">${time(lesson.startsAt)} · ${escapeHtml(lesson.group)}</span>
+    ${status ? `<span class="calendar-event-status"><span class="badge ${statusClass}">${status}</span></span>` : ''}
+  </button>`;
+}
+
+export function parentScheduleCalendar(rows, cursor) {
+  const range = scheduleRange(cursor);
+  const byDate = new Map();
+  for (const lesson of rows) {
+    const key = String(lesson.startsAt).slice(0, 10);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key).push(lesson);
+  }
+  for (const lessons of byDate.values()) lessons.sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)) || String(a.id).localeCompare(String(b.id)));
+  const cells = [];
+  const blanks = (range.start.getDay() + 6) % 7;
+  for (let index = 0; index < blanks; index += 1) cells.push(null);
+  for (let day = 1; day <= range.end.getDate(); day += 1) cells.push(new Date(range.start.getFullYear(), range.start.getMonth(), day));
+  while (cells.length % 7) cells.push(null);
+  const today = localIsoDate();
+  const desktop = `<div class="calendar-desktop"><div class="calendar calendar-weekdays">${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((day) => `<div>${day}</div>`).join('')}</div><div class="calendar calendar-grid">${cells.map((date) => {
+    if (!date) return '<div class="day calendar-empty"></div>';
+    const key = localIsoDate(date); const lessons = byDate.get(key) ?? [];
+    return `<div class="day${key === today ? ' calendar-today' : ''}"><div class="date">${pad(date.getDate())}.${pad(date.getMonth() + 1)}${key === today ? '<span class="today-label">сегодня</span>' : ''}</div>${lessons.map(scheduleEventHtml).join('')}</div>`;
+  }).join('')}</div></div>`;
+  const agendaDays = [];
+  for (const [date, lessons] of byDate) agendaDays.push({ date: parseIsoDate(date), key: date, lessons });
+  agendaDays.sort((a, b) => a.key.localeCompare(b.key));
+  const mobile = `<div class="calendar-mobile">${agendaDays.length ? agendaDays.map(({ date, key, lessons }) => `<section class="calendar-agenda-day${key === today ? ' calendar-today' : ''}"><div class="calendar-agenda-date"><b>${new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).format(date)}</b>${key === today ? '<span>Сегодня</span>' : ''}</div>${lessons.map(scheduleEventHtml).join('')}</section>`).join('') : '<div class="calendar-mobile-empty">В этом месяце занятий нет.</div>'}</div>`;
+  return `<div class="calendar-toolbar"><div class="calendar-toolbar-nav"><button class="btn calendar-arrow" data-action="schedule-prev" aria-label="Предыдущий месяц">←</button><button class="btn" data-action="schedule-today">Сегодня</button><button class="btn calendar-arrow" data-action="schedule-next" aria-label="Следующий месяц">→</button><div class="calendar-period-title">${escapeHtml(range.title)}</div></div></div>${desktop}${mobile}`;
+}
+
 function scheduleHtml(rows) {
-  if (!rows.length) return `<section class="parent-title"><h1>Расписание</h1></section>${empty('Нет занятий в выбранном периоде.')}`;
-  return `<section class="parent-title"><h1>Расписание</h1><span>Только занятия текущих групп</span></section><div class="parent-lessons">${rows.map((lesson) => {
-    const status = parentScheduleStatus(lesson);
-    return `<article class="parent-card parent-lesson"><div class="parent-date"><b>${dateRu(lesson.startsAt)}</b><span>${time(lesson.startsAt)}–${time(lesson.endsAt)}</span></div><div><strong>${escapeHtml(lesson.group)}</strong><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span></div>${status ? `<em class="status-${lesson.status === 'cancelled' ? 'cancelled' : lesson.moved ? 'moved' : 'done'}">${status}</em>` : ''}</article>`;
-  }).join('')}</div>`;
+  return `<section class="parent-title"><h1>Расписание</h1><span>Только занятия текущих групп</span></section>${parentScheduleCalendar(rows, state.scheduleCursor)}`;
 }
 
 function attendanceHtml(rows) {
@@ -108,6 +156,13 @@ function paymentModalHtml() {
   return `<div class="parent-payment-modal"><article class="parent-card"><button data-action="pay-close" aria-label="Закрыть">×</button><h2>Оплата абонемента</h2><span>${escapeHtml(state.payment.direction)}</span><strong>${money(state.payment.amount)}</strong>${qr ? `<img src="${escapeHtml(qr)}" alt="QR для оплаты">` : '<div class="parent-empty">QR будет добавлен администратором.</div>'}<p>После оплаты зачисление появится после подтверждения администратором.</p></article></div>`;
 }
 
+function lessonInfoHtml() {
+  const lesson = state.lessonInfo;
+  if (!lesson) return '';
+  const status = parentScheduleStatus(lesson) || 'Запланировано';
+  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div></article></div>`;
+}
+
 function consentHtml(documents) {
   app.innerHTML = `<div class="parent-consent"><div><b>iCube</b><h1>Документы и согласия</h1><p>Для доступа к кабинету примите каждый актуальный обязательный документ отдельно.</p>${documents.map((document) => `<article class="parent-card"><h2>${escapeHtml(document.title)}</h2><div class="parent-document-body">${escapeHtml(document.body ?? '')}</div>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть полный текст</a>` : ''}<div><small>Версия ${escapeHtml(document.version)}</small>${document.acceptedAt ? '<b class="accepted">Принято</b>' : `<button class="parent-primary" data-action="accept" data-id="${document.id}">Принять</button>`}</div></article>`).join('')}</div></div>`;
 }
@@ -119,6 +174,10 @@ async function loadTab() {
     let data;
     if (tab === 'notifications') data = await api.request('/parent/notifications');
     else if (tab === 'home') data = await api.request(`/parent/children/${childId}/home`);
+    else if (tab === 'schedule') {
+      const range = scheduleRange(state.scheduleCursor);
+      data = await api.request(`/parent/children/${childId}/schedule?from=${range.from}&to=${range.to}`);
+    }
     else if (tab === 'settings') {
       const [profile, settings, docs] = await Promise.all([api.request('/parent/profile'), api.request('/parent/notification-settings'), api.request('/parent/documents')]);
       data = { profile, settings, documents: docs.documents };
@@ -157,7 +216,7 @@ async function start() {
     }
     state.childId = state.profile.children[0]?.id ?? null;
     if (!state.childId) { app.innerHTML = `<div class="parent-consent">${empty('К аккаунту пока не привязан ребёнок. Обратитесь к администратору.')}</div>`; return; }
-    state.tab = 'home';
+    state.tab = 'home'; state.scheduleCursor = localIsoDate();
     await loadTab();
   } catch (error) {
     app.innerHTML = `<div class="parent-consent"><div class="parent-error">${escapeHtml(errorMessage(error))}</div></div>`;
@@ -203,6 +262,13 @@ app?.addEventListener('click', async (event) => {
     state.payment = { amount: target.dataset.amount, direction: target.dataset.direction }; render();
   }
   else if (action === 'pay-close') { state.payment = null; render(); }
+  else if (action === 'schedule-prev' || action === 'schedule-next') {
+    const cursor = parseIsoDate(state.scheduleCursor); cursor.setMonth(cursor.getMonth() + (action === 'schedule-prev' ? -1 : 1), 1);
+    state.scheduleCursor = localIsoDate(cursor); state.data = null; await loadTab();
+  }
+  else if (action === 'schedule-today') { state.scheduleCursor = localIsoDate(); state.data = null; await loadTab(); }
+  else if (action === 'lesson-info') { state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === target.dataset.lesson) ?? null; render(); }
+  else if (action === 'lesson-info-close') { state.lessonInfo = null; render(); }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) window.icubeAuthLogout?.();
     else window.alert(errorMessage(error));
