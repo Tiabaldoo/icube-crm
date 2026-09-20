@@ -25,6 +25,9 @@ const isoDateTime = (value) => {
   if (typeof value !== 'string') return value.toISOString();
   return `${value.slice(0, 10)}T${value.slice(11, 19)}Z`;
 };
+const mysqlDateTime = (value) => value instanceof Date
+  ? value.toISOString().slice(0, 19).replace('T', ' ')
+  : String(value).slice(0, 19).replace('T', ' ');
 const bool = (value) => value === true || value === 1 || value === '1';
 const nullableText = (value) => value == null || value === '' ? null : String(value).trim() || null;
 const hasRole = (context, role) => (context.roles ?? []).includes(role);
@@ -43,7 +46,7 @@ function lessonKind(row) {
   return 'regular';
 }
 
-export function createMysqlLessons(pool, { lessonPhotos = null } = {}) {
+export function createMysqlLessons(pool, { lessonPhotos = null, parentNotifications = null } = {}) {
   const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
     pt.full_name planned_teacher_name,act.full_name actual_teacher_name
     FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
@@ -254,6 +257,10 @@ export function createMysqlLessons(pool, { lessonPhotos = null } = {}) {
           introGroup: body.introGroup === undefined ? bool(lesson.is_intro_group) : bool(body.introGroup),
           emptyTrip: body.emptyTrip === undefined ? bool(lesson.is_empty_trip) : bool(body.emptyTrip),
         });
+        const updatedStartsAt = `${date} ${start}:00`;
+        if (parentNotifications && lesson.status !== 'completed' && mysqlDateTime(lesson.starts_at) !== updatedStartsAt) {
+          await parentNotifications.lessonMoved(connection, { ...lesson, starts_at: updatedStartsAt }, lesson.starts_at);
+        }
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -474,6 +481,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null } = {}) {
           lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
         lesson.status = 'completed';
         await recalculateSalary(connection, lesson);
+        if (parentNotifications && !bool(lesson.is_empty_trip)) await parentNotifications.lessonFinished(connection, lesson);
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -512,6 +520,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null } = {}) {
         await connection.query(`UPDATE lessons SET status='cancelled',cancelled_at=NOW(6),is_empty_trip=FALSE,lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
         lesson.status = 'cancelled';
         await recalculateSalary(connection, lesson);
+        if (parentNotifications) await parentNotifications.lessonCancelled(connection, lesson);
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -725,5 +734,5 @@ export function createMysqlLessons(pool, { lessonPhotos = null } = {}) {
     }));
   }
 
-  return { list, get, create, deletedOccurrences, update, start, putAttendance, finish, remove, removeAttendance, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
+  return { materialize, list, get, create, deletedOccurrences, update, start, putAttendance, finish, remove, removeAttendance, cancel, emptyTrip, addExtra, removeExtra, quickChild, salaryAccruals, notifications };
 }

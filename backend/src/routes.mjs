@@ -18,6 +18,8 @@ import { createDailyDashboard } from './daily-dashboard.mjs';
 import { createNotifications } from './notifications.mjs';
 import { createSiteRentService } from './site-rent.mjs';
 import { createLessonPhotoService } from './lesson-photos.mjs';
+import { createParentNotifications } from './parent-notifications.mjs';
+import { createParentPortal } from './parent-portal.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -36,8 +38,10 @@ export function createApiRouter(pool, {
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
+  parentNotifications = createParentNotifications(pool),
   lessonPhotos = createLessonPhotoService(pool),
-  lessons = createMysqlLessons(pool, { lessonPhotos }),
+  lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications }),
+  parentPortal = createParentPortal(pool, { materializeLessons: lessons.materialize }),
   balanceTransfers = createBalanceTransfers(pool),
   projectTransfers = createProjectTransfers(pool, balanceTransfers),
   dailyDashboard = createDailyDashboard(pool),
@@ -74,6 +78,43 @@ export function createApiRouter(pool, {
       response.status(204).end();
     } catch (error) { next(error); }
   });
+
+  router.get('/parent/me', requirePermission('own-children:read'), run((request) => parentPortal.me(request.auth)));
+  router.get('/parent/children', requirePermission('own-children:read'), run((request) => parentPortal.children(request.auth)));
+  router.get('/parent/children/:id/home', requirePermission('own-children:read'), run((request) => parentPortal.home(request.params.id, request.auth)));
+  router.get('/parent/children/:id/schedule', requirePermission('own-children:read'), run((request) => parentPortal.schedule(request.params.id, request.query, request.auth)));
+  router.get('/parent/children/:id/attendance', requirePermission('own-attendance:read'), run((request) => parentPortal.attendance(request.params.id, request.auth)));
+  router.get('/parent/children/:id/payments', requirePermission('own-payments:read'), run((request) => parentPortal.payments(request.params.id, request.auth)));
+  router.get('/parent/children/:id/photos', requirePermission('own-children:read'), run((request) => parentPortal.photos(request.params.id, request.auth)));
+  router.get('/parent/profile', requirePermission('own-children:read'), run((request) => parentPortal.profile(request.auth)));
+  router.patch('/parent/profile', requirePermission('own-children:read'), run((request) => parentPortal.updateProfile(request.body, request.auth)));
+  router.get('/parent/notification-settings', requirePermission('own-children:read'), run((request) => parentPortal.notificationSettings(request.auth)));
+  router.patch('/parent/notification-settings', requirePermission('own-children:read'), run((request) => parentPortal.updateNotificationSettings(request.body, request.auth)));
+  router.get('/parent/notifications', requirePermission('own-children:read'), run((request) => parentPortal.notifications(request.auth)));
+  router.post('/parent/notifications/:id/read', requirePermission('own-children:read'), run((request) => parentPortal.markNotificationRead(request.params.id, request.auth)));
+  router.get('/parent/documents', requirePermission('own-children:read'), run((request) => parentPortal.documents(request.auth)));
+  router.post('/parent/documents/:id/accept', requirePermission('own-children:read'), run((request) => parentPortal.acceptDocument(request.params.id, request.auth, {
+    ip: request.ip, userAgent: request.get('user-agent'),
+  })));
+  router.get('/parent/photos/:photoId/file', requirePermission('own-children:read'), async (request, response, next) => {
+    try {
+      await parentPortal.assertConsents(request.auth);
+      const result = await lessonPhotos.fileForParent(request.params.photoId, request.auth);
+      response.set('Content-Type', result.mimeType);
+      response.set('Content-Length', String(result.data.length));
+      response.set('Cache-Control', 'private, max-age=300');
+      response.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+      response.send(result.data);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/parent-access/search', requirePermission('*'), run((request) => parentPortal.searchAccess(request.query.q, request.auth)));
+  router.get('/children/:id/parent-access', requirePermission('*'), run((request) => parentPortal.listAccess(request.params.id, request.auth)));
+  router.post('/children/:id/parent-access', requirePermission('*'), run((request) => parentPortal.createAccess(request.params.id, request.body, request.auth), 201));
+  router.post('/children/:id/parent-access/link', requirePermission('*'), run((request) => parentPortal.linkAccess(request.params.id, request.body.guardianId, request.auth)));
+  router.delete('/children/:id/parent-access/:guardianId', requirePermission('*'), run((request) => parentPortal.unlinkAccess(request.params.id, request.params.guardianId, request.auth), 204));
+  router.post('/parent-access/:guardianId/reset-password', requirePermission('*'), run((request) => parentPortal.resetPassword(request.params.guardianId, request.auth)));
+  router.patch('/parent-access/:guardianId/status', requirePermission('*'), run((request) => parentPortal.setAccessStatus(request.params.guardianId, request.body.enabled, request.auth)));
   router.get('/project-transfer-targets', requirePermission('enrollments:write'), run(async (request) => {
     const partnerProject = partnerProjectId(request.auth);
     const [rows] = await pool.query(`SELECT id,code,name FROM projects WHERE active=TRUE

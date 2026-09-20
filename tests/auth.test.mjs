@@ -13,11 +13,12 @@ function fixture() {
       { id: 1, email: 'director@example.com', password_hash: 'director-pass', display_name: 'Директор', status: 'active', token_version: 1 },
       { id: 2, email: 'teacher@example.com', password_hash: 'teacher-pass', display_name: 'Преподаватель', status: 'active', token_version: 1 },
       { id: 3, email: 'blocked@example.com', password_hash: 'blocked-pass', display_name: 'Заблокирован', status: 'blocked', token_version: 1 },
+      { id: 4, email: 'parent@example.com', password_hash: 'parent-pass', display_name: 'Родитель', status: 'active', token_version: 1 },
     ],
-    roles: [{ id: 1, code: 'director' }, { id: 2, code: 'teacher' }],
-    userRoles: [{ user_id: 1, role_id: 1 }, { user_id: 2, role_id: 2 }, { user_id: 3, role_id: 2 }],
+    roles: [{ id: 1, code: 'director' }, { id: 2, code: 'teacher' }, { id: 3, code: 'parent' }],
+    userRoles: [{ user_id: 1, role_id: 1 }, { user_id: 2, role_id: 2 }, { user_id: 3, role_id: 3 }, { user_id: 4, role_id: 3 }],
     teachers: [{ id: 7, user_id: 2, full_name: 'Преподаватель', deleted_at: null }, { id: 8, user_id: null, full_name: 'Новый Учитель', deleted_at: null }],
-    sessions: [], nextUserId: 4,
+    sessions: [], nextUserId: 5,
   };
   const query = async (sql, params = {}) => {
     if (sql.includes('FROM users u LEFT JOIN teachers') && sql.includes('LOWER(u.email)')) {
@@ -126,6 +127,17 @@ test('director и teacher входят по email без учёта регист
   assert.match(setCookie, /icube_session=/); assert.match(setCookie, /HttpOnly/i); assert.match(setCookie, /Secure/i); assert.match(setCookie, /SameSite=Lax/i);
   const teacher = await request('/auth/login', { method: 'POST', body: { login: 'teacher@example.com', password: 'teacher-pass' } });
   assert.deepEqual(teacher.payload.data.roles, ['teacher']); assert.equal(teacher.payload.data.teacherId, '7');
+});
+
+test('parent входит через общую session auth, но не получает административные права', async () => {
+  const login = await auth.service.login({ login: 'parent@example.com', password: 'parent-pass' });
+  assert.deepEqual(login.profile.roles, ['parent']);
+  const profile = await auth.service.authenticateToken(login.sessionToken);
+  assert.deepEqual(profile.roles, ['parent']); assert.equal(profile.teacherId, null);
+  const httpLogin = await request('/auth/login', { method: 'POST', body: { login: 'parent@example.com', password: 'parent-pass' } });
+  const cookie = httpLogin.response.headers.get('set-cookie').split(';')[0];
+  assert.equal((await request('/children', { cookie })).response.status, 403);
+  assert.equal((await request('/salary-accruals', { cookie })).response.status, 403);
 });
 
 test('неверный, неизвестный и blocked login возвращают одинаковую ошибку', async () => {

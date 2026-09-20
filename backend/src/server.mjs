@@ -5,6 +5,8 @@ import { createPool } from './db.mjs';
 import { createApiRouter } from './routes.mjs';
 import { createMysqlLessons } from './lessons.mjs';
 import { createLessonPhotoService } from './lesson-photos.mjs';
+import { createParentNotifications } from './parent-notifications.mjs';
+import { createParentPortal } from './parent-portal.mjs';
 
 export function createApp({ config, pool }) {
   const app = express();
@@ -12,9 +14,11 @@ export function createApp({ config, pool }) {
   app.set('trust proxy', config.trustProxy);
   app.use(helmet());
   app.use(express.json({ limit: '1mb' }));
+  const parentNotifications = createParentNotifications(pool);
   const lessonPhotos = createLessonPhotoService(pool, config.photos);
-  const lessons = createMysqlLessons(pool, { lessonPhotos });
-  app.use('/api/v1', createApiRouter(pool, { lessonPhotos, lessons }));
+  const lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications });
+  const parentPortal = createParentPortal(pool, { contact: config.parent, materializeLessons: lessons.materialize });
+  app.use('/api/v1', createApiRouter(pool, { lessonPhotos, lessons, parentNotifications, parentPortal }));
   app.use((error, _request, response, _next) => {
     if (!error.status) console.error(error);
     response.status(error.status ?? 500).json({ error: {

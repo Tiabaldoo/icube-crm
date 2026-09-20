@@ -1,0 +1,12 @@
+[Unit]
+Description=iCube CRM parent notifications for tomorrow
+After=network.target mysql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/icube-crm
+EnvironmentFile=/opt/icube-crm/.env
+ExecStart=/usr/bin/npm run parent-notifications:daily
+User=icube
+Group=icube
+NoNewPrivileges=true

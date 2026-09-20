@@ -73,3 +73,9 @@ Auth middleware получает actor только из проверенной 
 6. После полной регрессии удалить переходный in-memory state.
 
 До завершения этих шагов текущий frontend не считается хранилищем данных.
+
+## Родительский контур
+
+`src/frontend/parent-portal.mjs` — отдельное mobile-first приложение, которое запускается после общей session-auth только для чистой роли `parent`. Оно не загружает директорский catalog и обращается исключительно к `/parent/*`. `backend/src/parent-portal.mjs` строит read model из существующих children/enrollments/lessons/payments/refunds/photos и на каждом child request проверяет `guardians + child_guardians`. `backend/src/parent-notifications.mjs` содержит единые тексты, настройки, dedup и lesson/day-before triggers. Управление аккаунтом остаётся небольшим bridge в карточке ребёнка (`parent-access.mjs`).
+
+Будущие банковские платежи, PWA и Web Push должны подключаться к этим границам: payment provider создаёт payment только после подтверждённого webhook, service worker доставляет уже созданную notification. Текущая кнопка оплаты и internal notification center этих внешних эффектов не выполняют.

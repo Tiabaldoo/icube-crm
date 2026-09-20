@@ -27,6 +27,9 @@ function memoryPool({ lesson = {}, present = true, photos = [] } = {}) {
   let nextId = state.photos.length + 1;
   async function query(sql, params = {}) {
     if (sql.includes('FROM lessons WHERE id=')) return [[state.lesson]];
+    if (sql.includes('JOIN guardians g ON g.user_id=') && sql.includes('JOIN child_guardians')) {
+      return [String(params.userId) === '50' ? state.photos.filter((photo) => String(photo.id) === String(params.photoId) && !photo.deleted_at) : []];
+    }
     if (sql.includes('FROM attendances a WHERE')) return [state.present ? [{ id: 30 }] : []];
     if (sql.includes('SELECT COUNT(*) count FROM lesson_photos')) return [[{ count: state.photos.filter((photo) => !photo.deleted_at && !photo.purged_at && photo.expires_at > new Date('2026-09-19T12:00:00Z')).length }]];
     if (sql.includes('WHERE client_upload_id=')) return [state.photos.filter((photo) => photo.client_upload_id === params.clientUploadId)];
@@ -144,6 +147,15 @@ test('download checks access and returns the stored file', async (t) => {
   const key = f.pool.state.photos[0].storage_key; await mkdir(path.dirname(path.join(f.storageDir, key)), { recursive: true }); await writeFile(path.join(f.storageDir, key), jpeg);
   const result = await f.service.file(10, 1, teacher); assert.deepEqual(result.data, jpeg); assert.equal(result.mimeType, 'image/jpeg');
   await assert.rejects(f.service.file(10, 1, { roles: ['teacher'], teacherId: '99' }), { status: 403 });
+});
+
+test('parent photo download is scoped through guardian-child link', async (t) => {
+  const f = await fixture({ photos: [{}] }); t.after(f.close);
+  const key = f.pool.state.photos[0].storage_key; await mkdir(path.dirname(path.join(f.storageDir, key)), { recursive: true }); await writeFile(path.join(f.storageDir, key), jpeg);
+  const result = await f.service.fileForParent(1, { roles: ['parent'], userId: '50' });
+  assert.deepEqual(result.data, jpeg);
+  await assert.rejects(f.service.fileForParent(1, { roles: ['parent'], userId: '51' }), { status: 404, code: 'PHOTO_NOT_FOUND' });
+  await assert.rejects(f.service.fileForParent(1, { roles: ['teacher'], userId: '50' }), { status: 403, code: 'FORBIDDEN' });
 });
 
 test('expired photo is not downloadable and cleanup purges file but keeps metadata', async (t) => {

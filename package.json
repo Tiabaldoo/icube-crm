@@ -10,6 +10,7 @@
     "create-director": "node scripts/create-director.mjs",
     "create-partner": "node scripts/create-partner.mjs",
     "photos:cleanup": "node scripts/cleanup-lesson-photos.mjs",
+    "parent-notifications:daily": "node scripts/generate-parent-notifications.mjs",
     "start:api": "node backend/src/server.mjs"
   },
   "engines": {

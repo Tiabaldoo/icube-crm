@@ -31,6 +31,12 @@ test('настройки хранилища фотографий имеют бе
   assert.throws(() => loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_test', PHOTO_MAX_UPLOAD_MB: 'nope' }), /PHOTO_MAX_UPLOAD_MB/);
 });
 
+test('контакты и timezone родительского кабинета читаются только из server config', () => {
+  const config = loadConfig({ ...base, APP_ENV: 'test', DB_NAME: 'icube_test', APP_TIME_ZONE: 'Asia/Sakhalin',
+    PARENT_MAX_URL: 'https://max.ru/icube', PARENT_CONTACT_PHONE: '+70000000000', PARENT_PAYMENT_QR_URL: 'https://cdn.example/qr.png' });
+  assert.deepEqual(config.parent, { timeZone: 'Asia/Sakhalin', maxUrl: 'https://max.ru/icube', phone: '+70000000000', paymentQrUrl: 'https://cdn.example/qr.png' });
+});
+
 test('модель ролей содержит текущие и будущие роли', () => {
   assert.ok(permissions.director.has('*'));
   for (const permission of [

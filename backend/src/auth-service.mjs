@@ -87,7 +87,7 @@ export function createAuthService(pool, {
     const passwordOk = await comparePassword(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
     if (!user || !passwordOk || user.status !== 'active') throw invalidCredentials();
     const profile = await profileFor(pool, user);
-    if (!profile.roles.some((role) => role === 'director' || role === 'teacher' || role === 'partner')
+    if (!profile.roles.some((role) => role === 'director' || role === 'teacher' || role === 'partner' || role === 'parent')
       || (profile.roles.includes('partner') && !profile.roles.includes('director') && profile.projectIds.length !== 1)) throw invalidCredentials();
 
     const sessionToken = makeToken();
@@ -116,7 +116,7 @@ export function createAuthService(pool, {
     const user = sessions[0];
     if (!user) throw new ApiProblem(401, 'UNAUTHENTICATED', 'Требуется вход');
     const profile = await profileFor(pool, user);
-    if (!profile.roles.some((role) => role === 'director' || role === 'teacher' || role === 'partner')
+    if (!profile.roles.some((role) => role === 'director' || role === 'teacher' || role === 'partner' || role === 'parent')
       || (profile.roles.includes('partner') && !profile.roles.includes('director') && profile.projectIds.length !== 1)) {
       throw new ApiProblem(403, 'FORBIDDEN', 'Партнёр не связан с одним активным проектом');
     }

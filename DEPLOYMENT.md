@@ -170,3 +170,28 @@ PARTNER_PASSWORD='сильный-временный-пароль' npm run create
 ```
 
 Скрипт использует тот же bcrypt, что и директорский вход, связывает пользователя с существующим партнёром проекта или создаёт его при отсутствии, а для «Зебры» добавляет стартовую версию соглашения 4 / 40 / 60 только если активной версии ещё нет. Он не перезаписывает действующие условия. Сначала проверяйте миграцию и вход на `icube_test`; production применяйте только после backup по общему порядку релиза. Фронтенд и API должны быть одной версии: новая схема требуется до входа партнёра. MySQL не должен быть доступен браузеру напрямую.
+
+## Родительский кабинет и ежедневные уведомления
+
+Настройки связи и времени задаются только серверным `.env`:
+
+```dotenv
+APP_TIME_ZONE=Asia/Sakhalin
+PARENT_MAX_URL=https://max.ru/example
+PARENT_CONTACT_PHONE=+70000000000
+PARENT_PAYMENT_QR_URL=https://example.invalid/payment-qr.png
+```
+
+URL QR пока является статической заглушкой и не создаёт оплату. До production замените три seeded документа `draft-2026-09` юридически проверенными версиями: создайте новые строки `parent_documents`, деактивируйте черновые только после проверки и не редактируйте уже принятую версию задним числом.
+
+Напоминания накануне создаёт oneshot-задача `npm run parent-notifications:daily`. Она материализует только занятия следующего локального дня, проверяет текущий серверный баланс и использует уникальный dedup key. Units рассчитаны на `/opt/icube-crm`, пользователя `icube` и Сахалинское время:
+
+```bash
+cp deploy/icube-crm-parent-notifications.service /etc/systemd/system/
+cp deploy/icube-crm-parent-notifications.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now icube-crm-parent-notifications.timer
+systemctl list-timers | grep icube-crm-parent-notifications
+```
+
+До включения timer на production сначала примените `016_parent_portal.sql`, выполните команду вручную на test и проверьте созданные строки `notifications`. Timer не отправляет push и не обращается к внешним каналам.

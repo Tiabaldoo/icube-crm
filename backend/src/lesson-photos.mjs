@@ -210,6 +210,27 @@ export function createLessonPhotoService(pool, {
       throw error;
     }
   }
+  async function fileForParent(photoId, context = {}) {
+    if (!(context.roles ?? []).includes('parent') || (context.roles ?? []).some((role) => ['director', 'partner', 'teacher'].includes(role))) {
+      throw new ApiProblem(403, 'FORBIDDEN', 'Фотография недоступна');
+    }
+    const [rows] = await pool.query(`SELECT ph.* FROM lesson_photos ph
+      JOIN guardians g ON g.user_id=:userId JOIN child_guardians cg ON cg.guardian_id=g.id AND cg.child_id=ph.child_id
+      JOIN lessons l ON l.id=ph.lesson_id AND l.deleted_at IS NULL
+      WHERE ph.id=:photoId AND ph.deleted_at IS NULL LIMIT 1`, {
+      userId: identifier(context.userId, 'userId'), photoId: identifier(photoId, 'photoId'),
+    });
+    const photo = rows[0];
+    if (!photo) throw new ApiProblem(404, 'PHOTO_NOT_FOUND', 'Фотография не найдена');
+    if (photo.purged_at != null || new Date(photo.expires_at).getTime() <= now().getTime()) throw new ApiProblem(410, 'PHOTO_EXPIRED', 'Срок хранения фотографии истёк');
+    try {
+      const data = await readFile(safePath(photo.storage_key));
+      return { data, mimeType: photo.mime_type, filename: photo.original_filename || `lesson-${photo.lesson_id}-photo-${photo.id}.${detectImage(data)?.extension ?? 'jpg'}` };
+    } catch (error) {
+      if (error?.code === 'ENOENT') throw new ApiProblem(410, 'PHOTO_FILE_MISSING', 'Файл фотографии больше недоступен');
+      throw error;
+    }
+  }
   async function purgeLesson(connection, lessonId) {
     const [rows] = await connection.query('SELECT storage_key FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId });
     for (const row of rows) await rm(safePath(row.storage_key), { force: true });
@@ -230,5 +251,5 @@ export function createLessonPhotoService(pool, {
     return { selected: rows.length, purged, failed };
   }
   async function storageHealth() { await mkdir(root, { recursive: true }); return stat(root); }
-  return { maxUploadBytes, list, upload, remove, file, purgeLesson, cleanupExpired, storageHealth };
+  return { maxUploadBytes, list, upload, remove, file, fileForParent, purgeLesson, cleanupExpired, storageHealth };
 }

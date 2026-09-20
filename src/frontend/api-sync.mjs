@@ -1243,7 +1243,13 @@ function applyAuthProfile(profile) {
   legacy.state.authUser = profile;
   const director = profile.roles.includes('director');
   const partner = !director && profile.roles.includes('partner');
-  legacy.state.role = director ? 'director' : partner ? 'partner' : 'teacher';
+  const parent = !director && !partner && profile.roles.includes('parent');
+  legacy.state.role = director ? 'director' : partner ? 'partner' : parent ? 'parent' : 'teacher';
+  if (parent) {
+    const app = element('#app');
+    if (app) app.style.visibility = 'visible';
+    return;
+  }
   legacy.state.page = director || partner ? 'dashboard' : 'teacherToday';
   if (partner) { legacy.state.calendarProject = 'Зебра'; legacy.state.balanceProject = 'Зебра'; }
   if (profile.teacherId) legacy.state.prototypeTeacherId = Number(profile.teacherId);
@@ -1257,7 +1263,8 @@ async function loginFromForm() {
   try {
     const profile = await api.request('/auth/login', { method: 'POST', body: { login: value('#auth-login'), password: value('#auth-password') } });
     applyAuthProfile(profile);
-    await reload();
+    if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
+    else await reload();
     resolveAuthReady?.(profile);
     resolveAuthReady = null;
     return profile;
@@ -1376,7 +1383,8 @@ async function bootstrapAuth() {
   try {
     const profile = await api.request('/auth/me');
     applyAuthProfile(profile);
-    await reload();
+    if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
+    else await reload();
     resolveAuthReady?.(profile);
     resolveAuthReady = null;
     return profile;

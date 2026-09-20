@@ -1,0 +1,11 @@
+[Unit]
+Description=Generate iCube parent notifications daily at 19:00 server time
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 Asia/Sakhalin
+Persistent=true
+RandomizedDelaySec=120
+Unit=icube-crm-parent-notifications.service
+
+[Install]
+WantedBy=timers.target

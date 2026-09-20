@@ -45,7 +45,11 @@ Permission преподавателя не даёт доступ к любому
 | Зарплата | `GET /salary-accruals?teacherId=&from=&to=` |
 | Партнёр | live calculation `GET /partner-settlements?projectId=&from=&to=`; фиксация `POST /partner-settlements` пока не реализована |
 | Статистика | `GET /statistics?from=&to=&projectId=all&directionId=all` |
-| Уведомления | `GET /notifications`; `POST /notifications/:id/read` пока возвращает `501` |
+| Уведомления CRM | `GET /notifications`, `POST /notifications/:id/read` |
+| Кабинет родителя | `GET /parent/me`, `/parent/children`, `/parent/children/:id/{home,schedule,attendance,payments,photos}`, защищённый `GET /parent/photos/:photoId/file` |
+| Настройки родителя | `GET/PATCH /parent/profile`, `GET/PATCH /parent/notification-settings`, `GET /parent/notifications`, `POST /parent/notifications/:id/read` |
+| Согласия родителя | `GET /parent/documents`, `POST /parent/documents/:id/accept` |
+| Родительский доступ | директорские маршруты `/children/:id/parent-access`, `/parent-access/search`, link/unlink/reset/status |
 
 Партнёру разрешены рабочие CRUD-операции только своего проекта: дети и их текущие направления, группы, площадки, преподаватели, оплаты, возвраты, балансы, занятия и зарплата. `GET /lessons` и `GET /lessons/:id` для чужого проекта возвращают только календарный read-only DTO: время, группа, преподаватель, проект и фактическая площадка. Любая мутация такого занятия отклоняется `403`. Статистика, настройки, управление аккаунтами преподавателей и директорский партнёрский расчёт партнёру недоступны. `GET /sites/venues` не даёт права редактировать чужую площадку: она служит только физическим местом конкретного занятия.
 
@@ -94,3 +98,11 @@ Quick child создаётся транзакционно с `needs_director_rev
 Добавление и удаление существующего extra child использует отдельный permission `lessons:extras`. Service-layer повторно проверяет доступ преподавателя к конкретному занятию; permission не открывает остальные занятия.
 
 Партнёр получает `projects:read`, но `GET /projects` и `GET /projects/:id` по-прежнему фильтруются через `partner_users → partners → projects`. Teacher, parent и child доступа к справочнику проектов не имеют.
+
+## Родительский контур
+
+Роль `parent` использует только специализированные маршруты `/parent/*`. Каждый child endpoint сначала проверяет серверную связь `users → guardians → child_guardians → children`; переданный браузером `childId` не является доказательством доступа. До принятия каждой активной обязательной версии документа read endpoints возвращают `403 CONSENT_REQUIRED`. Родитель не получает универсальные списки CRM, технический ledger, цену одного занятия, зарплату, статистику или операции изменения.
+
+`home` возвращает существующий `child_enrollments.balance_lessons` и текущую стоимость абонемента из versioned price chain; финансовая логика повторно не рассчитывается на frontend. `attendance` возвращает только `present=TRUE`. `payments` объединяет существующие payments/refunds выбранного ребёнка. `photos` и файловый endpoint дополнительно проверяют parent-child link и исключают deleted/purged/expired файлы.
+
+Создание и сброс доступа возвращают случайный пароль только в ответе текущей директорской операции. В БД сохраняется bcrypt hash. Reset увеличивает `users.token_version` и отзывает все активные сессии. Один guardian account связывается с несколькими детьми через составной ключ `child_guardians(child_id, guardian_id)`; один ребёнок может иметь несколько таких аккаунтов.
