@@ -42,7 +42,13 @@ function memoryPool({ lesson = {}, present = true, photos = [] } = {}) {
     if (sql.startsWith('UPDATE lesson_photos SET deleted_at=COALESCE')) { const photo = state.photos.find((item) => item.id === params.id); photo.deleted_at ??= new Date(); photo.purged_at = new Date(); return [{ affectedRows: 1 }]; }
     if (sql.startsWith('UPDATE lesson_photos SET deleted_at=')) { const photo = state.photos.find((item) => String(item.id) === String(params.id)); if (photo) photo.deleted_at = new Date(); return [{ affectedRows: photo ? 1 : 0 }]; }
     if (sql.startsWith('UPDATE lesson_photos SET purged_at=')) { const photo = state.photos.find((item) => String(item.id) === String(params.id)); if (photo) photo.purged_at = new Date(); return [{ affectedRows: photo ? 1 : 0 }]; }
-    if (sql.startsWith('SELECT id,storage_key FROM lesson_photos')) return [state.photos.filter((photo) => !photo.purged_at && (photo.deleted_at || photo.expires_at <= new Date('2026-09-19T12:00:00Z'))).map((photo) => ({ id: photo.id, storage_key: photo.storage_key }))];
+    if (sql.startsWith('SELECT id,storage_key FROM lesson_photos')) {
+      const limit = Number(sql.match(/LIMIT\s+(\d+)/i)?.[1] ?? state.photos.length);
+      return [state.photos
+        .filter((photo) => !photo.purged_at && (photo.deleted_at || photo.expires_at <= new Date('2026-09-19T12:00:00Z')))
+        .slice(0, limit)
+        .map((photo) => ({ id: photo.id, storage_key: photo.storage_key }))];
+    }
     if (sql.startsWith('SELECT storage_key FROM lesson_photos')) return [state.photos.map(({ storage_key }) => ({ storage_key }))];
     if (sql.startsWith('DELETE FROM lesson_photos')) { state.photos.length = 0; return [{ affectedRows: 1 }]; }
     throw new Error(`Unexpected SQL: ${sql}`);
@@ -148,6 +154,70 @@ test('expired photo is not downloadable and cleanup purges file but keeps metada
   assert.ok(f.pool.state.photos[0].purged_at); assert.equal(f.pool.state.photos[0].deleted_at, null);
   const [metadata] = await f.service.list(10, director); assert.equal(metadata.expired, true); assert.equal(metadata.fileUrl, null);
   await assert.rejects(readFile(path.join(f.storageDir, key)), { code: 'ENOENT' });
+});
+
+test('cleanup keeps future photos, purges expired and deleted photos, respects limit and is idempotent', async (t) => {
+  const f = await fixture({ photos: [
+    { storage_key: '2026/09/future.jpg', expires_at: new Date('2026-09-20T12:00:00Z') },
+    { storage_key: '2026/09/expired.jpg', expires_at: new Date('2026-09-18T12:00:00Z') },
+    { storage_key: '2026/09/deleted.jpg', expires_at: new Date('2026-10-19T12:00:00Z'), deleted_at: new Date('2026-09-19T11:00:00Z') },
+  ] }); t.after(f.close);
+
+  const first = await f.service.cleanupExpired({ limit: 1 });
+  assert.deepEqual(first, { selected: 1, purged: 1, failed: [] });
+  assert.equal(f.pool.state.photos[0].purged_at, null);
+  assert.ok(f.pool.state.photos[1].purged_at);
+  assert.equal(f.pool.state.photos[2].purged_at, null);
+
+  const second = await f.service.cleanupExpired({ limit: 10 });
+  assert.deepEqual(second, { selected: 1, purged: 1, failed: [] });
+  assert.ok(f.pool.state.photos[2].purged_at);
+  assert.equal(f.pool.state.photos[0].purged_at, null);
+
+  assert.deepEqual(await f.service.cleanupExpired({ limit: 10 }), { selected: 0, purged: 0, failed: [] });
+});
+
+test('cleanup continues after one file failure and purges the remaining eligible photos', async (t) => {
+  const f = await fixture({ photos: [
+    { storage_key: '../unsafe.jpg', expires_at: new Date('2026-09-18T12:00:00Z') },
+    { storage_key: '2026/09/good.jpg', expires_at: new Date('2026-09-18T12:00:00Z') },
+  ] }); t.after(f.close);
+  const goodPath = path.join(f.storageDir, '2026/09/good.jpg');
+  await mkdir(path.dirname(goodPath), { recursive: true });
+  await writeFile(goodPath, jpeg);
+
+  const result = await f.service.cleanupExpired();
+  assert.equal(result.selected, 2);
+  assert.equal(result.purged, 1);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].id, '1');
+  assert.equal(f.pool.state.photos[0].purged_at, null);
+  assert.ok(f.pool.state.photos[1].purged_at);
+  await assert.rejects(readFile(goodPath), { code: 'ENOENT' });
+});
+
+test('missing unexpired photo file returns 410 without deleting metadata', async (t) => {
+  const f = await fixture({ photos: [{}] }); t.after(f.close);
+  await assert.rejects(f.service.file(10, 1, director), { status: 410, code: 'PHOTO_FILE_MISSING' });
+  assert.equal(f.pool.state.photos[0].purged_at, null);
+});
+
+test('photo cleanup deployment keeps 30-day default and uses a persistent daily systemd timer', async () => {
+  const [config, service, timer] = await Promise.all([
+    readFile(new URL('../backend/src/config.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../deploy/icube-crm-photo-cleanup.service', import.meta.url), 'utf8'),
+    readFile(new URL('../deploy/icube-crm-photo-cleanup.timer', import.meta.url), 'utf8'),
+  ]);
+  assert.match(config, /PHOTO_RETENTION_DAYS', env\.PHOTO_RETENTION_DAYS \?\? 30/);
+  assert.match(service, /Type=oneshot/);
+  assert.match(service, /User=icube/);
+  assert.match(service, /Group=icube/);
+  assert.match(service, /WorkingDirectory=\/opt\/icube-crm/);
+  assert.match(service, /EnvironmentFile=\/opt\/icube-crm\/\.env/);
+  assert.match(service, /ExecStart=\/usr\/bin\/npm run photos:cleanup/);
+  assert.match(timer, /OnCalendar=\*-\*-\* 03:17:00/);
+  assert.match(timer, /Persistent=true/);
+  assert.match(timer, /WantedBy=timers\.target/);
 });
 
 test('expired metadata does not consume one of five active photo slots', async (t) => {

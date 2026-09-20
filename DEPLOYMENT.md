@@ -58,13 +58,85 @@ PHOTO_MAX_UPLOAD_MB=5
 
 Для test используйте другой каталог, например `/var/lib/icube-crm-test/lesson-photos`. Каталог нельзя публиковать через Nginx/FASTPANEL как static files: скачивание идёт только через авторизованный API. Включите мониторинг свободного места и ошибок записи; каталог с файлами включите в политику резервного копирования с учётом 30-дневного retention.
 
-Команда `npm run photos:cleanup` удаляет с диска просроченные и ранее помеченные удалёнными файлы, сохраняя metadata. Запускайте её ежедневно отдельным systemd timer или cron от того же пользователя и с тем же `.env`, что у API. Пример cron для релизного каталога:
-
-```cron
-17 3 * * * cd /opt/icube-crm/current && /usr/bin/env bash -lc 'set -a; . ./.env; set +a; npm run photos:cleanup' >> /var/log/icube-photo-cleanup.log 2>&1
-```
+Команда `npm run photos:cleanup` удаляет с диска просроченные и ранее помеченные удалёнными файлы, сохраняя metadata. Для автоматического запуска используйте systemd units из `deploy/`, описанные ниже.
 
 После миграции `015_lesson_photo_storage.sql` до выкладки frontend проверьте запись в `PHOTO_STORAGE_DIR`, upload/download/delete на `icube_test` и успешный ручной запуск cleanup. Production не очищается миграцией: срок считается от `created_at` для уже существующей metadata.
+
+### Автоматическая очистка фотографий
+
+Units рассчитаны на установку приложения в `/opt/icube-crm` и запуск от системного пользователя `icube`. Они используют существующий `/opt/icube-crm/.env`, поэтому отдельные DB-пароли, имя базы или `PHOTO_STORAGE_DIR` в unit-файлы не вшиваются.
+
+Установка:
+
+```bash
+cp deploy/icube-crm-photo-cleanup.service /etc/systemd/system/
+cp deploy/icube-crm-photo-cleanup.timer /etc/systemd/system/
+
+systemctl daemon-reload
+systemctl enable --now icube-crm-photo-cleanup.timer
+```
+
+Проверка таймера:
+
+```bash
+systemctl status icube-crm-photo-cleanup.timer
+systemctl list-timers | grep icube-crm-photo-cleanup
+```
+
+Ручной запуск очистки:
+
+```bash
+systemctl start icube-crm-photo-cleanup.service
+```
+
+Логи последнего и предыдущих запусков:
+
+```bash
+journalctl -u icube-crm-photo-cleanup.service
+```
+
+Таймер запускает oneshot-задачу ежедневно около 03:17. `Persistent=true` означает, что если сервер был выключен в запланированное время, пропущенный запуск будет выполнен после следующего старта systemd.
+
+#### Безопасная проверка retention на test без ожидания 30 дней
+
+Не меняйте `PHOTO_RETENTION_DAYS`, `uploaded_at` или сроки у нескольких строк. Для проверки используйте ровно одну специально загруженную фотографию на test-сервере.
+
+1. Загрузите отдельное тестовое фото и выберите его `id`.
+2. До любых изменений зафиксируйте `id`, `storage_key` и текущий срок:
+
+```sql
+SELECT id, lesson_id, child_id, storage_key, uploaded_at, expires_at, purged_at
+FROM lesson_photos
+WHERE id = <TEST_PHOTO_ID>;
+```
+
+3. Убедитесь на сервере, что файл существует по пути `$PHOTO_STORAGE_DIR/<storage_key>`.
+4. Только для выбранной строки сделайте её просроченной на одну минуту:
+
+```sql
+UPDATE lesson_photos
+SET expires_at = NOW(6) - INTERVAL 1 MINUTE
+WHERE id = <TEST_PHOTO_ID>;
+```
+
+Сразу повторите `SELECT` по тому же `id` и убедитесь, что изменился только `expires_at`.
+
+5. Запустите cleanup вручную:
+
+```bash
+systemctl start icube-crm-photo-cleanup.service
+journalctl -u icube-crm-photo-cleanup.service
+```
+
+6. Проверьте metadata:
+
+```sql
+SELECT id, storage_key, uploaded_at, expires_at, purged_at
+FROM lesson_photos
+WHERE id = <TEST_PHOTO_ID>;
+```
+
+Ожидается: строка осталась, `expires_at` сохранён, `purged_at IS NOT NULL`. Файл в `$PHOTO_STORAGE_DIR/<storage_key>` должен отсутствовать, а запрос файла через API должен вернуть HTTP 410 (`PHOTO_EXPIRED` либо `PHOTO_FILE_MISSING`). Выберите ещё одну свежую контрольную фотографию и убедитесь, что её `purged_at` остался `NULL`: cleanup не должен затрагивать непросроченные файлы.
 
 ## Миграции
 

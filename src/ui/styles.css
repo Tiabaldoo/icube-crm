@@ -1137,6 +1137,7 @@ body.context-help-open{overflow:hidden}
   height:34px!important;
   display:flex!important;
   align-items:center!important;
+  transform:translateX(-10px)!important;
 }
 .student-check.lesson-student-card .lesson-student-trial{
   display:inline-flex!important;

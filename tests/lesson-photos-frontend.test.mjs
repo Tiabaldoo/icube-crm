@@ -149,6 +149,7 @@ test('lesson child card uses explicit six-slot grid without display contents or 
 
   assert.match(fixed, /\.student-more,[\s\S]*width:30px!important;[\s\S]*height:30px!important;[\s\S]*max-height:30px!important;[\s\S]*border-radius:9px!important;/);
   assert.match(fixed, /\.lesson-student-name\{[\s\S]*white-space:nowrap!important;[\s\S]*overflow:hidden!important;[\s\S]*text-overflow:ellipsis!important;[\s\S]*text-align:left!important;/);
+  assert.match(fixed, />\.lesson-student-trial-slot,[\s\S]*grid-column:2!important;[\s\S]*grid-row:2!important;[\s\S]*transform:translateX\(-10px\)!important;/);
   assert.match(fixed, /\.lesson-student-trial\.is-active\{[\s\S]*background:var\(--amberbg\)!important;[\s\S]*color:var\(--amber\)!important;/);
   assert.doesNotMatch(fixed, /lesson-student-trial\.is-active\{[^}]*#eff6ff/);
   assert.match(fixed, /\.lesson-photo-summary\.is-uploaded \.lesson-photo-state-mark,[\s\S]*background:var\(--green\);/);
