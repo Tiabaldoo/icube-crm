@@ -1013,7 +1013,7 @@ body.context-help-open{overflow:hidden}
 
 
 /* ===== Fixed lesson student grid v1.1.26 ===== */
-/* Explicit six-slot grid; no display:contents or positional nth-of-type dependencies. */
+/* Explicit six-slot grid with stable class-based placement. */
 .student-check.lesson-student-card,
 .teacher-content .student-check.lesson-student-card{
   display:grid!important;
