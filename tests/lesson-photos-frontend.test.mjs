@@ -133,7 +133,7 @@ test('lesson child card source uses one-line FIO, compact trial state and access
   assert.doesNotMatch(compact, /\.lesson-student-name\{[^}]*overflow-wrap:anywhere/);
   assert.match(compact, /\.lesson-photo-summary\.is-stack::before/);
   assert.match(compact, /\.lesson-photo-summary\.is-stack::after/);
-  assert.match(compact, /\.lesson-photo-add\{[\s\S]*height:34px!important;/);
+  assert.match(compact, /\.lesson-photo-add,[\s\S]*height:34px!important;/);
   assert.match(compact, /@media\(max-width:760px\)/);
 
   const finalStudent = uiSource.slice(uiSource.lastIndexOf('window.studentCheck=function(c,l,extra,e){'));
