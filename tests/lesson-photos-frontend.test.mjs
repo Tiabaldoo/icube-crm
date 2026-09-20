@@ -79,6 +79,25 @@ test('network and 5xx retry later, permanent 4xx stops automatic retry', () => {
   assert.equal(photosModule.photoUploadRetryable(new ApiError('invalid', { status: 415 })), false);
 });
 
+test('mobile attendance layout keeps the child name above wrapped photo controls', async () => {
+  const styles = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  const marker = '/* ===== Lesson photos: mobile attendance layout v1.1.24 ===== */';
+  const start = styles.indexOf(marker);
+  assert.ok(start >= 0);
+  const mobile = styles.slice(start);
+
+  assert.match(mobile, /@media\(max-width:760px\)/);
+  assert.match(mobile, /\.teacher-content \.student-check\{[\s\S]*grid-template-columns:38px minmax\(0,1fr\)!important;[\s\S]*grid-template-rows:auto auto!important;/);
+  assert.match(mobile, />div:nth-of-type\(1\)\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:1!important;/);
+  assert.match(mobile, />div:nth-of-type\(2\)\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:2!important;/);
+  assert.match(mobile, />div:nth-of-type\(1\)>b\{[\s\S]*word-break:normal!important;[\s\S]*overflow-wrap:normal!important;[\s\S]*white-space:normal!important;/);
+  assert.doesNotMatch(mobile, />div:nth-of-type\(1\)>b\{[^}]*overflow-wrap:anywhere/);
+  assert.match(mobile, /\.lesson-photo-control\{[\s\S]*flex-wrap:wrap!important;[\s\S]*justify-content:flex-start!important;/);
+  assert.match(mobile, /\.lesson-photo-thumbs\{[\s\S]*flex-wrap:wrap!important;[\s\S]*gap:6px!important;/);
+  assert.match(mobile, /\.lesson-photo-thumb\{[\s\S]*flex:0 0 52px!important;/);
+  assert.match(mobile, /\.lesson-photo-control>\.photo\{[\s\S]*width:auto!important;[\s\S]*white-space:nowrap!important;[\s\S]*word-break:normal!important;/);
+});
+
 test('frontend source keeps IndexedDB blobs, optimization and reconnect retry contracts', async () => {
   const [source, sync, index] = await Promise.all([
     readFile(new URL('../src/frontend/lesson-photos.mjs', import.meta.url), 'utf8'),

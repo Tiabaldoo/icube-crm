@@ -643,7 +643,7 @@ body.modal-open{overflow:hidden!important;touch-action:none}
     min-width:0!important;
     width:100%!important;
   }
-  .teacher-content .student-check>div:nth-of-type(1)>b{display:block!important;width:100%!important;line-height:1.25!important;overflow-wrap:anywhere!important}
+  .teacher-content .student-check>div:nth-of-type(1)>b{display:block!important;width:100%!important;line-height:1.25!important;word-break:normal!important;overflow-wrap:normal!important;white-space:normal!important}
   .teacher-content .student-check>div:nth-of-type(1)>.badge{margin:2px 0!important;white-space:nowrap!important}
   .teacher-content .student-check>div:nth-of-type(1)>label{display:flex!important;align-items:center!important;gap:6px!important;margin:0!important;white-space:normal!important}
   .teacher-content .student-check>div:nth-of-type(2){
@@ -887,4 +887,126 @@ body.context-help-open{overflow:hidden}
   .rent-summary-amount,.rent-total-amount{white-space:normal}
   .rent-detail-row{grid-template-columns:1fr}
   .rent-detail-side{align-items:flex-start;text-align:left}
+}
+
+
+/* ===== Lesson photos: mobile attendance layout v1.1.24 ===== */
+/* Keep attendance identity on the first row and photo actions below it on phones. */
+@media(max-width:760px){
+  .teacher-content .student-check{
+    display:grid!important;
+    grid-template-columns:38px minmax(0,1fr)!important;
+    grid-template-rows:auto auto!important;
+    column-gap:10px!important;
+    row-gap:8px!important;
+    align-items:start!important;
+    min-width:0!important;
+    max-width:100%!important;
+    overflow:hidden!important;
+  }
+  .teacher-content .student-check>input,
+  .teacher-content .student-check>span:first-child{
+    grid-column:1!important;
+    grid-row:1!important;
+    align-self:start!important;
+    margin:4px 0 0!important;
+  }
+  .teacher-content .student-check>div:nth-of-type(1){
+    grid-column:2!important;
+    grid-row:1!important;
+    min-width:0!important;
+    width:100%!important;
+    display:flex!important;
+    flex-direction:column!important;
+    align-items:flex-start!important;
+    gap:5px!important;
+  }
+  .teacher-content .student-check>div:nth-of-type(1)>b{
+    display:block!important;
+    width:100%!important;
+    min-width:0!important;
+    word-break:normal!important;
+    overflow-wrap:normal!important;
+    white-space:normal!important;
+    line-height:1.3!important;
+  }
+  .teacher-content .student-check>div:nth-of-type(1) .muted.mini{
+    word-break:normal!important;
+    overflow-wrap:normal!important;
+    white-space:normal!important;
+  }
+  .teacher-content .student-check>div:nth-of-type(2){
+    grid-column:2!important;
+    grid-row:2!important;
+    display:flex!important;
+    flex-direction:row!important;
+    flex-wrap:wrap!important;
+    align-items:flex-start!important;
+    justify-content:flex-start!important;
+    gap:7px!important;
+    width:100%!important;
+    min-width:0!important;
+    max-width:100%!important;
+  }
+  .teacher-content .student-check .lesson-photo-control{
+    display:flex!important;
+    flex:1 1 100%!important;
+    flex-wrap:wrap!important;
+    align-items:center!important;
+    justify-content:flex-start!important;
+    gap:7px!important;
+    width:100%!important;
+    min-width:0!important;
+    max-width:100%!important;
+    margin:0!important;
+  }
+  .teacher-content .student-check .lesson-photo-thumbs{
+    display:flex!important;
+    flex:0 1 auto!important;
+    flex-wrap:wrap!important;
+    align-items:center!important;
+    justify-content:flex-start!important;
+    gap:6px!important;
+    min-width:0!important;
+    max-width:100%!important;
+  }
+  .teacher-content .student-check .lesson-photo-thumb{
+    flex:0 0 52px!important;
+    width:52px!important;
+    height:52px!important;
+    max-width:52px!important;
+  }
+  .teacher-content .student-check .lesson-photo-control>.photo{
+    flex:0 0 auto!important;
+    width:auto!important;
+    min-width:0!important;
+    max-width:100%!important;
+    min-height:38px!important;
+    margin:0!important;
+    padding:7px 10px!important;
+    white-space:nowrap!important;
+    word-break:normal!important;
+    overflow-wrap:normal!important;
+    line-height:1.2!important;
+  }
+  .teacher-content .student-check>div:nth-of-type(2)>.btn{
+    flex:0 0 auto!important;
+    width:auto!important;
+    max-width:100%!important;
+    margin:0!important;
+    white-space:nowrap!important;
+  }
+}
+
+@media(max-width:390px){
+  .teacher-content .student-check{
+    grid-template-columns:34px minmax(0,1fr)!important;
+    column-gap:8px!important;
+  }
+  .teacher-content .student-check .lesson-photo-thumb{
+    flex-basis:50px!important;
+    width:50px!important;
+    height:50px!important;
+    max-width:50px!important;
+  }
 }
