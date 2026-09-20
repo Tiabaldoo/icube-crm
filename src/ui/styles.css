@@ -1012,37 +1012,46 @@ body.context-help-open{overflow:hidden}
 }
 
 
-/* ===== Compact lesson student cards v1.1.25 ===== */
-/* Unified two-row lesson card: attendance/name/photo above, secondary/trial/add below. */
-.student-check.lesson-student-card{
+/* ===== Fixed lesson student grid v1.1.26 ===== */
+/* Explicit six-slot grid; no display:contents or positional nth-of-type dependencies. */
+.student-check.lesson-student-card,
+.teacher-content .student-check.lesson-student-card{
   display:grid!important;
-  grid-template-columns:32px minmax(0,1fr) 54px!important;
-  grid-template-rows:auto auto!important;
+  grid-template-columns:32px minmax(0,1fr) 52px!important;
+  grid-template-rows:52px 34px!important;
   column-gap:10px!important;
   row-gap:4px!important;
   align-items:center!important;
+  width:100%!important;
   min-width:0!important;
   max-width:100%!important;
   padding:8px 10px!important;
+  overflow:visible!important;
 }
-.student-check.lesson-student-card>.lesson-student-attendance{
+.student-check.lesson-student-card>.lesson-student-attendance-slot{
   grid-column:1!important;
   grid-row:1!important;
   align-self:center!important;
   justify-self:center!important;
+  display:grid!important;
+  place-items:center!important;
+  width:32px!important;
+  height:52px!important;
+  min-width:0!important;
+}
+.student-check.lesson-student-card>.lesson-student-attendance-slot>.lesson-student-attendance{
+  width:19px!important;
+  height:19px!important;
   margin:0!important;
 }
-.student-check.lesson-student-card>.lesson-student-info,
-.student-check.lesson-student-card>.lesson-student-actions,
-.student-check.lesson-student-card .lesson-photo-control{
-  display:contents!important;
-}
-.student-check.lesson-student-card .lesson-student-name-cell{
+.student-check.lesson-student-card>.lesson-student-name-cell{
   grid-column:2!important;
   grid-row:1!important;
+  align-self:center!important;
+  justify-self:stretch!important;
   min-width:0!important;
   max-width:100%!important;
-  align-self:center!important;
+  text-align:left!important;
 }
 .student-check.lesson-student-card .lesson-student-name{
   display:block!important;
@@ -1054,24 +1063,83 @@ body.context-help-open{overflow:hidden}
   text-overflow:ellipsis!important;
   word-break:normal!important;
   overflow-wrap:normal!important;
+  text-align:left!important;
   line-height:1.25!important;
 }
 .student-check.lesson-student-card .lesson-student-subtitle{
   display:block!important;
   max-width:100%!important;
   margin-top:2px!important;
-  line-height:1.15!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  line-height:1.1!important;
+  text-align:left!important;
 }
-.student-check.lesson-student-card .lesson-student-trial{
+.student-check.lesson-student-card>.lesson-photo-summary-slot{
+  grid-column:3!important;
+  grid-row:1!important;
+  align-self:center!important;
+  justify-self:end!important;
+  display:grid!important;
+  place-items:center!important;
+  width:52px!important;
+  height:52px!important;
+  min-width:0!important;
+}
+.student-check.lesson-student-card>.lesson-student-more-slot{
+  grid-column:1!important;
+  grid-row:2!important;
+  align-self:center!important;
+  justify-self:center!important;
+  display:grid!important;
+  place-items:center!important;
+  width:32px!important;
+  height:34px!important;
+  min-width:0!important;
+}
+.student-check.lesson-student-card .student-more,
+.student-check.lesson-student-card .student-extra-remove,
+.teacher-content .student-check.lesson-student-card .student-more,
+.teacher-content .student-check.lesson-student-card .student-extra-remove{
+  position:static!important;
+  transform:none!important;
+  display:inline-grid!important;
+  place-items:center!important;
+  width:30px!important;
+  height:30px!important;
+  min-width:30px!important;
+  min-height:30px!important;
+  max-width:30px!important;
+  max-height:30px!important;
+  padding:0!important;
+  margin:0!important;
+  border-radius:9px!important;
+  line-height:1!important;
+  align-self:center!important;
+  justify-self:center!important;
+  flex:none!important;
+}
+.student-check.lesson-student-card .student-more{font-size:18px!important}
+.student-check.lesson-student-card .student-extra-remove{font-size:18px!important;color:var(--red)!important}
+.student-check.lesson-student-card>.lesson-student-trial-slot{
   grid-column:2!important;
   grid-row:2!important;
+  align-self:center!important;
   justify-self:start!important;
+  min-width:0!important;
+  max-width:100%!important;
+  height:34px!important;
+  display:flex!important;
+  align-items:center!important;
+}
+.student-check.lesson-student-card .lesson-student-trial{
   display:inline-flex!important;
   align-items:center!important;
   gap:5px!important;
   width:max-content!important;
   max-width:100%!important;
-  min-height:30px!important;
+  min-height:28px!important;
   margin:0!important;
   padding:3px 8px!important;
   border:1px solid transparent!important;
@@ -1087,55 +1155,50 @@ body.context-help-open{overflow:hidden}
   margin:0!important;
 }
 .student-check.lesson-student-card .lesson-student-trial.is-active{
-  background:#eff6ff!important;
-  border-color:#bfdbfe!important;
-  color:#1d4ed8!important;
+  background:var(--amberbg)!important;
+  border-color:#fedf89!important;
+  color:var(--amber)!important;
   font-weight:700!important;
 }
-.student-check.lesson-student-card .student-more,
-.student-check.lesson-student-card .student-extra-remove{
-  grid-column:1!important;
-  grid-row:2!important;
-  justify-self:center!important;
-  align-self:center!important;
-  width:30px!important;
-  min-width:30px!important;
-  max-width:30px!important;
-  height:30px!important;
-  min-height:30px!important;
-  padding:0!important;
-  margin:0!important;
-  border-radius:9px!important;
-  line-height:1!important;
-}
-.student-check.lesson-student-card .student-more{font-size:18px!important}
-.student-check.lesson-student-card .student-extra-remove{font-size:18px!important;color:var(--red)!important}
-.student-check.lesson-student-card .lesson-photo-summary-slot{
-  grid-column:3!important;
-  grid-row:1!important;
-  justify-self:end!important;
-  align-self:center!important;
-  width:52px!important;
-  height:52px!important;
-  display:grid!important;
-  place-items:center!important;
-  min-width:0!important;
-}
-.student-check.lesson-student-card .lesson-photo-add-slot{
+.student-check.lesson-student-card>.lesson-photo-add-slot{
   grid-column:3!important;
   grid-row:2!important;
-  justify-self:end!important;
   align-self:center!important;
-  width:52px!important;
-  min-height:34px!important;
+  justify-self:end!important;
   display:flex!important;
   align-items:center!important;
   justify-content:flex-end!important;
+  width:52px!important;
+  height:34px!important;
+  min-width:0!important;
+}
+.student-check.lesson-student-card .lesson-photo-add,
+.teacher-content .student-check.lesson-student-card .lesson-photo-add{
+  position:static!important;
+  transform:none!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  flex:none!important;
+  width:40px!important;
+  min-width:40px!important;
+  max-width:40px!important;
+  height:32px!important;
+  min-height:32px!important;
+  max-height:32px!important;
+  margin:0!important;
+  padding:0!important;
+  border-radius:8px!important;
+  white-space:nowrap!important;
+  word-break:normal!important;
+  overflow-wrap:normal!important;
+  line-height:1!important;
+  font-size:14px!important;
 }
 .lesson-photo-summary{
   position:relative;
-  width:50px;
-  height:50px;
+  width:48px;
+  height:48px;
   padding:0;
   border:0;
   background:transparent;
@@ -1145,16 +1208,16 @@ body.context-help-open{overflow:hidden}
 }
 .lesson-photo-summary-media{
   position:relative;
-  z-index:2;
+  z-index:3;
   display:grid;
   place-items:center;
-  width:50px;
-  height:50px;
+  width:48px;
+  height:48px;
   overflow:hidden;
   border:1px solid #d0d5dd;
   border-radius:10px;
   background:#f8fafc;
-  box-shadow:0 1px 3px rgba(16,24,40,.12);
+  box-shadow:0 1px 3px rgba(16,24,40,.14);
 }
 .lesson-photo-summary-media img{
   display:block;
@@ -1166,20 +1229,25 @@ body.context-help-open{overflow:hidden}
 .lesson-photo-summary.is-stack::after{
   content:'';
   position:absolute;
-  inset:3px;
-  border:1px solid #d0d5dd;
+  inset:2px;
+  border:1px solid #c7ced8;
   border-radius:9px;
   background:#fff;
-  box-shadow:0 1px 2px rgba(16,24,40,.08);
-  z-index:0;
+  box-shadow:0 1px 3px rgba(16,24,40,.12);
 }
-.lesson-photo-summary.is-stack::before{transform:translate(-3px,2px) rotate(-4deg)}
-.lesson-photo-summary.is-stack::after{transform:translate(3px,1px) rotate(4deg);z-index:1}
+.lesson-photo-summary.is-stack::before{
+  z-index:1;
+  transform:translate(-4px,3px) rotate(-5deg);
+}
+.lesson-photo-summary.is-stack::after{
+  z-index:2;
+  transform:translate(4px,3px) rotate(5deg);
+}
 .lesson-photo-count{
   position:absolute;
-  right:-3px;
-  bottom:-3px;
-  z-index:4;
+  right:-4px;
+  bottom:-4px;
+  z-index:6;
   display:grid;
   place-items:center;
   min-width:20px;
@@ -1195,9 +1263,9 @@ body.context-help-open{overflow:hidden}
 }
 .lesson-photo-state-mark{
   position:absolute;
-  left:-3px;
-  top:-3px;
-  z-index:5;
+  left:-4px;
+  top:-4px;
+  z-index:7;
   display:grid;
   place-items:center;
   width:19px;
@@ -1210,31 +1278,17 @@ body.context-help-open{overflow:hidden}
   font-weight:800;
   line-height:1;
 }
+.lesson-photo-summary.is-uploaded .lesson-photo-state-mark,
+.lesson-photo-gallery-item.is-uploaded .lesson-photo-state-mark{
+  background:var(--green);
+}
 .lesson-photo-summary.is-error .lesson-photo-state-mark,
-.lesson-photo-gallery-item.is-error .lesson-photo-state-mark{background:var(--red)}
+.lesson-photo-gallery-item.is-error .lesson-photo-state-mark{
+  background:var(--red);
+}
 .lesson-photo-summary.is-expired .lesson-photo-state-mark,
-.lesson-photo-gallery-item.is-expired .lesson-photo-state-mark{background:#667085}
-.student-check.lesson-student-card .lesson-photo-add,
-.teacher-content .student-check.lesson-student-card .lesson-photo-add,
-.student-check.lesson-student-card .lesson-photo-placeholder{
-  position:static!important;
-  transform:none!important;
-  width:auto!important;
-  min-width:40px!important;
-  max-width:52px!important;
-  height:34px!important;
-  min-height:34px!important;
-  margin:0!important;
-  padding:0 6px!important;
-  border-radius:9px!important;
-  display:inline-flex!important;
-  align-items:center!important;
-  justify-content:center!important;
-  white-space:nowrap!important;
-  word-break:normal!important;
-  overflow-wrap:normal!important;
-  line-height:1!important;
-  font-size:14px!important;
+.lesson-photo-gallery-item.is-expired .lesson-photo-state-mark{
+  background:#667085;
 }
 .lesson-photo-gallery-grid{
   display:grid;
@@ -1274,57 +1328,56 @@ body.context-help-open{overflow:hidden}
 @media(max-width:760px){
   .student-check.lesson-student-card,
   .teacher-content .student-check.lesson-student-card{
-    grid-template-columns:30px minmax(0,1fr) 50px!important;
-    grid-template-rows:auto auto!important;
+    grid-template-columns:30px minmax(0,1fr) 48px!important;
+    grid-template-rows:48px 32px!important;
     column-gap:8px!important;
-    row-gap:3px!important;
-    padding:7px 8px!important;
-    align-items:center!important;
-    overflow:hidden!important;
+    row-gap:4px!important;
+    padding:8px!important;
   }
-  .student-check.lesson-student-card .lesson-photo-summary-slot{
+  .student-check.lesson-student-card>.lesson-student-attendance-slot{
+    width:30px!important;
+    height:48px!important;
+  }
+  .student-check.lesson-student-card>.lesson-photo-summary-slot{
     width:48px!important;
     height:48px!important;
   }
-  .student-check.lesson-student-card .lesson-photo-add-slot{width:48px!important}
-  .student-check.lesson-student-card .lesson-photo-summary{
-    width:46px!important;
-    height:46px!important;
-  }
-  .student-check.lesson-student-card .lesson-photo-summary-media{
-    width:46px!important;
-    height:46px!important;
-  }
-  .student-check.lesson-student-card .student-more,
-  .teacher-content .student-check.lesson-student-card .student-more,
-  .student-check.lesson-student-card .student-extra-remove{
+  .student-check.lesson-student-card>.lesson-student-more-slot{
     width:30px!important;
-    min-width:30px!important;
-    max-width:30px!important;
-    height:30px!important;
+    height:32px!important;
+  }
+  .student-check.lesson-student-card>.lesson-student-trial-slot{height:32px!important}
+  .student-check.lesson-student-card>.lesson-photo-add-slot{
+    width:48px!important;
+    height:32px!important;
+  }
+  .lesson-photo-summary,
+  .lesson-photo-summary-media{
+    width:46px!important;
+    height:46px!important;
   }
   .student-check.lesson-student-card .lesson-student-name{font-size:14px!important}
-  .student-check.lesson-student-card .lesson-student-subtitle{
-    white-space:nowrap!important;
-    overflow:hidden!important;
-    text-overflow:ellipsis!important;
-  }
   .student-check.lesson-student-card .lesson-student-trial{
     min-height:28px!important;
     padding:2px 7px!important;
     font-size:12px!important;
   }
-  .lesson-photo-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .lesson-photo-gallery-grid{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:8px;
+  }
 }
 @media(max-width:390px){
   .student-check.lesson-student-card,
   .teacher-content .student-check.lesson-student-card{
-    grid-template-columns:28px minmax(0,1fr) 48px!important;
+    grid-template-columns:28px minmax(0,1fr) 46px!important;
     column-gap:7px!important;
     padding-left:7px!important;
     padding-right:7px!important;
   }
-  .student-check.lesson-student-card .lesson-photo-summary-slot{width:46px!important}
-  .student-check.lesson-student-card .lesson-photo-add-slot{width:46px!important}
+  .student-check.lesson-student-card>.lesson-student-attendance-slot{width:28px!important}
+  .student-check.lesson-student-card>.lesson-student-more-slot{width:28px!important}
+  .student-check.lesson-student-card>.lesson-photo-summary-slot{width:46px!important}
+  .student-check.lesson-student-card>.lesson-photo-add-slot{width:46px!important}
   .lesson-photo-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 }

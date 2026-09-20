@@ -260,7 +260,7 @@ function photoVisual(photo) {
 function photoStatus(photo) {
   if (photo?.localId) return photo.status === 'error' ? { cls: 'is-error', mark: '!' } : { cls: `is-${photo.status || 'waiting'}`, mark: '↻' };
   if (photo?.expired) return { cls: 'is-expired', mark: '×' };
-  return { cls: '', mark: '' };
+  return { cls: 'is-uploaded', mark: '✓' };
 }
 
 function openGallery(childId) {
@@ -282,7 +282,9 @@ function control(child, lesson, present) {
   const attention = photos.find((photo) => photo.localId && photo.status === 'error')
     || photos.find((photo) => photo.localId)
     || photos.find((photo) => photo.expired);
-  const summaryStatus = photoStatus(attention || representative);
+  const singleStatus = photos.length === 1 ? photoStatus(photos[0]) : null;
+  const attentionStatus = attention ? photoStatus(attention) : null;
+  const summaryStatus = singleStatus || attentionStatus || { cls: '', mark: '' };
   const displayCount = photos.length;
   const summary = displayCount ? `<button class="lesson-photo-summary ${displayCount > 1 ? 'is-stack' : ''} ${summaryStatus.cls}" onclick="icubePhotos.gallery(${child.id})" aria-label="Открыть фотографии: ${displayCount}" title="Открыть фотографии">
       <span class="lesson-photo-summary-media">${photoVisual(representative)}</span>
@@ -292,7 +294,7 @@ function control(child, lesson, present) {
   const add = present && activeCount < MAX_PHOTOS
     ? `<button class="photo lesson-photo-add" onclick="icubePhotos.capture(${child.id})" aria-label="Добавить фото" title="Добавить фото">📷+</button>`
     : '';
-  return `<div class="lesson-photo-control"><div class="lesson-photo-summary-slot">${summary}</div><div class="lesson-photo-add-slot">${add}</div></div>`;
+  return `<div class="lesson-photo-summary-slot">${summary}</div><div class="lesson-photo-add-slot">${add}</div>`;
 }
 
 export function hasPhoto(lesson, childId) { return photoItems(lesson, childId).some((photo) => (!photo.localId && !photo.expired) || photo.status === 'waiting' || photo.status === 'uploading'); }
@@ -303,7 +305,7 @@ if (typeof originalStudentCheck === 'function') window.studentCheck = function (
   const output = originalStudentCheck(child, lesson, extra, enrollment);
   const extraRow = extra ? (lesson.extras ?? []).find((item) => Number(item.childId) === Number(child.id)) : null;
   const present = extra ? extraRow?.present !== false : Boolean(lesson.attendance?.[child.id]);
-  return output.replace(/<button class="photo[^>]*onclick="togglePhoto\([^)]*\)"[^>]*>.*?<\/button>/, control(child, lesson, present));
+  return output.replace(/<div class="lesson-photo-control-slot"><button class="photo[^>]*onclick="togglePhoto\([^)]*\)"[^>]*>.*?<\/button><\/div>/, control(child, lesson, present));
 };
 
 const originalLesson = window.lesson;

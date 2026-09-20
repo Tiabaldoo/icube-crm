@@ -32,6 +32,7 @@ test('compact photo control renders 0, 1, 3 and 5-photo states', () => {
   const one = window.icubePhotos.control(child, { photos: { 4: [{ id: '1', fileUrl: '/one.jpg' }] } }, true);
   assert.equal((one.match(/<button class="lesson-photo-summary /g) ?? []).length, 1);
   assert.doesNotMatch(one, /lesson-photo-count/); assert.match(one, /aria-label="Открыть фотографии: 1"/);
+  assert.match(one, /is-uploaded/); assert.match(one, /lesson-photo-state-mark">✓<\/span>/);
   assert.match(one, />📷\+<\/button>/);
 
   const three = window.icubePhotos.control(child, { photos: { 4: [
@@ -55,20 +56,26 @@ test('compact photo control renders 0, 1, 3 and 5-photo states', () => {
   assert.match(completed, />📷\+<\/button>/);
 });
 
-test('photo stack opens a gallery with every child photo and existing photo actions stay intact', () => {
+test('photo stack gallery shows uploaded, pending, error and expired statuses and keeps existing actions', () => {
   state.lessons = [{ id: 10, photos: { 4: [
     { id: '1', fileUrl: '/one.jpg', canReplace: true, canDelete: true, expiresAt: '2026-10-19T00:00:00Z' },
     { localId: 'local-2', previewUrl: '/pending.jpg', status: 'waiting' },
     { localId: 'local-3', previewUrl: '/error.jpg', status: 'error', error: 'offline' },
+    { id: '4', expired: true },
   ] } }];
   state.selectedLesson = 10; state.modal = null;
 
   window.icubePhotos.gallery(4);
-  assert.match(state.modal, /Фотографии · 3/);
-  assert.equal((state.modal.match(/lesson-photo-gallery-item/g) ?? []).length, 3);
-  assert.match(state.modal, /icubePhotos\.open\(4,'1'\)/);
-  assert.match(state.modal, /icubePhotos\.open\(4,'local-2'\)/);
-  assert.match(state.modal, /is-error/);
+  assert.match(state.modal, /Фотографии · 4/);
+  assert.equal((state.modal.match(/lesson-photo-gallery-item/g) ?? []).length, 4);
+  assert.match(state.modal, /lesson-photo-gallery-item is-uploaded/);
+  assert.match(state.modal, /lesson-photo-state-mark">✓<\/span>/);
+  assert.match(state.modal, /lesson-photo-gallery-item is-waiting/);
+  assert.match(state.modal, /lesson-photo-state-mark">↻<\/span>/);
+  assert.match(state.modal, /lesson-photo-gallery-item is-error/);
+  assert.match(state.modal, /lesson-photo-state-mark">!<\/span>/);
+  assert.match(state.modal, /lesson-photo-gallery-item is-expired/);
+  assert.match(state.modal, /lesson-photo-state-mark">×<\/span>/);
 
   window.icubePhotos.open(4, '1');
   assert.match(state.modal, />Скачать<\/button>/);
@@ -118,31 +125,44 @@ test('network and 5xx retry later, permanent 4xx stops automatic retry', () => {
   assert.equal(photosModule.photoUploadRetryable(new ApiError('invalid', { status: 415 })), false);
 });
 
-test('lesson child card source uses one-line FIO, compact trial state and accessible controls', async () => {
-  const [styles, uiSource] = await Promise.all([
+test('lesson child card uses explicit six-slot grid without display contents or nth-of-type layout', async () => {
+  const [styles, uiSource, photoSource] = await Promise.all([
     readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8'),
     readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/lesson-photos.mjs', import.meta.url), 'utf8'),
   ]);
-  const marker = '/* ===== Compact lesson student cards v1.1.25 ===== */';
+  const marker = '/* ===== Fixed lesson student grid v1.1.26 ===== */';
   const start = styles.indexOf(marker);
   assert.ok(start >= 0);
-  const compact = styles.slice(start);
+  const fixed = styles.slice(start);
 
-  assert.match(compact, /\.student-check\.lesson-student-card\{[\s\S]*grid-template-columns:32px minmax\(0,1fr\) 54px!important;[\s\S]*grid-template-rows:auto auto!important;/);
-  assert.match(compact, /\.lesson-student-name\{[\s\S]*white-space:nowrap!important;[\s\S]*overflow:hidden!important;[\s\S]*text-overflow:ellipsis!important;[\s\S]*overflow-wrap:normal!important;/);
-  assert.doesNotMatch(compact, /\.lesson-student-name\{[^}]*overflow-wrap:anywhere/);
-  assert.match(compact, /\.lesson-photo-summary\.is-stack::before/);
-  assert.match(compact, /\.lesson-photo-summary\.is-stack::after/);
-  assert.match(compact, /\.lesson-photo-add,[\s\S]*height:34px!important;/);
-  assert.match(compact, /@media\(max-width:760px\)/);
+  assert.match(fixed, /grid-template-columns:32px minmax\(0,1fr\) 52px!important;/);
+  assert.match(fixed, /grid-template-rows:52px 34px!important;/);
+  assert.match(fixed, />\.lesson-student-attendance-slot\{[\s\S]*grid-column:1!important;[\s\S]*grid-row:1!important;/);
+  assert.match(fixed, />\.lesson-student-name-cell\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:1!important;/);
+  assert.match(fixed, />\.lesson-photo-summary-slot\{[\s\S]*grid-column:3!important;[\s\S]*grid-row:1!important;/);
+  assert.match(fixed, />\.lesson-student-more-slot\{[\s\S]*grid-column:1!important;[\s\S]*grid-row:2!important;/);
+  assert.match(fixed, />\.lesson-student-trial-slot\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:2!important;/);
+  assert.match(fixed, />\.lesson-photo-add-slot\{[\s\S]*grid-column:3!important;[\s\S]*grid-row:2!important;/);
+  assert.doesNotMatch(fixed, /display:contents/);
+  assert.doesNotMatch(fixed, /nth-of-type/);
+
+  assert.match(fixed, /\.student-more,[\s\S]*width:30px!important;[\s\S]*height:30px!important;[\s\S]*max-height:30px!important;[\s\S]*border-radius:9px!important;/);
+  assert.match(fixed, /\.lesson-student-name\{[\s\S]*white-space:nowrap!important;[\s\S]*overflow:hidden!important;[\s\S]*text-overflow:ellipsis!important;[\s\S]*text-align:left!important;/);
+  assert.match(fixed, /\.lesson-student-trial\.is-active\{[\s\S]*background:var\(--amberbg\)!important;[\s\S]*color:var\(--amber\)!important;/);
+  assert.doesNotMatch(fixed, /lesson-student-trial\.is-active\{[^}]*#eff6ff/);
+  assert.match(fixed, /\.lesson-photo-summary\.is-uploaded \.lesson-photo-state-mark,[\s\S]*background:var\(--green\);/);
+  assert.match(fixed, /translate\(-4px,3px\) rotate\(-5deg\)/);
+  assert.match(fixed, /translate\(4px,3px\) rotate\(5deg\)/);
 
   const finalStudent = uiSource.slice(uiSource.lastIndexOf('window.studentCheck=function(c,l,extra,e){'));
-  assert.match(finalStudent, /lesson-student-card/);
-  assert.match(finalStudent, /lesson-student-trial'\+\(trial\?' is-active':''\)/);
+  for (const cls of ['lesson-student-attendance-slot','lesson-student-name-cell','lesson-photo-control-slot','lesson-student-more-slot','lesson-student-trial-slot']) {
+    assert.match(finalStudent, new RegExp(cls));
+  }
   assert.doesNotMatch(finalStudent.slice(0, finalStudent.indexOf('function currentTeacherId')), /badge amber/);
-  assert.match(finalStudent, /aria-label="Дополнительные действия"/);
-  assert.match(finalStudent, /aria-label="Добавить фото"/);
-  assert.match(finalStudent, /student-extra-remove/);
+  assert.match(photoSource, /lesson-photo-control-slot/);
+  assert.match(photoSource, /lesson-photo-summary-slot/);
+  assert.match(photoSource, /lesson-photo-add-slot/);
 });
 
 test('frontend source keeps IndexedDB blobs, optimization and reconnect retry contracts', async () => {

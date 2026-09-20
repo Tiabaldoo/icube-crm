@@ -8303,11 +8303,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       ? '<button class="btn small student-extra-remove" aria-label="Убрать с занятия" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">×</button>'
       : (l.done?'<button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="visitTrialOptionsV121('+c.id+',false)">⋯</button>':'');
 
-    return '<div class="student-check lesson-student-card">'+attendanceControl+
-      '<div class="lesson-student-info"><div class="lesson-student-name-cell"><b class="lesson-student-name" title="'+c.name+'">'+c.name+'</b>'+subtitle+'</div>'+trialControl+'</div>'+
-      '<div class="lesson-student-actions">'+
-        '<button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button>'+secondaryAction+
-      '</div></div>';
+    return '<div class="student-check lesson-student-card">'+
+      '<div class="lesson-student-attendance-slot">'+attendanceControl+'</div>'+
+      '<div class="lesson-student-name-cell"><b class="lesson-student-name" title="'+c.name+'">'+c.name+'</b>'+subtitle+'</div>'+
+      '<div class="lesson-photo-control-slot"><button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button></div>'+
+      '<div class="lesson-student-more-slot">'+secondaryAction+'</div>'+
+      '<div class="lesson-student-trial-slot">'+trialControl+'</div>'+
+      '</div>';
   };
 
   function currentTeacherId(){
