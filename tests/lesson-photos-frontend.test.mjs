@@ -23,18 +23,57 @@ test.after(() => {
   globalThis.window = previous.window; globalThis.document = previous.document; globalThis.setTimeout = previous.setTimeout; globalThis.fetch = previous.fetch;
 });
 
-test('photo control renders one, multiple and the five-photo limit', () => {
+test('compact photo control renders 0, 1, 3 and 5-photo states', () => {
   const child = { id: 4, name: 'Ребёнок' };
-  const lesson = { photos: { 4: [{ id: '1', fileUrl: '/one.jpg' }] } };
-  assert.match(photosModule.default?.control?.(child, lesson, true) ?? window.icubePhotos.control(child, lesson, true), /\+ Добавить ещё/);
-  lesson.photos[4].push({ id: '2', fileUrl: '/two.jpg' });
-  assert.equal((window.icubePhotos.control(child, lesson, true).match(/<button class="lesson-photo-thumb/g) ?? []).length, 2);
-  lesson.photos[4].push({ id: '3', fileUrl: '/3.jpg' }, { id: '4', fileUrl: '/4.jpg' }, { id: '5', fileUrl: '/5.jpg' });
-  const full = window.icubePhotos.control(child, lesson, true);
-  assert.match(full, /Максимум 5 фото/); assert.doesNotMatch(full, /Добавить ещё/);
-  assert.match(window.icubePhotos.control(child, { photos: { 4: [{ id: '1', fileUrl: '/one.jpg' }] }, done: true }, true), /\+ Добавить ещё/);
-  assert.match(window.icubePhotos.control(child, { photos: {}, done: true }, true), /📷 Добавить фото/);
-  assert.doesNotMatch(window.icubePhotos.control(child, { photos: {}, done: true }, false), /Добавить фото/);
+
+  const empty = window.icubePhotos.control(child, { photos: {} }, true);
+  assert.match(empty, />📷\+<\/button>/); assert.doesNotMatch(empty, /<button class="lesson-photo-summary /);
+
+  const one = window.icubePhotos.control(child, { photos: { 4: [{ id: '1', fileUrl: '/one.jpg' }] } }, true);
+  assert.equal((one.match(/<button class="lesson-photo-summary /g) ?? []).length, 1);
+  assert.doesNotMatch(one, /lesson-photo-count/); assert.match(one, /aria-label="Открыть фотографии: 1"/);
+  assert.match(one, />📷\+<\/button>/);
+
+  const three = window.icubePhotos.control(child, { photos: { 4: [
+    { id: '1', fileUrl: '/one.jpg' }, { id: '2', fileUrl: '/two.jpg' }, { id: '3', fileUrl: '/three.jpg' },
+  ] } }, true);
+  assert.equal((three.match(/<button class="lesson-photo-summary /g) ?? []).length, 1);
+  assert.match(three, /is-stack/); assert.match(three, /<span class="lesson-photo-count">3<\/span>/);
+  assert.match(three, /aria-label="Открыть фотографии: 3"/);
+
+  const five = window.icubePhotos.control(child, { photos: { 4: [
+    { id: '1', fileUrl: '/1.jpg' }, { id: '2', fileUrl: '/2.jpg' }, { id: '3', fileUrl: '/3.jpg' },
+    { id: '4', fileUrl: '/4.jpg' }, { id: '5', fileUrl: '/5.jpg' },
+  ] } }, true);
+  assert.match(five, /<span class="lesson-photo-count">5<\/span>/);
+  assert.doesNotMatch(five, /lesson-photo-add"/);
+  assert.doesNotMatch(five, />📷\+<\/button>/);
+
+  const absent = window.icubePhotos.control(child, { photos: {} }, false);
+  assert.doesNotMatch(absent, />📷\+<\/button>/);
+  const completed = window.icubePhotos.control(child, { photos: {}, done: true }, true);
+  assert.match(completed, />📷\+<\/button>/);
+});
+
+test('photo stack opens a gallery with every child photo and existing photo actions stay intact', () => {
+  state.lessons = [{ id: 10, photos: { 4: [
+    { id: '1', fileUrl: '/one.jpg', canReplace: true, canDelete: true, expiresAt: '2026-10-19T00:00:00Z' },
+    { localId: 'local-2', previewUrl: '/pending.jpg', status: 'waiting' },
+    { localId: 'local-3', previewUrl: '/error.jpg', status: 'error', error: 'offline' },
+  ] } }];
+  state.selectedLesson = 10; state.modal = null;
+
+  window.icubePhotos.gallery(4);
+  assert.match(state.modal, /Фотографии · 3/);
+  assert.equal((state.modal.match(/lesson-photo-gallery-item/g) ?? []).length, 3);
+  assert.match(state.modal, /icubePhotos\.open\(4,'1'\)/);
+  assert.match(state.modal, /icubePhotos\.open\(4,'local-2'\)/);
+  assert.match(state.modal, /is-error/);
+
+  window.icubePhotos.open(4, '1');
+  assert.match(state.modal, />Скачать<\/button>/);
+  assert.match(state.modal, /icubePhotos\.capture\(4,'1'\)/);
+  assert.match(state.modal, /icubePhotos\.remove\('1'\)/);
 });
 
 test('server photo deletion waits for modal confirmation and cancel makes no request', async () => {
@@ -79,23 +118,31 @@ test('network and 5xx retry later, permanent 4xx stops automatic retry', () => {
   assert.equal(photosModule.photoUploadRetryable(new ApiError('invalid', { status: 415 })), false);
 });
 
-test('mobile attendance layout keeps the child name above wrapped photo controls', async () => {
-  const styles = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
-  const marker = '/* ===== Lesson photos: mobile attendance layout v1.1.24 ===== */';
+test('lesson child card source uses one-line FIO, compact trial state and accessible controls', async () => {
+  const [styles, uiSource] = await Promise.all([
+    readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+  ]);
+  const marker = '/* ===== Compact lesson student cards v1.1.25 ===== */';
   const start = styles.indexOf(marker);
   assert.ok(start >= 0);
-  const mobile = styles.slice(start);
+  const compact = styles.slice(start);
 
-  assert.match(mobile, /@media\(max-width:760px\)/);
-  assert.match(mobile, /\.teacher-content \.student-check\{[\s\S]*grid-template-columns:38px minmax\(0,1fr\)!important;[\s\S]*grid-template-rows:auto auto!important;/);
-  assert.match(mobile, />div:nth-of-type\(1\)\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:1!important;/);
-  assert.match(mobile, />div:nth-of-type\(2\)\{[\s\S]*grid-column:2!important;[\s\S]*grid-row:2!important;/);
-  assert.match(mobile, />div:nth-of-type\(1\)>b\{[\s\S]*word-break:normal!important;[\s\S]*overflow-wrap:normal!important;[\s\S]*white-space:normal!important;/);
-  assert.doesNotMatch(mobile, />div:nth-of-type\(1\)>b\{[^}]*overflow-wrap:anywhere/);
-  assert.match(mobile, /\.lesson-photo-control\{[\s\S]*flex-wrap:wrap!important;[\s\S]*justify-content:flex-start!important;/);
-  assert.match(mobile, /\.lesson-photo-thumbs\{[\s\S]*flex-wrap:wrap!important;[\s\S]*gap:6px!important;/);
-  assert.match(mobile, /\.lesson-photo-thumb\{[\s\S]*flex:0 0 52px!important;/);
-  assert.match(mobile, /\.lesson-photo-control>\.photo\{[\s\S]*width:auto!important;[\s\S]*white-space:nowrap!important;[\s\S]*word-break:normal!important;/);
+  assert.match(compact, /\.student-check\.lesson-student-card\{[\s\S]*grid-template-columns:32px minmax\(0,1fr\) 54px!important;[\s\S]*grid-template-rows:auto auto!important;/);
+  assert.match(compact, /\.lesson-student-name\{[\s\S]*white-space:nowrap!important;[\s\S]*overflow:hidden!important;[\s\S]*text-overflow:ellipsis!important;[\s\S]*overflow-wrap:normal!important;/);
+  assert.doesNotMatch(compact, /\.lesson-student-name\{[^}]*overflow-wrap:anywhere/);
+  assert.match(compact, /\.lesson-photo-summary\.is-stack::before/);
+  assert.match(compact, /\.lesson-photo-summary\.is-stack::after/);
+  assert.match(compact, /\.lesson-photo-add\{[\s\S]*height:34px!important;/);
+  assert.match(compact, /@media\(max-width:760px\)/);
+
+  const finalStudent = uiSource.slice(uiSource.lastIndexOf('window.studentCheck=function(c,l,extra,e){'));
+  assert.match(finalStudent, /lesson-student-card/);
+  assert.match(finalStudent, /lesson-student-trial'\+\(trial\?' is-active':''\)/);
+  assert.doesNotMatch(finalStudent.slice(0, finalStudent.indexOf('function currentTeacherId')), /badge amber/);
+  assert.match(finalStudent, /aria-label="Дополнительные действия"/);
+  assert.match(finalStudent, /aria-label="Добавить фото"/);
+  assert.match(finalStudent, /student-extra-remove/);
 });
 
 test('frontend source keeps IndexedDB blobs, optimization and reconnect retry contracts', async () => {

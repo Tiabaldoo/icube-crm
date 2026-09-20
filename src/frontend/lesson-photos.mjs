@@ -251,11 +251,48 @@ function openPhoto(childId, key) {
   legacy.render();
 }
 
+function photoVisual(photo) {
+  const source = photo?.previewUrl || photo?.fileUrl;
+  if (source) return `<img src="${esc(source)}" alt="Фото">`;
+  return '<span class="lesson-photo-expired-mark">⌛</span>';
+}
+
+function photoStatus(photo) {
+  if (photo?.localId) return photo.status === 'error' ? { cls: 'is-error', mark: '!' } : { cls: `is-${photo.status || 'waiting'}`, mark: '↻' };
+  if (photo?.expired) return { cls: 'is-expired', mark: '×' };
+  return { cls: '', mark: '' };
+}
+
+function openGallery(childId) {
+  const lesson = currentLesson(); const photos = photoItems(lesson, childId); if (!lesson || !photos.length) return;
+  const items = photos.map((photo) => {
+    const key = esc(photo.id ?? photo.localId); const status = photoStatus(photo);
+    return `<button class="lesson-photo-gallery-item ${status.cls}" onclick="icubePhotos.open(${childId},'${key}')" aria-label="Открыть фотографию" title="Открыть фотографию">
+      <span class="lesson-photo-gallery-media">${photoVisual(photo)}</span>${status.mark ? `<span class="lesson-photo-state-mark">${status.mark}</span>` : ''}
+    </button>`;
+  }).join('');
+  legacy.state.modal = `<h3>Фотографии · ${photos.length}</h3><div class="lesson-photo-gallery-grid">${items}</div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
+  legacy.render();
+}
+
 function control(child, lesson, present) {
-  const photos = photoItems(lesson, child.id); const count = photos.filter((photo) => !photo.expired).length;
-  const thumbs = photos.map((photo) => `<button class="lesson-photo-thumb ${photo.localId ? `is-${photo.status}` : ''} ${photo.expired ? 'is-expired' : ''}" onclick="icubePhotos.open(${child.id},'${esc(photo.id ?? photo.localId)}')" title="Открыть фотографию">${photo.previewUrl || photo.fileUrl ? `<img src="${esc(photo.previewUrl || photo.fileUrl)}" alt="Фото">` : '<span class="lesson-photo-expired-mark">⌛</span>'}<span>${photo.localId ? (photo.status === 'error' ? '!' : '↻') : photo.expired ? '×' : '✓'}</span></button>`).join('');
-  const add = present && count < MAX_PHOTOS ? `<button class="photo ${count ? 'done' : ''}" onclick="icubePhotos.capture(${child.id})">${count ? '+ Добавить ещё' : '📷 Добавить фото'}</button>` : '';
-  return `<div class="lesson-photo-control"><div class="lesson-photo-thumbs">${thumbs}</div>${add}${count >= MAX_PHOTOS ? '<span class="muted mini">Максимум 5 фото</span>' : ''}</div>`;
+  const photos = photoItems(lesson, child.id); const activeCount = photos.filter((photo) => !photo.expired).length;
+  const representative = [...photos].reverse().find((photo) => photo.previewUrl || photo.fileUrl) || photos.at(-1);
+  const attention = photos.find((photo) => photo.localId && photo.status === 'error')
+    || photos.find((photo) => photo.localId)
+    || photos.find((photo) => photo.expired);
+  const summaryStatus = photoStatus(attention || representative);
+  const displayCount = photos.length;
+  const summary = displayCount ? `<button class="lesson-photo-summary ${displayCount > 1 ? 'is-stack' : ''} ${summaryStatus.cls}" onclick="icubePhotos.gallery(${child.id})" aria-label="Открыть фотографии: ${displayCount}" title="Открыть фотографии">
+      <span class="lesson-photo-summary-media">${photoVisual(representative)}</span>
+      ${displayCount > 1 ? `<span class="lesson-photo-count">${displayCount}</span>` : ''}
+      ${summaryStatus.mark ? `<span class="lesson-photo-state-mark">${summaryStatus.mark}</span>` : ''}
+    </button>` : '';
+  const add = present && activeCount < MAX_PHOTOS
+    ? `<button class="photo lesson-photo-add" onclick="icubePhotos.capture(${child.id})" aria-label="Добавить фото" title="Добавить фото">📷+</button>`
+    : '';
+  return `<div class="lesson-photo-control"><div class="lesson-photo-summary-slot">${summary}</div><div class="lesson-photo-add-slot">${add}</div></div>`;
 }
 
 export function hasPhoto(lesson, childId) { return photoItems(lesson, childId).some((photo) => (!photo.localId && !photo.expired) || photo.status === 'waiting' || photo.status === 'uploading'); }
@@ -283,7 +320,7 @@ if (typeof originalOpenLesson === 'function') window.openLesson = function (less
 };
 
 window.togglePhoto = (childId) => openFilePicker(childId);
-window.icubePhotos = { capture: openFilePicker, confirm, retake, open: openPhoto, remove: removePhoto, confirmRemove, retry, retryAll, download,
+window.icubePhotos = { capture: openFilePicker, confirm, retake, open: openPhoto, gallery: openGallery, remove: removePhoto, confirmRemove, retry, retryAll, download,
   loadLessonPhotos, hasPhoto, pendingCount, control };
 window.addEventListener('online', () => retryAll().catch(console.error));
 window.icubeAuthReady?.then((profile) => { if (profile) retryAll().catch(console.error); });

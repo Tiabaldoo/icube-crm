@@ -8287,28 +8287,26 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     let subtitle='';
     if(extra){
       subtitle=ex?.createdByTeacher || c.createdByTeacher
-        ? '<div class="muted mini">добавлен преподавателем</div>'
-        : '<div class="muted mini">из другой группы</div>';
+        ? '<div class="muted mini lesson-student-subtitle">добавлен преподавателем</div>'
+        : '<div class="muted mini lesson-student-subtitle">из другой группы</div>';
     }
 
     const trialControl=showTrial
-      ? '<label class="mini trial-inline" style="display:block;margin-top:5px"><input type="checkbox" '+(trial?'checked':'')+' onchange="toggleVisitTrialV121('+c.id+',this.checked,'+(extra?'true':'false')+')"> Ознакомительное</label>'
+      ? '<label class="mini trial-inline lesson-student-trial'+(trial?' is-active':'')+'"><input type="checkbox" '+(trial?'checked':'')+' onchange="toggleVisitTrialV121('+c.id+',this.checked,'+(extra?'true':'false')+')"><span>Ознакомительное</span></label>'
       : '';
 
     const attendanceControl=extra
-      ? '<input type="checkbox" '+(present?'checked':'')+' onchange="toggleExtraAttendanceV138('+c.id+',this.checked)">'
-      : '<input type="checkbox" '+(present?'checked':'')+' onchange="attend('+c.id+',this.checked)">';
+      ? '<input class="lesson-student-attendance" type="checkbox" '+(present?'checked':'')+' onchange="toggleExtraAttendanceV138('+c.id+',this.checked)">'
+      : '<input class="lesson-student-attendance" type="checkbox" '+(present?'checked':'')+' onchange="attend('+c.id+',this.checked)">';
 
-    const remove=extra
-      ? '<button class="btn small" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">Убрать</button>'
-      : (l.done?'<button class="btn trial-more" title="Дополнительно" onclick="visitTrialOptionsV121('+c.id+',false)">⋯</button>':'');
+    const secondaryAction=extra
+      ? '<button class="btn small student-extra-remove" aria-label="Убрать с занятия" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">×</button>'
+      : (l.done?'<button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="visitTrialOptionsV121('+c.id+',false)">⋯</button>':'');
 
-    return '<div class="student-check">'+attendanceControl+
-      '<div><b>'+c.name+'</b>'+subtitle+
-      (trial?'<span class="badge amber" style="margin-top:4px">Ознакомительное</span>':'')+
-      trialControl+'</div>'+
-      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">'+
-        '<button class="photo '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')">'+(photo?'Фото ✓':'📷 Фото')+'</button>'+remove+
+    return '<div class="student-check lesson-student-card">'+attendanceControl+
+      '<div class="lesson-student-info"><div class="lesson-student-name-cell"><b class="lesson-student-name" title="'+c.name+'">'+c.name+'</b>'+subtitle+'</div>'+trialControl+'</div>'+
+      '<div class="lesson-student-actions">'+
+        '<button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button>'+secondaryAction+
       '</div></div>';
   };
 
