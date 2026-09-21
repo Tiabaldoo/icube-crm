@@ -527,10 +527,10 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить: \$\{escapeHtml\(contact\.phone\)\}/);
   assert.match(css, /\.parent-sidebar/); assert.match(css, /\.parent-menu-button/); assert.match(css, /\.parent-nav\{display:none!important\}/);
   assert.match(css, /\.parent-next-open\{[^}]*cursor:pointer/); assert.match(css, /\.parent-next-actions/);
-  const contactButtonCss = css.match(/\.parent-contact-button\{([^}]*)\}/)?.[1] ?? '';
+  const contactButtonCss = css.match(/\.parent-actions a\.parent-contact-button\{([^}]*)\}/)?.[1] ?? '';
   assert.match(contactButtonCss, /background:#fff/); assert.match(contactButtonCss, /border:1px solid #175cd3/);
   assert.match(contactButtonCss, /color:#175cd3!important/); assert.match(contactButtonCss, /-webkit-text-fill-color:#175cd3/);
-  assert.match(css, /\.parent-contact-button\.primary\{background:#175cd3;color:#fff!important;-webkit-text-fill-color:#fff\}/);
+  assert.match(css, /\.parent-actions a\.parent-contact-button\.primary\{background:#175cd3;color:#fff!important;-webkit-text-fill-color:#fff\}/);
   assert.doesNotMatch(access, /prompt\(/);
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
 });
