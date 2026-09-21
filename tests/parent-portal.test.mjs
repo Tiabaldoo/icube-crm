@@ -478,6 +478,32 @@ test('home payment action appears only for zero or debt balance with a subscript
   assert.match(html, /Фото с последнего занятия/);
 });
 
+test('parent photo section explains 30-day retention and shows group expiry from existing expiresAt data', async () => {
+  const [portal, backend] = await Promise.all([
+    readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/parent-portal.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(portal, /Фотографии хранятся 30 дней\. Чтобы сохранить понравившееся фото, откройте его и нажмите «Скачать»\./);
+  assert.doesNotMatch(portal, /Фотографии доступны ограниченное время/);
+  assert.match(portal, /photos\.map\(\(photo\) => photo\.expiresAt\)\.filter\(Boolean\)\.sort\(\)\[0\]/);
+  assert.match(portal, /фото доступны до \$\{dateRu\(expiresAt\)\}/);
+  assert.match(backend, /expiresAt: isoDateTime\(row\.expires_at\)/);
+});
+
+test('parent photo viewer centers close control and downloads the current photo without changing arrows', async () => {
+  const [portal, css] = await Promise.all([
+    readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/ui/parent-portal.css', import.meta.url), 'utf8'),
+  ]);
+  assert.match(portal, /data-action="viewer-close" aria-label="Закрыть">×<\/button><button data-action="viewer-prev"/);
+  assert.match(portal, /<button data-action="viewer-next" aria-label="Следующее">→<\/button>/);
+  assert.match(portal, /class="parent-viewer-download" href="\$\{escapeHtml\(photo\.fileUrl\)\}" download="icube-photo-\$\{escapeHtml\(photo\.id\)\}\.jpg" data-action="viewer-download">Скачать<\/a>/);
+  assert.match(portal, /action === 'viewer-download'\) event\.stopPropagation\(\)/);
+  assert.match(css, /\.parent-viewer>button:first-child\{[^}]*display:grid;place-items:center;padding:0/);
+  assert.match(css, /\.parent-viewer>button:first-child::before\{[^}]*width:30px;height:30px;text-align:center;font:400 30px\/30px Arial,sans-serif/);
+  assert.match(css, /\.parent-viewer-download\{/);
+});
+
 test('latest parent photo uses the first upload from the latest photographed lesson', async () => {
   const source = await readFile(new URL('../backend/src/parent-portal.mjs', import.meta.url), 'utf8');
   assert.match(source, /ORDER BY l\.starts_at DESC,l\.id DESC,ph\.uploaded_at,ph\.id LIMIT 1/);

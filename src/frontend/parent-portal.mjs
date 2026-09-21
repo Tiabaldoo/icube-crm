@@ -179,7 +179,10 @@ function groupPhotos(rows) {
 }
 function photosHtml(rows) {
   const groups = groupPhotos(rows);
-  return `<section class="parent-title"><h1>Фото</h1><span>Фотографии доступны ограниченное время</span></section>${rows.length ? Object.entries(groups).map(([date, photos]) => `<section class="parent-photo-day"><h2>${dateRu(date)}</h2><div>${photos.map((photo) => `<button data-action="photo" data-photo="${photo.id}"><img src="${escapeHtml(photo.fileUrl)}" alt="Фото от ${dateRu(date)}"></button>`).join('')}</div></section>`).join('') : empty('Нет доступных фотографий.')}`;
+  return `<section class="parent-title"><h1>Фото</h1><span>Фотографии хранятся 30 дней. Чтобы сохранить понравившееся фото, откройте его и нажмите «Скачать».</span></section>${rows.length ? Object.entries(groups).map(([date, photos]) => {
+    const expiresAt = photos.map((photo) => photo.expiresAt).filter(Boolean).sort()[0] ?? null;
+    return `<section class="parent-photo-day"><h2>${dateRu(date)}${expiresAt ? ` <small>(фото доступны до ${dateRu(expiresAt)})</small>` : ''}</h2><div>${photos.map((photo) => `<button data-action="photo" data-photo="${photo.id}"><img src="${escapeHtml(photo.fileUrl)}" alt="Фото от ${dateRu(date)}"></button>`).join('')}</div></section>`;
+  }).join('') : empty('Нет доступных фотографий.')}`;
 }
 
 function settingsHtml(data) {
@@ -200,7 +203,7 @@ function notificationsHtml(rows) {
 function viewerHtml() {
   if (!state.viewer?.photos?.length) return '';
   const photo = state.viewer.photos[state.viewer.index];
-  return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть">×</button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
+  return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть">×</button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><a class="parent-viewer-download" href="${escapeHtml(photo.fileUrl)}" download="icube-photo-${escapeHtml(photo.id)}.jpg" data-action="viewer-download">Скачать</a><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
 }
 
 function paymentModalHtml() {
@@ -312,6 +315,7 @@ app?.addEventListener('click', async (event) => {
   else if (action === 'viewer-close' && (event.target === target || event.target.tagName === 'BUTTON')) { state.viewer = null; render(); }
   else if (action === 'viewer-prev') setViewer(-1);
   else if (action === 'viewer-next') setViewer(1);
+  else if (action === 'viewer-download') event.stopPropagation();
   else if (action === 'accept') { await api.request(`/parent/documents/${target.dataset.id}/accept`, { method: 'POST' }); await start(); }
   else if (action === 'logout') window.icubeAuthLogout?.();
   else if (action === 'pay') {
