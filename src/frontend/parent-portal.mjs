@@ -93,14 +93,26 @@ function shell(content) {
   </div>`;
 }
 
-function homeHtml(data) {
+export function parentHomeHtml(data) {
   const child = data.child;
   const next = data.nextLesson;
-  const enrollmentCards = data.enrollments.map((item) => { const balance = parentBalancePresentation(item.balanceLessons); return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong></article>`; }).join('');
+  const enrollmentCards = data.enrollments.map((item) => {
+    const balance = parentBalancePresentation(item.balanceLessons);
+    const pay = decimalUnits(item.balanceLessons) <= 0n && item.subscriptionPrice != null
+      ? `<button class="parent-primary parent-balance-pay" data-action="pay" data-amount="${escapeHtml(item.subscriptionPrice)}" data-direction="${escapeHtml(item.direction)}">Оплатить</button>` : '';
+    return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong>${pay}</article>`;
+  }).join('');
   return `<section class="parent-title"><h1>${escapeHtml(child.name)}</h1></section>
     <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<div class="parent-next"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></div>` : empty('Нет будущих занятий.')}</article>
     <section class="parent-balances">${enrollmentCards || empty('Нет активных направлений.')}</section>
-    <article class="parent-card"><h2>Последнее фото</h2>${data.latestPhoto ? `<button class="parent-photo-preview" data-action="tab" data-tab="photos"><img src="${escapeHtml(data.latestPhoto.fileUrl)}" alt="Последнее фото ${escapeHtml(child.name)}"></button>` : empty('Нет доступных фотографий.')}</article>`;
+    <article class="parent-card"><h2>Фото с последнего занятия</h2>${data.latestPhoto ? `<button class="parent-photo-preview" data-action="tab" data-tab="photos"><img src="${escapeHtml(data.latestPhoto.fileUrl)}" alt="Фото с последнего занятия ${escapeHtml(child.name)}"></button>` : empty('Нет доступных фотографий.')}</article>`;
+}
+
+export function parentAbsenceAction(lesson) {
+  if (!lesson?.canChangeAbsence) return null;
+  return lesson.absenceNotice
+    ? { action: 'absence-cancel', label: 'Отменить отметку', className: 'parent-secondary' }
+    : { action: 'absence-set', label: 'Не будет', className: 'parent-primary' };
 }
 
 function scheduleEventHtml(lesson) {
@@ -175,7 +187,7 @@ function settingsHtml(data) {
     <article class="parent-card"><h2>Уведомления</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
     <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
-    <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-contact-button primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a class="parent-contact-button" href="tel:${escapeHtml(String(contact.phone).replace(/[^\d+]/g, ''))}">Позвонить ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
+    <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-contact-button primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a class="parent-contact-button" href="tel:${escapeHtml(String(contact.phone).replace(/[^\d+]/g, ''))}">Позвонить: ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
     <button class="parent-logout" data-action="logout">Выйти</button>`;
 }
 
@@ -199,7 +211,8 @@ function lessonInfoHtml() {
   const lesson = state.lessonInfo;
   if (!lesson) return '';
   const status = parentScheduleStatus(lesson) || 'Запланировано';
-  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div>${lesson.canChangeAbsence ? `<button class="${lesson.absenceNotice ? 'parent-secondary' : 'parent-primary'}" data-action="${lesson.absenceNotice ? 'absence-cancel' : 'absence-set'}" data-lesson="${lesson.id}">${lesson.absenceNotice ? 'Отменить отметку' : 'Не будет'}</button>` : ''}</article></div>`;
+  const absenceAction = parentAbsenceAction(lesson);
+  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div>${absenceAction ? `<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${lesson.id}">${absenceAction.label}</button>` : ''}</article></div>`;
 }
 
 function consentHtml(documents) {
@@ -237,7 +250,7 @@ async function loadTab() {
 function render() {
   if (state.loading) return shell('');
   if (state.tab === 'notifications') return shell(notificationsHtml(state.data ?? []));
-  if (state.tab === 'home') return shell(homeHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [], nextLesson: null, latestPhoto: null }));
+  if (state.tab === 'home') return shell(parentHomeHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [], nextLesson: null, latestPhoto: null }));
   if (state.tab === 'schedule') return shell(scheduleHtml(state.data ?? []));
   if (state.tab === 'attendance') return shell(attendanceHtml(state.data ?? []));
   if (state.tab === 'payments') return shell(paymentsHtml(state.data ?? { rows: [], home: null }));

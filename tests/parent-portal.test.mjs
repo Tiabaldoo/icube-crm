@@ -5,7 +5,7 @@ import { createParentPortal } from '../backend/src/parent-portal.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
 import { permissions } from '../backend/src/auth.mjs';
-import { ageFromBirthDate, parentBalancePresentation, parentScheduleCalendar, parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
+import { ageFromBirthDate, parentAbsenceAction, parentBalancePresentation, parentHomeHtml, parentScheduleCalendar, parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
 import { ageOnDate, createBirthdayNotifications } from '../backend/src/birthday-notifications.mjs';
 import { localDate, nextDate } from '../scripts/generate-parent-notifications.mjs';
 
@@ -50,10 +50,11 @@ function portalFixture() {
     if (sql.startsWith('UPDATE lesson_child_absence_notices SET cancelled_at=')) { const key = `${params.lessonId}:${params.childId}`; const found = state.notices.delete(key); return [{ affectedRows: found ? 1 : 0 }]; }
     if (sql.includes('FROM lessons l JOIN sites') && sql.includes("l.status='scheduled'")) return [[{ id: 70, starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', site_name: 'Площадка' }]];
     if (sql.includes('SELECT l.id,l.group_id,l.scheduled_starts_at')) return [[
-      { id: 70, group_id: 100, scheduled_starts_at: '2026-09-22 17:00:00', starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 0, attendance_present: null, can_change_absence: 1 },
-      { id: 71, group_id: 100, scheduled_starts_at: '2026-09-23 17:00:00', starts_at: '2026-09-24 18:00:00', ends_at: '2026-09-24 19:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 0, attendance_present: null, can_change_absence: 1 },
-      { id: 72, group_id: 100, scheduled_starts_at: '2026-09-25 17:00:00', starts_at: '2026-09-25 17:00:00', ends_at: '2026-09-25 18:00:00', status: 'cancelled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 1, attendance_present: 0, can_change_absence: 0 },
-      { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 15:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 1, attendance_present: 1, can_change_absence: 0 },
+      { id: 70, group_id: 100, scheduled_starts_at: '2026-09-22 17:00:00', starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: state.notices.has('70:10') ? '1' : '0', attendance_present: null, can_change_absence: '1' },
+      { id: 71, group_id: 100, scheduled_starts_at: '2026-09-23 17:00:00', starts_at: '2026-09-24 18:00:00', ends_at: '2026-09-24 19:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '0', attendance_present: null, can_change_absence: '1' },
+      { id: 72, group_id: 100, scheduled_starts_at: '2026-09-25 17:00:00', starts_at: '2026-09-25 17:00:00', ends_at: '2026-09-25 18:00:00', status: 'cancelled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '0', attendance_present: '0', can_change_absence: '0' },
+      { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 15:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '1', attendance_present: '1', can_change_absence: '0' },
+      { id: 74, group_id: 100, scheduled_starts_at: '2026-09-27 17:00:00', starts_at: '2026-09-27 17:00:00', ends_at: '2026-09-27 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '1', attendance_present: null, can_change_absence: '0' },
     ]];
     if (sql.includes('FROM attendances a JOIN lessons')) {
       const childId = Number(params.childId); return [[{ lesson_id: childId * 10, starts_at: `2026-09-${childId === 10 ? '10' : '11'} 17:00:00`, is_trial: childId === 11, direction_name: 'Робототехника', group_name: `Группа ${childId}` }]];
@@ -382,10 +383,16 @@ test('parent can edit only child birth date, school and grade', async () => {
 
 test('absence notice can be set and cancelled only for own future lesson without financial writes', async () => {
   const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  let schedule = await fixture.service.schedule(10, { from: '2026-09-20', to: '2026-10-01' }, parent);
+  assert.equal(schedule[0].absenceNotice, false);
   assert.deepEqual(await fixture.service.setAbsenceNotice(10, 70, parent), { lessonId: '70', childId: '10', active: true });
   assert.equal(fixture.state.notices.has('70:10'), true);
+  schedule = await fixture.service.schedule(10, { from: '2026-09-20', to: '2026-10-01' }, parent);
+  assert.equal(schedule[0].absenceNotice, true);
   assert.deepEqual(await fixture.service.cancelAbsenceNotice(10, 70, parent), { lessonId: '70', childId: '10', active: false });
   assert.equal(fixture.state.notices.has('70:10'), false);
+  schedule = await fixture.service.schedule(10, { from: '2026-09-20', to: '2026-10-01' }, parent);
+  assert.equal(schedule[0].absenceNotice, false);
   await assert.rejects(fixture.service.setAbsenceNotice(12, 70, parent), { status: 404, code: 'CHILD_NOT_FOUND' });
   await assert.rejects(fixture.service.setAbsenceNotice(10, 72, parent), { status: 409, code: 'ABSENCE_NOTICE_CLOSED' });
   const mutationSql = fixture.state.sql.filter((sql) => /INSERT INTO lesson_child_absence|UPDATE lesson_child_absence/.test(sql)).join('\n');
@@ -393,10 +400,41 @@ test('absence notice can be set and cancelled only for own future lesson without
 });
 
 test('parent lesson status uses fact after completion and notice only before completion', () => {
+  assert.equal(parentScheduleStatus({ status: 'scheduled', absenceNotice: false }), '');
   assert.equal(parentScheduleStatus({ status: 'scheduled', absenceNotice: true }), 'Не будет');
   assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: true, present: true }), 'Проведено');
   assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: true, present: false }), 'Отсутствовал');
+  assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: false, present: false }), 'Отсутствовал');
   assert.equal(parentScheduleStatus({ status: 'cancelled', absenceNotice: true, present: true }), 'Отменено');
+  assert.deepEqual(parentAbsenceAction({ canChangeAbsence: true, absenceNotice: false }), { action: 'absence-set', label: 'Не будет', className: 'parent-primary' });
+  assert.deepEqual(parentAbsenceAction({ canChangeAbsence: true, absenceNotice: true }), { action: 'absence-cancel', label: 'Отменить отметку', className: 'parent-secondary' });
+  assert.equal(parentAbsenceAction({ canChangeAbsence: false, absenceNotice: true }), null);
+});
+
+test('parent schedule converts SQL string booleans strictly and joins only active notices', async () => {
+  const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  const rows = await fixture.service.schedule(10, { from: '2026-09-20', to: '2026-10-01' }, parent);
+  assert.equal(rows[0].absenceNotice, false); assert.equal(rows[0].canChangeAbsence, true);
+  assert.equal(rows[2].absenceNotice, false); assert.equal(rows[2].present, false); assert.equal(rows[2].canChangeAbsence, false);
+  assert.equal(rows[3].absenceNotice, true); assert.equal(rows[3].present, true);
+  assert.equal(rows[4].present, false); assert.equal(parentScheduleStatus(rows[4]), 'Отсутствовал');
+  const source = await readFile(new URL('../backend/src/parent-portal.mjs', import.meta.url), 'utf8');
+  assert.match(source, /LEFT JOIN lesson_child_absence_notices an ON an\.lesson_id=l\.id AND an\.child_id=\? AND an\.cancelled_at IS NULL/);
+  assert.doesNotMatch(source, /absenceNotice: Boolean\(row\.absence_notice\)/);
+});
+
+test('home payment action appears only for zero or debt balance with a subscription price', () => {
+  const base = { child: { name: 'Петя' }, nextLesson: null, latestPhoto: null };
+  const html = parentHomeHtml({ ...base, enrollments: [
+    { direction: 'Робототехника', balanceLessons: '1.00000000', subscriptionPrice: '4100.00' },
+    { direction: 'Программирование', balanceLessons: '0.00000000', subscriptionPrice: '4500.00' },
+    { direction: 'Индивидуально', balanceLessons: '-1.50000000', subscriptionPrice: '2900.00' },
+    { direction: 'Без цены', balanceLessons: '-1.00000000', subscriptionPrice: null },
+  ] });
+  assert.equal((html.match(/data-action="pay"/g) ?? []).length, 2);
+  assert.match(html, /data-amount="4500\.00" data-direction="Программирование"/);
+  assert.match(html, /data-amount="2900\.00" data-direction="Индивидуально"/);
+  assert.match(html, /Фото с последнего занятия/);
 });
 
 test('latest parent photo uses the first upload from the latest photographed lesson', async () => {
@@ -411,16 +449,29 @@ test('parent UI moves price and child data to their sections and removes email a
     readFile(new URL('../src/ui/parent-portal.css', import.meta.url), 'utf8'),
     readFile(new URL('../src/frontend/parent-access.mjs', import.meta.url), 'utf8'),
   ]);
-  const home = portal.slice(portal.indexOf('function homeHtml'), portal.indexOf('function scheduleEventHtml'));
+  const home = portal.slice(portal.indexOf('function parentHomeHtml'), portal.indexOf('function scheduleEventHtml'));
   const payments = portal.slice(portal.indexOf('function paymentsHtml'), portal.indexOf('function aboutHtml'));
-  assert.doesNotMatch(home, /subscriptionPrice|Стоимость абонемента|Здравствуйте/);
+  assert.doesNotMatch(home, /Стоимость абонемента|Здравствуйте/);
   assert.match(payments, /Текущая стоимость абонемента/);
   assert.match(portal, /О ребёнке/); assert.match(portal, /data-action="child-about"/);
   assert.doesNotMatch(portal, /name="email"/);
-  assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить/);
+  assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить: \$\{escapeHtml\(contact\.phone\)\}/);
   assert.match(css, /\.parent-sidebar/); assert.match(css, /\.parent-menu-button/); assert.match(css, /\.parent-nav\{display:none!important\}/);
   assert.doesNotMatch(access, /prompt\(/);
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
+});
+
+test('parent access create and reset share a selectable one-time credentials dialog', async () => {
+  const [access, css] = await Promise.all([
+    readFile(new URL('../src/frontend/parent-access.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/ui/parent-portal.css', import.meta.url), 'utf8'),
+  ]);
+  assert.equal((access.match(/showCredentials\(credentials, '(?:Родительский доступ создан|Новый пароль)'\)/g) ?? []).length, 2);
+  assert.match(access, /navigator\.clipboard\?\.writeText/); assert.match(access, /document\.execCommand\('copy'\)/);
+  assert.match(access, /Скопировать логин/); assert.match(access, /Скопировать пароль/); assert.match(access, /Скопировать всё/);
+  assert.doesNotMatch(access, /window\.alert\(`(?:Родительский доступ создан|Новый пароль)/);
+  assert.doesNotMatch(access, /localStorage|sessionStorage/);
+  assert.match(css, /user-select:text/);
 });
 
 test('birthday daily generation addresses director and current teacher once per child per day', async () => {
@@ -449,6 +500,7 @@ test('teacher lesson payload exposes only child marker ids and teacher can read 
     readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
   ]);
   assert.match(lessons, /absenceNoticeChildIds: jsonIds/); assert.match(lessons, /birthdayChildIds: jsonIds/);
+  assert.match(lessons, /WHERE an\.lesson_id=l\.id AND an\.cancelled_at IS NULL/);
   assert.match(ui, />Не будет<\/span>/); assert.match(ui, /🎂 День рождения/);
   assert.match(ui, /n\.type==='child_birthday'/);
   assert.equal(permissions.teacher.has('notifications:read'), true);

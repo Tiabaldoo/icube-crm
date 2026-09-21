@@ -25,6 +25,7 @@ const nullable = (value, max = 255) => {
 };
 const isoDate = (value) => value == null ? null : (value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10));
 const isoDateTime = (value) => value == null ? null : (value instanceof Date ? value.toISOString() : `${String(value).slice(0, 10)}T${String(value).slice(11, 19)}Z`);
+const bool = (value) => value === true || value === 1 || value === '1';
 const moneyCents = (value) => {
   const match = String(value ?? '').trim().match(/^(\d+)(?:\.(\d{1,2}))?$/);
   if (!match) throw new Error(`Invalid DECIMAL money value: ${value}`);
@@ -216,19 +217,19 @@ export function createParentPortal(pool, {
     for (const groupId of groupIds) await materializeLessons(from, to, groupId);
     const [rows] = await pool.query(`SELECT l.id,l.group_id,l.scheduled_starts_at,l.starts_at,l.ends_at,l.status,l.planned_teacher_id,
       g.name group_name,t.full_name teacher_name,COALESCE(os.name,s.name) site_name,
-      (an.id IS NOT NULL AND an.cancelled_at IS NULL) absence_notice,a.present attendance_present,
+      (an.id IS NOT NULL) absence_notice,a.present attendance_present,
       (l.status='scheduled' AND l.starts_at>NOW(6)) can_change_absence
       FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN teachers t ON t.id=COALESCE(l.actual_teacher_id,l.planned_teacher_id)
       JOIN sites s ON s.id=l.site_id_snapshot LEFT JOIN sites os ON os.id=l.site_override_id
-      LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=?
+      LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=? AND an.cancelled_at IS NULL
       LEFT JOIN attendances a ON a.lesson_id=l.id AND a.child_id=?
       WHERE l.group_id IN (${groupIds.map(() => '?').join(',')}) AND l.deleted_at IS NULL
         AND l.starts_at>=CONCAT(?,' 00:00:00') AND l.starts_at<DATE_ADD(?,INTERVAL 1 DAY)
       ORDER BY l.starts_at,l.id`, [child.id, child.id, ...groupIds, from, to]);
     return rows.map((row) => ({ id: String(row.id), groupId: String(row.group_id), group: row.group_name,
       startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), site: row.site_name, teacher: row.teacher_name,
-      status: row.status, moved: String(row.starts_at) !== String(row.scheduled_starts_at), absenceNotice: Boolean(row.absence_notice),
-      present: row.attendance_present == null ? false : Boolean(row.attendance_present), canChangeAbsence: Boolean(row.can_change_absence) }));
+      status: row.status, moved: String(row.starts_at) !== String(row.scheduled_starts_at), absenceNotice: bool(row.absence_notice),
+      present: row.attendance_present == null ? false : bool(row.attendance_present), canChangeAbsence: bool(row.can_change_absence) }));
   }
 
   async function about(childId, context = {}) {

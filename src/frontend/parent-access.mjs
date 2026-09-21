@@ -7,6 +7,39 @@ const loading = new Set();
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const message = (error) => error instanceof ApiError ? error.message : 'Операция не выполнена';
 
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(value); return; } catch {}
+  }
+  const input = document.createElement('textarea');
+  input.value = value; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0';
+  document.body.append(input); input.select(); document.execCommand('copy'); input.remove();
+}
+
+function showCredentials(credentials, title) {
+  document.querySelector('#parent-credentials-dialog')?.remove();
+  const backdrop = document.createElement('div');
+  backdrop.id = 'parent-credentials-dialog'; backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `<div class="modal parent-credentials-modal" role="dialog" aria-modal="true" aria-labelledby="parent-credentials-title">
+    <h3 id="parent-credentials-title"></h3><p class="muted">Сохраните данные сейчас — пароль больше не будет показан.</p>
+    <div class="parent-credential"><span>Логин</span><code data-value="login"></code><button class="btn" data-copy="login">Скопировать логин</button></div>
+    <div class="parent-credential"><span>Пароль</span><code data-value="password"></code><button class="btn" data-copy="password">Скопировать пароль</button></div>
+    <div class="modal-actions"><button class="btn" data-copy="all">Скопировать всё</button><button class="btn primary" data-close>Закрыть</button></div>
+  </div>`;
+  backdrop.querySelector('#parent-credentials-title').textContent = title;
+  backdrop.querySelector('[data-value="login"]').textContent = credentials.login;
+  backdrop.querySelector('[data-value="password"]').textContent = credentials.password;
+  backdrop.addEventListener('click', async (event) => {
+    const button = event.target.closest('button');
+    if (button?.hasAttribute('data-close')) { backdrop.remove(); return; }
+    const kind = button?.dataset.copy; if (!kind) return;
+    const value = kind === 'all' ? `Логин: ${credentials.login}\nПароль: ${credentials.password}` : credentials[kind];
+    await copyText(value); const label = button.textContent; button.textContent = 'Скопировано';
+    window.setTimeout(() => { if (button.isConnected) button.textContent = label; }, 1200);
+  });
+  document.body.append(backdrop);
+}
+
 async function load(childId) {
   if (!childId || loading.has(String(childId)) || !['director', 'partner'].includes(legacy.state.role)) return;
   loading.add(String(childId));
@@ -36,7 +69,7 @@ if (typeof originalChild === 'function') {
 window.icubeCreateParentAccess = async (childId) => {
   try {
     const credentials = await api.request(`/children/${childId}/parent-access`, { method: 'POST', body: {} });
-    window.alert(`Родительский доступ создан. Сохраните данные сейчас — пароль больше не будет показан.\n\nЛогин: ${credentials.login}\nПароль: ${credentials.password}`);
+    showCredentials(credentials, 'Родительский доступ создан');
     cache.delete(String(childId)); await load(childId);
   } catch (error) { window.alert(message(error)); }
 };
@@ -63,7 +96,7 @@ window.icubeUnlinkParent = async (childId, guardianId) => {
 };
 window.icubeResetParentPassword = async (childId, guardianId) => {
   if (!window.confirm('Сбросить пароль? Все текущие сессии родителя будут завершены.')) return;
-  try { const credentials = await api.request(`/parent-access/${guardianId}/reset-password`, { method: 'POST', body: { childId } }); window.alert(`Новый пароль показывается один раз.\n\nЛогин: ${credentials.login}\nПароль: ${credentials.password}`); }
+  try { const credentials = await api.request(`/parent-access/${guardianId}/reset-password`, { method: 'POST', body: { childId } }); showCredentials(credentials, 'Новый пароль'); }
   catch (error) { window.alert(message(error)); }
 };
 window.icubeSetParentStatus = async (childId, guardianId, enabled) => {
