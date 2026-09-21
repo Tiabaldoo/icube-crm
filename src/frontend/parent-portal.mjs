@@ -17,7 +17,7 @@ const selectedChild = () => state.profile?.children?.find((child) => String(chil
 export function parentScheduleStatus(lesson) {
   if (lesson.status === 'cancelled') return 'Отменено';
   if (lesson.status === 'completed') return lesson.present ? 'Проведено' : 'Отсутствовал';
-  if (lesson.status === 'scheduled' && lesson.absenceNotice) return 'Не будет';
+  if (lesson.status === 'scheduled' && lesson.absenceNotice) return 'Ребёнка не будет';
   if (lesson.moved) return 'Перенесено';
   return '';
 }
@@ -97,7 +97,7 @@ export function parentHomeHtml(data) {
   const child = data.child;
   const next = data.nextLesson;
   const absenceAction = parentAbsenceAction(next);
-  const nextAbsence = absenceAction ? `<div class="parent-next-actions">${next.absenceNotice ? '<span class="badge amber parent-next-absence-status">Не будет</span>' : ''}<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${next.id}" data-origin="home">${absenceAction.label}</button></div>` : '';
+  const nextAbsence = absenceAction ? `<div class="parent-next-actions">${next.absenceNotice ? '<span class="badge amber parent-next-absence-status">Ребёнка не будет</span>' : ''}<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${next.id}" data-origin="home">${absenceAction.label}</button></div>` : '';
   const enrollmentCards = data.enrollments.map((item) => {
     const balance = parentBalancePresentation(item.balanceLessons);
     const pay = decimalUnits(item.balanceLessons) <= 0n && item.subscriptionPrice != null
@@ -114,12 +114,12 @@ export function parentAbsenceAction(lesson) {
   if (!lesson?.canChangeAbsence) return null;
   return lesson.absenceNotice
     ? { action: 'absence-cancel', label: 'Отменить отметку', className: 'parent-secondary' }
-    : { action: 'absence-set', label: 'Не будет', className: 'parent-primary' };
+    : { action: 'absence-set', label: 'Ребёнка не будет', className: 'parent-primary' };
 }
 
 function scheduleEventHtml(lesson) {
   const status = parentScheduleStatus(lesson);
-  const statusClass = ['Отменено', 'Отсутствовал'].includes(status) ? 'red' : ['Перенесено', 'Не будет'].includes(status) ? 'amber' : 'green';
+  const statusClass = ['Отменено', 'Отсутствовал'].includes(status) ? 'red' : ['Перенесено', 'Ребёнка не будет'].includes(status) ? 'amber' : 'green';
   return `<button class="event parent-calendar-event${status === 'Проведено' ? ' done' : ''}" data-action="lesson-info" data-lesson="${lesson.id}">
     <span class="calendar-event-site">${escapeHtml(lesson.site ?? 'Площадка не указана')}</span>
     <span class="calendar-event-meta">${time(lesson.startsAt)} · ${escapeHtml(lesson.group)}</span>

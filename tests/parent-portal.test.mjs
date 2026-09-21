@@ -401,12 +401,12 @@ test('absence notice can be set and cancelled only for own future lesson without
 
 test('parent lesson status uses fact after completion and notice only before completion', () => {
   assert.equal(parentScheduleStatus({ status: 'scheduled', absenceNotice: false }), '');
-  assert.equal(parentScheduleStatus({ status: 'scheduled', absenceNotice: true }), 'Не будет');
+  assert.equal(parentScheduleStatus({ status: 'scheduled', absenceNotice: true }), 'Ребёнка не будет');
   assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: true, present: true }), 'Проведено');
   assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: true, present: false }), 'Отсутствовал');
   assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: false, present: false }), 'Отсутствовал');
   assert.equal(parentScheduleStatus({ status: 'cancelled', absenceNotice: true, present: true }), 'Отменено');
-  assert.deepEqual(parentAbsenceAction({ canChangeAbsence: true, absenceNotice: false }), { action: 'absence-set', label: 'Не будет', className: 'parent-primary' });
+  assert.deepEqual(parentAbsenceAction({ canChangeAbsence: true, absenceNotice: false }), { action: 'absence-set', label: 'Ребёнка не будет', className: 'parent-primary' });
   assert.deepEqual(parentAbsenceAction({ canChangeAbsence: true, absenceNotice: true }), { action: 'absence-cancel', label: 'Отменить отметку', className: 'parent-secondary' });
   assert.equal(parentAbsenceAction({ canChangeAbsence: false, absenceNotice: true }), null);
 });
@@ -434,11 +434,11 @@ test('parent home next lesson renders absence quick actions from existing parent
   const base = { child: { name: 'Петя' }, enrollments: [], latestPhoto: null };
   const open = parentHomeHtml({ ...base, nextLesson: { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', site: 'Площадка', canChangeAbsence: true, absenceNotice: false } });
   assert.match(open, /data-action="home-next-lesson" data-lesson="70"/);
-  assert.match(open, /data-action="absence-set" data-lesson="70" data-origin="home">Не будет<\/button>/);
+  assert.match(open, /data-action="absence-set" data-lesson="70" data-origin="home">Ребёнка не будет<\/button>/);
   assert.doesNotMatch(open, /Отменить отметку/);
 
   const marked = parentHomeHtml({ ...base, nextLesson: { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', site: 'Площадка', canChangeAbsence: true, absenceNotice: true } });
-  assert.match(marked, /parent-next-absence-status">Не будет<\/span>/);
+  assert.match(marked, /parent-next-absence-status">Ребёнка не будет<\/span>/);
   assert.match(marked, /data-action="absence-cancel" data-lesson="70" data-origin="home">Отменить отметку<\/button>/);
 
   const closed = parentHomeHtml({ ...base, nextLesson: { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', site: 'Площадка', canChangeAbsence: false, absenceNotice: true } });
