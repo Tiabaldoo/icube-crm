@@ -103,6 +103,16 @@ export function createParentPortal(pool, {
     return guardianId;
   }
 
+  async function assertGuardianAccountMutable(context, guardianId, childId = null, connection = pool) {
+    await assertManagedGuardian(context, guardianId, childId, connection);
+    const projectId = partnerProjectId(context);
+    if (!projectId) return guardianId;
+    const [foreign] = await connection.query(`SELECT 1 FROM child_guardians cg JOIN child_enrollments e ON e.child_id=cg.child_id
+      WHERE cg.guardian_id=:guardianId AND e.superseded_at IS NULL AND e.project_id<>:projectId LIMIT 1`, { guardianId, projectId });
+    if (foreign.length) throw new ApiProblem(403, 'FORBIDDEN', 'Аккаунт родителя связан с детьми другого проекта. Изменить общий доступ может только директор.');
+    return guardianId;
+  }
+
   async function documents(context = {}) {
     const guardian = await guardianForUser(parentOnly(context));
     const [rows] = await pool.query(`SELECT d.id,d.document_type,d.document_version,d.title,d.body,d.document_url,d.is_required,
@@ -418,7 +428,7 @@ export function createParentPortal(pool, {
   }
 
   async function linkAccess(childId, guardianId, context = {}) {
-    await assertManagedChild(context, childId); childId = identifier(childId, 'childId'); guardianId = identifier(guardianId, 'guardianId');
+    await assertManagedChild(context, childId); await assertManagedGuardian(context, guardianId); childId = identifier(childId, 'childId'); guardianId = identifier(guardianId, 'guardianId');
     const [result] = await pool.query(`INSERT IGNORE INTO child_guardians (child_id,guardian_id,is_primary,can_receive_notifications)
       SELECT :childId,:guardianId,NOT EXISTS(SELECT 1 FROM child_guardians WHERE child_id=:childId),TRUE
       FROM guardians g JOIN users u ON u.id=g.user_id
@@ -445,22 +455,25 @@ export function createParentPortal(pool, {
   }
 
   async function resetPassword(guardianId, context = {}, childId = null) {
-    await assertManagedGuardian(context, guardianId, childId); guardianId = identifier(guardianId, 'guardianId'); const password = makePassword(); const passwordHash = await createPasswordHash(password);
-    const [rows] = await pool.query(`SELECT g.user_id,u.email FROM guardians g JOIN users u ON u.id=g.user_id WHERE g.id=:guardianId`, { guardianId });
-    if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
+    guardianId = identifier(guardianId, 'guardianId'); const password = makePassword(); const passwordHash = await createPasswordHash(password); let account;
     await inTransaction(pool, async (connection) => {
-      await connection.query("UPDATE users SET password_hash=:passwordHash,status='active',token_version=token_version+1 WHERE id=:userId", { passwordHash, userId: rows[0].user_id });
-      await connection.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW(6)) WHERE user_id=:userId', { userId: rows[0].user_id });
+      await assertGuardianAccountMutable(context, guardianId, childId, connection);
+      const [rows] = await connection.query(`SELECT g.user_id,u.email FROM guardians g JOIN users u ON u.id=g.user_id WHERE g.id=:guardianId`, { guardianId });
+      if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
+      account = rows[0];
+      await connection.query("UPDATE users SET password_hash=:passwordHash,status='active',token_version=token_version+1 WHERE id=:userId", { passwordHash, userId: account.user_id });
+      await connection.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW(6)) WHERE user_id=:userId', { userId: account.user_id });
     });
-    return { guardianId, login: rows[0].email, password };
+    return { guardianId, login: account.email, password };
   }
 
   async function setAccessStatus(guardianId, enabled, context = {}, childId = null) {
-    await assertManagedGuardian(context, guardianId, childId); guardianId = identifier(guardianId, 'guardianId');
+    guardianId = identifier(guardianId, 'guardianId');
     if (typeof enabled !== 'boolean') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Поле enabled должно быть boolean');
-    const [rows] = await pool.query('SELECT user_id FROM guardians WHERE id=:guardianId AND user_id IS NOT NULL', { guardianId });
-    if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
     await inTransaction(pool, async (connection) => {
+      await assertGuardianAccountMutable(context, guardianId, childId, connection);
+      const [rows] = await connection.query('SELECT user_id FROM guardians WHERE id=:guardianId AND user_id IS NOT NULL', { guardianId });
+      if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
       await connection.query("UPDATE users SET status=:status,token_version=token_version+1 WHERE id=:userId", { status: enabled ? 'active' : 'blocked', userId: rows[0].user_id });
       await connection.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW(6)) WHERE user_id=:userId', { userId: rows[0].user_id });
     });

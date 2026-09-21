@@ -140,6 +140,11 @@ function adminFixture() {
         && state.children.some((child) => child.id === link.child_id && String(child.project_id) === String(params.projectId)));
       return [[allowed ? { guardian_id: params.guardianId } : undefined].filter(Boolean)];
     }
+    if (sql.startsWith('SELECT 1 FROM child_guardians cg JOIN child_enrollments e')) {
+      const foreign = state.links.some((link) => String(link.guardian_id) === String(params.guardianId)
+        && state.children.some((child) => child.id === link.child_id && String(child.project_id) !== String(params.projectId)));
+      return [[foreign ? { 1: 1 } : undefined].filter(Boolean)];
+    }
     if (sql.startsWith('SELECT id FROM users WHERE LOWER(email)')) return [state.users.filter((user) => user.email.toLowerCase() === params.login.toLowerCase()).map(({ id }) => ({ id }))];
     if (sql.startsWith('INSERT INTO users')) { const user = { id: state.nextUserId++, email: params.login, password_hash: params.passwordHash, display_name: params.displayName, status: 'active', token_version: 1 }; state.users.push(user); return [{ insertId: user.id }]; }
     if (sql === "SELECT id FROM roles WHERE code='parent' LIMIT 1") return [[{ id: 4 }]];
@@ -449,20 +454,42 @@ test('teacher lesson payload exposes only child marker ids and teacher can read 
   assert.equal(permissions.teacher.has('notifications:read'), true);
 });
 
-test('partner parent access is restricted to children and relations in its project', async () => {
+test('partner links only a guardian already available in its own project', async () => {
   const fixture = adminFixture(); const partner = { userId: '9', roles: ['partner'], projectIds: ['2'] };
-  const created = await fixture.service.createAccess(10, {}, partner);
-  assert.equal(created.guardianId, '5');
-  await assert.rejects(fixture.service.createAccess(11, {}, partner), { status: 403, code: 'FORBIDDEN' });
+  await fixture.service.createAccess(10, {}, partner);
+  fixture.state.children.push({ id: 12, full_name: 'Второй свой ребёнок', project_id: 2 });
+  assert.equal((await fixture.service.linkAccess(12, 5, partner))[0].id, '5');
+
   fixture.state.users.push({ id: 51, email: 'foreign@test', password_hash: 'x', display_name: 'Чужой', status: 'active', token_version: 1 });
   fixture.state.guardians.push({ id: 6, user_id: 51, full_name: 'Чужой родитель' });
   fixture.state.links.push({ child_id: 11, guardian_id: 6, is_primary: 1 });
-  await assert.rejects(fixture.service.linkAccess(11, 5, partner), { status: 403, code: 'FORBIDDEN' });
-  await assert.rejects(fixture.service.resetPassword(6, partner, 11), { status: 403, code: 'FORBIDDEN' });
-  await assert.rejects(fixture.service.setAccessStatus(6, false, partner, 11), { status: 403, code: 'FORBIDDEN' });
-  await assert.rejects(fixture.service.unlinkAccess(11, 6, partner), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.linkAccess(10, 6, partner), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.linkAccess(10, '999', partner), { status: 403, code: 'FORBIDDEN' });
+});
+
+test('partner resets and toggles a parent account used only inside its project', async () => {
+  const fixture = adminFixture(); const partner = { userId: '9', roles: ['partner'], projectIds: ['2'] };
+  await fixture.service.createAccess(10, {}, partner);
   assert.equal((await fixture.service.resetPassword(5, partner, 10)).guardianId, '5');
   assert.equal((await fixture.service.setAccessStatus(5, false, partner, 10)).status, 'blocked');
+  assert.equal((await fixture.service.setAccessStatus(5, true, partner, 10)).status, 'active');
+});
+
+test('partner cannot mutate a shared parent account but can unlink its own child; director remains unrestricted', async () => {
+  const fixture = adminFixture(); const partner = { userId: '9', roles: ['partner'], projectIds: ['2'] }; const director = { userId: '1', roles: ['director'] };
+  await fixture.service.createAccess(10, {}, partner);
+  fixture.state.links.push({ child_id: 11, guardian_id: 5, is_primary: 1 });
+  await assert.rejects(fixture.service.resetPassword(5, partner, 10), {
+    status: 403, code: 'FORBIDDEN', message: 'Аккаунт родителя связан с детьми другого проекта. Изменить общий доступ может только директор.',
+  });
+  await assert.rejects(fixture.service.setAccessStatus(5, false, partner, 10), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.setAccessStatus(5, true, partner, 10), { status: 403, code: 'FORBIDDEN' });
+  const statusBefore = fixture.state.users[0].status;
+  await fixture.service.unlinkAccess(10, 5, partner);
+  assert.equal(fixture.state.users[0].status, statusBefore);
+  assert.equal((await fixture.service.resetPassword(5, director)).guardianId, '5');
+  assert.equal((await fixture.service.setAccessStatus(5, false, director)).status, 'blocked');
+  assert.equal((await fixture.service.setAccessStatus(5, true, director)).status, 'active');
 });
 
 test('migration 017 keeps absence notices separate from attendance and is non-destructive', async () => {
