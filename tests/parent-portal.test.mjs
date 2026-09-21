@@ -495,12 +495,14 @@ test('parent photo viewer centers close control and downloads the current photo 
     readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/ui/parent-portal.css', import.meta.url), 'utf8'),
   ]);
-  assert.match(portal, /data-action="viewer-close" aria-label="Закрыть">×<\/button><button data-action="viewer-prev"/);
+  assert.match(portal, /data-action="viewer-close" aria-label="Закрыть"><\/button><button data-action="viewer-prev"/);
+  assert.doesNotMatch(portal, /data-action="viewer-close" aria-label="Закрыть">×<\/button>/);
   assert.match(portal, /<button data-action="viewer-next" aria-label="Следующее">→<\/button>/);
   assert.match(portal, /class="parent-viewer-download" href="\$\{escapeHtml\(photo\.fileUrl\)\}" download="icube-photo-\$\{escapeHtml\(photo\.id\)\}\.jpg" data-action="viewer-download">Скачать<\/a>/);
   assert.match(portal, /action === 'viewer-download'\) event\.stopPropagation\(\)/);
-  assert.match(css, /\.parent-viewer>button:first-child\{[^}]*display:grid;place-items:center;padding:0/);
-  assert.match(css, /\.parent-viewer>button:first-child::before\{[^}]*width:30px;height:30px;text-align:center;font:400 30px\/30px Arial,sans-serif/);
+  assert.match(css, /\.parent-viewer>button:first-child::before,\.parent-viewer>button:first-child::after\{[^}]*position:absolute;[^}]*left:50%;top:50%;[^}]*transform-origin:center/);
+  assert.match(css, /\.parent-viewer>button:first-child::before\{transform:translate\(-50%,-50%\) rotate\(45deg\)\}/);
+  assert.match(css, /\.parent-viewer>button:first-child::after\{transform:translate\(-50%,-50%\) rotate\(-45deg\)\}/);
   assert.match(css, /\.parent-viewer-download\{/);
 });
 
@@ -525,6 +527,10 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить: \$\{escapeHtml\(contact\.phone\)\}/);
   assert.match(css, /\.parent-sidebar/); assert.match(css, /\.parent-menu-button/); assert.match(css, /\.parent-nav\{display:none!important\}/);
   assert.match(css, /\.parent-next-open\{[^}]*cursor:pointer/); assert.match(css, /\.parent-next-actions/);
+  const contactButtonCss = css.match(/\.parent-contact-button\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(contactButtonCss, /background:#fff/); assert.match(contactButtonCss, /border:1px solid #175cd3/);
+  assert.match(contactButtonCss, /color:#175cd3!important/); assert.match(contactButtonCss, /-webkit-text-fill-color:#175cd3/);
+  assert.match(css, /\.parent-contact-button\.primary\{background:#175cd3;color:#fff!important;-webkit-text-fill-color:#fff\}/);
   assert.doesNotMatch(access, /prompt\(/);
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
 });

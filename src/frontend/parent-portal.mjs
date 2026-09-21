@@ -203,7 +203,7 @@ function notificationsHtml(rows) {
 function viewerHtml() {
   if (!state.viewer?.photos?.length) return '';
   const photo = state.viewer.photos[state.viewer.index];
-  return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть">×</button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><a class="parent-viewer-download" href="${escapeHtml(photo.fileUrl)}" download="icube-photo-${escapeHtml(photo.id)}.jpg" data-action="viewer-download">Скачать</a><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
+  return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть"></button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><a class="parent-viewer-download" href="${escapeHtml(photo.fileUrl)}" download="icube-photo-${escapeHtml(photo.id)}.jpg" data-action="viewer-download">Скачать</a><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
 }
 
 function paymentModalHtml() {
