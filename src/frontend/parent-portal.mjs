@@ -96,6 +96,8 @@ function shell(content) {
 export function parentHomeHtml(data) {
   const child = data.child;
   const next = data.nextLesson;
+  const absenceAction = parentAbsenceAction(next);
+  const nextAbsence = absenceAction ? `<div class="parent-next-actions">${next.absenceNotice ? '<span class="badge amber parent-next-absence-status">Не будет</span>' : ''}<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${next.id}" data-origin="home">${absenceAction.label}</button></div>` : '';
   const enrollmentCards = data.enrollments.map((item) => {
     const balance = parentBalancePresentation(item.balanceLessons);
     const pay = decimalUnits(item.balanceLessons) <= 0n && item.subscriptionPrice != null
@@ -103,7 +105,7 @@ export function parentHomeHtml(data) {
     return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong>${pay}</article>`;
   }).join('');
   return `<section class="parent-title"><h1>${escapeHtml(child.name)}</h1></section>
-    <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<div class="parent-next"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></div>` : empty('Нет будущих занятий.')}</article>
+    <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<button type="button" class="parent-next parent-next-open" data-action="home-next-lesson" data-lesson="${next.id}" data-starts="${escapeHtml(next.startsAt)}"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></button>${nextAbsence}` : empty('Нет будущих занятий.')}</article>
     <section class="parent-balances">${enrollmentCards || empty('Нет активных направлений.')}</section>
     <article class="parent-card"><h2>Фото с последнего занятия</h2>${data.latestPhoto ? `<button class="parent-photo-preview" data-action="tab" data-tab="photos"><img src="${escapeHtml(data.latestPhoto.fileUrl)}" alt="Фото с последнего занятия ${escapeHtml(child.name)}"></button>` : empty('Нет доступных фотографий.')}</article>`;
 }
@@ -321,14 +323,22 @@ app?.addEventListener('click', async (event) => {
     state.scheduleCursor = localIsoDate(cursor); state.data = null; await loadTab();
   }
   else if (action === 'schedule-today') { state.scheduleCursor = localIsoDate(); state.data = null; await loadTab(); }
+  else if (action === 'home-next-lesson') {
+    const lessonId = target.dataset.lesson;
+    state.tab = 'schedule'; state.scheduleCursor = String(target.dataset.starts ?? '').slice(0, 10) || state.scheduleCursor;
+    state.data = null; state.lessonInfo = null; state.menuOpen = false;
+    await loadTab(); state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === lessonId) ?? null; render();
+  }
   else if (action === 'lesson-info') { state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === target.dataset.lesson) ?? null; render(); }
   else if (action === 'lesson-info-close') { state.lessonInfo = null; render(); }
   else if (action === 'menu') { state.menuOpen = !state.menuOpen; render(); }
   else if (action === 'menu-close') { state.menuOpen = false; render(); }
   else if (action === 'absence-set' || action === 'absence-cancel') {
-    const lessonId = target.dataset.lesson; const method = action === 'absence-set' ? 'PUT' : 'DELETE';
+    event.stopPropagation();
+    const lessonId = target.dataset.lesson; const method = action === 'absence-set' ? 'PUT' : 'DELETE'; const sourceTab = state.tab;
     await api.request(`/parent/children/${state.childId}/lessons/${lessonId}/absence-notice`, { method });
-    await loadTab(); state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === lessonId) ?? null; render();
+    await loadTab();
+    if (sourceTab === 'schedule') { state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === lessonId) ?? null; render(); }
   }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) window.icubeAuthLogout?.();

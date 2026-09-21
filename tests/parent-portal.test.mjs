@@ -48,7 +48,7 @@ function portalFixture() {
     if (sql.startsWith('INSERT INTO lesson_child_absence_notices')) { state.notices.add(`${params.lessonId}:${params.childId}`); return [{ affectedRows: 1 }]; }
     if (sql.includes('SELECT id FROM lessons WHERE id=:lessonId') && sql.includes('FOR UPDATE')) return [[String(params.lessonId) === '70' ? { id: 70 } : undefined].filter(Boolean)];
     if (sql.startsWith('UPDATE lesson_child_absence_notices SET cancelled_at=')) { const key = `${params.lessonId}:${params.childId}`; const found = state.notices.delete(key); return [{ affectedRows: found ? 1 : 0 }]; }
-    if (sql.includes('FROM lessons l JOIN sites') && sql.includes("l.status='scheduled'")) return [[{ id: 70, starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', site_name: 'Площадка' }]];
+    if (sql.includes('FROM lessons l JOIN sites') && sql.includes("l.status='scheduled'")) return [[{ id: 70, starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', site_name: 'Площадка', absence_notice: state.notices.has('70:10') ? '1' : '0', can_change_absence: '1' }]];
     if (sql.includes('SELECT l.id,l.group_id,l.scheduled_starts_at')) return [[
       { id: 70, group_id: 100, scheduled_starts_at: '2026-09-22 17:00:00', starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: state.notices.has('70:10') ? '1' : '0', attendance_present: null, can_change_absence: '1' },
       { id: 71, group_id: 100, scheduled_starts_at: '2026-09-23 17:00:00', starts_at: '2026-09-24 18:00:00', ends_at: '2026-09-24 19:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '0', attendance_present: null, can_change_absence: '1' },
@@ -423,6 +423,47 @@ test('parent schedule converts SQL string booleans strictly and joins only activ
   assert.doesNotMatch(source, /absenceNotice: Boolean\(row\.absence_notice\)/);
 });
 
+test('mixed-project child badge keeps iCube blue and uses existing purple badge for Zebra', async () => {
+  const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+  const overview = source.slice(source.lastIndexOf('function childOverviewV118'), source.indexOf('const payments=', source.lastIndexOf('function childOverviewV118')));
+  assert.match(overview, /e\.editable===false\?'gray':e\.project==='Зебра'\?'purple':'blue'/);
+  assert.match(source, /badge \$\{p==='Зебра'\?'purple':'blue'\}/);
+});
+
+test('parent home next lesson renders absence quick actions from existing parentAbsenceAction rules', () => {
+  const base = { child: { name: 'Петя' }, enrollments: [], latestPhoto: null };
+  const open = parentHomeHtml({ ...base, nextLesson: { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', site: 'Площадка', canChangeAbsence: true, absenceNotice: false } });
+  assert.match(open, /data-action="home-next-lesson" data-lesson="70"/);
+  assert.match(open, /data-action="absence-set" data-lesson="70" data-origin="home">Не будет<\/button>/);
+  assert.doesNotMatch(open, /Отменить отметку/);
+
+  const marked = parentHomeHtml({ ...base, nextLesson: { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', site: 'Площадка', canChangeAbsence: true, absenceNotice: true } });
+  assert.match(marked, /parent-next-absence-status">Не будет<\/span>/);
+  assert.match(marked, /data-action="absence-cancel" data-lesson="70" data-origin="home">Отменить отметку<\/button>/);
+
+  const closed = parentHomeHtml({ ...base, nextLesson: { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', site: 'Площадка', canChangeAbsence: false, absenceNotice: true } });
+  assert.doesNotMatch(closed, /absence-set|absence-cancel|parent-next-absence-status/);
+});
+
+test('parent home DTO exposes existing absence state for next lesson', async () => {
+  const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  let home = await fixture.service.home(10, parent);
+  assert.equal(home.nextLesson.id, '70');
+  assert.equal(home.nextLesson.absenceNotice, false);
+  assert.equal(home.nextLesson.canChangeAbsence, true);
+  await fixture.service.setAbsenceNotice(10, 70, parent);
+  home = await fixture.service.home(10, parent);
+  assert.equal(home.nextLesson.absenceNotice, true);
+});
+
+test('parent next-lesson click loads schedule then opens exact lesson and quick actions reuse existing absence endpoint', async () => {
+  const source = await readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8');
+  assert.match(source, /action === 'home-next-lesson'[\s\S]*state\.tab = 'schedule'[\s\S]*state\.scheduleCursor = String\(target\.dataset\.starts[\s\S]*await loadTab\(\); state\.lessonInfo = \(state\.data \?\? \[\]\)\.find\(\(lesson\) => String\(lesson\.id\) === lessonId\)/);
+  assert.match(source, /action === 'absence-set' \|\| action === 'absence-cancel'[\s\S]*event\.stopPropagation\(\)[\s\S]*method = action === 'absence-set' \? 'PUT' : 'DELETE'[\s\S]*\/parent\/children\/\$\{state\.childId\}\/lessons\/\$\{lessonId\}\/absence-notice/);
+  assert.equal((source.match(/absence-notice/g) ?? []).length >= 1, true);
+  assert.doesNotMatch(source, /home-absence|quick-absence|absence-notice\/home/);
+});
+
 test('home payment action appears only for zero or debt balance with a subscription price', () => {
   const base = { child: { name: 'Петя' }, nextLesson: null, latestPhoto: null };
   const html = parentHomeHtml({ ...base, enrollments: [
@@ -457,6 +498,7 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.doesNotMatch(portal, /name="email"/);
   assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить: \$\{escapeHtml\(contact\.phone\)\}/);
   assert.match(css, /\.parent-sidebar/); assert.match(css, /\.parent-menu-button/); assert.match(css, /\.parent-nav\{display:none!important\}/);
+  assert.match(css, /\.parent-next-open\{[^}]*cursor:pointer/); assert.match(css, /\.parent-next-actions/);
   assert.doesNotMatch(access, /prompt\(/);
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
 });

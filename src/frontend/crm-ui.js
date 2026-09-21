@@ -3180,7 +3180,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const dayShort={1:'Пн',2:'Вт',3:'Ср',4:'Чт',5:'Пт',6:'Сб',7:'Вс','Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
     const directions=(c.enrollments||[]).map(function(e){
       const g=byId(state.groups,e.groupId);
-      const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':'blue')+'" style="margin-left:7px">'+e.project+'</span>':'';
+      const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':e.project==='Зебра'?'purple':'blue')+'" style="margin-left:7px">'+e.project+'</span>':'';
       const schedule=e.groupId==null?'Без группы':(e.siteName||byId(state.sites,g?.siteId)?.name||'Площадка не указана')+' · '+(dayShort[e.weekday]||dayShort[g?.day]||g?.day||'—')+' '+(e.startTime||g?.startTime||String(g?.time||'').split('–')[0]||'—');
       const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
       const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+e.direction+'\')">Изменить направление / цену</button></div>';

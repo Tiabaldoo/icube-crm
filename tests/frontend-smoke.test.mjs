@@ -145,7 +145,7 @@ test('единый frontend загружается и рендерит все т
   ] }];
   let childHtml = context.child();
   assert.match(childHtml, /badge blue[^>]*>iCubeRobots</);
-  assert.match(childHtml, /badge blue[^>]*>Зебра</);
+  assert.match(childHtml, /badge purple[^>]*>Зебра</);
   assert.match(childHtml, /Школа №1 · Ср 15:30/);
   assert.match(childHtml, /Зебра · Пт 18:00/);
   assert.doesNotMatch(childHtml, /Техническое имя [12]/, 'карточка не показывает техническое имя группы');

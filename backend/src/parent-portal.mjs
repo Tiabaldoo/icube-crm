@@ -196,11 +196,14 @@ export function createParentPortal(pool, {
     if (groupIds.length) {
       const from = localDate(); const to = addDays(from, 120);
       for (const groupId of groupIds) await materializeLessons(from, to, groupId);
-      const [rows] = await pool.query(`SELECT l.id,l.starts_at,l.ends_at,l.status,COALESCE(os.name,s.name) site_name
+      const [rows] = await pool.query(`SELECT l.id,l.starts_at,l.ends_at,l.status,COALESCE(os.name,s.name) site_name,
+        (an.id IS NOT NULL) absence_notice,(l.status='scheduled' AND l.starts_at>NOW(6)) can_change_absence
         FROM lessons l JOIN sites s ON s.id=l.site_id_snapshot LEFT JOIN sites os ON os.id=l.site_override_id
+        LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=? AND an.cancelled_at IS NULL
         WHERE l.group_id IN (${groupIds.map(() => '?').join(',')}) AND l.deleted_at IS NULL AND l.status='scheduled' AND l.starts_at>=NOW(6)
-        ORDER BY l.starts_at,l.id LIMIT 1`, groupIds);
-      if (rows[0]) nextLesson = { id: String(rows[0].id), startsAt: isoDateTime(rows[0].starts_at), endsAt: isoDateTime(rows[0].ends_at), site: rows[0].site_name };
+        ORDER BY l.starts_at,l.id LIMIT 1`, [child.id, ...groupIds]);
+      if (rows[0]) nextLesson = { id: String(rows[0].id), startsAt: isoDateTime(rows[0].starts_at), endsAt: isoDateTime(rows[0].ends_at), site: rows[0].site_name,
+        absenceNotice: bool(rows[0].absence_notice), canChangeAbsence: bool(rows[0].can_change_absence) };
     }
     return { child: { id: String(child.id), name: child.full_name, birthDate: isoDate(child.birth_date) }, enrollments,
       nextLesson, latestPhoto: await latestPhoto(child.id) };
