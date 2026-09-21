@@ -147,7 +147,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     const visibleIds = childRows.map((row) => String(row.id));
     const enrollmentRows = await rows(`SELECT e.id, e.child_id, e.direction_id, e.project_id, p.name project_name,
       d.name direction_name, e.status, e.individual_price, e.balance_lessons,
-      e.started_on, e.ended_on, gm.group_id,
+      e.started_on, e.ended_on, gm.group_id,sg.name group_name,sg.weekday,sg.start_time,s.name site_name,
       COALESCE(e.individual_price,
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
@@ -157,14 +157,16 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       ) current_price
       FROM child_enrollments e JOIN directions d ON d.id=e.direction_id JOIN projects p ON p.id=e.project_id
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.ended_on IS NULL ORDER BY gm2.started_on DESC, gm2.id DESC LIMIT 1)
+      LEFT JOIN study_groups sg ON sg.id=gm.group_id LEFT JOIN sites s ON s.id=sg.site_id
       WHERE e.child_id IN (${visibleIds.join(',')}) AND e.superseded_at IS NULL
-        AND (:projectId IS NULL OR e.project_id=:projectId) ORDER BY e.child_id, e.id`, { projectId });
+      ORDER BY e.child_id, e.id`, { projectId });
     return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
       status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
       enrollments: enrollmentRows.filter((item) => String(item.child_id) === String(row.id)).map((item) => ({ id: String(item.id), directionId: String(item.direction_id),
-        projectId: String(item.project_id), projectName: item.project_name,
-        directionName: item.direction_name, groupId: item.group_id == null ? null : String(item.group_id), status: item.status,
-        ...(actorTeacherId == null ? { individualPrice: item.individual_price == null ? null : String(item.individual_price),
+        projectId: String(item.project_id), projectName: item.project_name, editable: projectId == null || String(item.project_id) === projectId,
+        directionName: item.direction_name, groupId: item.group_id == null ? null : String(item.group_id), groupName: item.group_name,
+        siteName: item.site_name, weekday: item.weekday == null ? null : Number(item.weekday), startTime: item.start_time == null ? null : String(item.start_time).slice(0, 5), status: item.status,
+        ...(actorTeacherId == null && (projectId == null || String(item.project_id) === projectId) ? { individualPrice: item.individual_price == null ? null : String(item.individual_price),
           currentPrice: item.current_price == null ? null : String(item.current_price), balanceLessons: String(item.balance_lessons) } : {}),
         startedOn: isoDate(item.started_on), endedOn: isoDate(item.ended_on) })) }));
   }

@@ -107,21 +107,27 @@ test('group assignment requires both site ownership and teacher project availabi
   await assert.rejects(catalog.create('groups', { ...body, projectId: '1' }, partner), { status: 403, code: 'FORBIDDEN' });
 });
 
-test('one child may have independent enrollments in iCube and Zebra; partner sees only Zebra', async () => {
+test('partner sees own and foreign enrollments of an accessible mixed-project child', async () => {
   const db = pool(async (sql, params = {}) => {
     if (sql.includes('FROM children c LEFT JOIN child_guardians')) return [[{ id: 5, full_name: 'Ребёнок', status: 'active', needs_director_review: 0 }]];
     if (sql.includes('FROM child_enrollments e JOIN directions')) return [[
-      { id: 7, child_id: 5, direction_id: 1, direction_name: 'Робототехника', project_id: 1, project_name: 'iCubeRobots', status: 'active', balance_lessons: '3.00000000', current_price: '1025.00' },
-      { id: 8, child_id: 5, direction_id: 2, direction_name: 'Программирование', project_id: 2, project_name: 'Зебра', status: 'active', balance_lessons: '1.00000000', current_price: '1125.00' },
-    ].filter((row) => params.projectId == null || String(row.project_id) === String(params.projectId))];
+      { id: 7, child_id: 5, direction_id: 1, direction_name: 'Робототехника', project_id: 1, project_name: 'iCubeRobots', status: 'active', balance_lessons: '3.00000000', current_price: '1025.00', group_id: 10, group_name: 'Техническое имя', site_name: 'Школа №1', weekday: 3, start_time: '15:30:00' },
+      { id: 8, child_id: 5, direction_id: 2, direction_name: 'Программирование', project_id: 2, project_name: 'Зебра', status: 'active', balance_lessons: '1.00000000', current_price: '1125.00', group_id: 20, group_name: 'Другое имя', site_name: 'Зебра', weekday: 5, start_time: '18:00:00' },
+    ]];
+    if (sql.startsWith('SELECT * FROM child_enrollments WHERE id=')) return [[{
+      id: 7, child_id: 5, direction_id: 1, project_id: 1, status: 'active', individual_price: null, superseded_at: null,
+    }]];
     throw new Error(`Unexpected SQL: ${sql}`);
   });
   const catalog = createMysqlCatalog(db);
   const [directorChild] = await catalog.list('children', { roles: ['director'] });
   const [partnerChild] = await catalog.list('children', partner);
   assert.equal(directorChild.enrollments.length, 2);
-  assert.deepEqual(partnerChild.enrollments.map((item) => item.projectId), ['2']);
-  assert.equal(partnerChild.enrollments[0].balanceLessons, '1.00000000');
+  assert.deepEqual(partnerChild.enrollments.map((item) => item.projectId), ['1', '2']);
+  assert.equal(partnerChild.enrollments[0].editable, false); assert.equal('balanceLessons' in partnerChild.enrollments[0], false);
+  assert.equal(partnerChild.enrollments[0].siteName, 'Школа №1'); assert.equal(partnerChild.enrollments[0].startTime, '15:30');
+  assert.equal(partnerChild.enrollments[1].editable, true); assert.equal(partnerChild.enrollments[1].balanceLessons, '1.00000000');
+  await assert.rejects(catalog.updateEnrollment('7', { status: 'paused' }, partner), { status: 403, code: 'FORBIDDEN' });
 });
 
 test('project transfer closes the old membership, delegates money to FIFO transfer, and notifies the destination', async () => {

@@ -104,13 +104,12 @@ export function createParentPortal(pool, {
     return guardianId;
   }
 
-  async function assertGuardianAccountMutable(context, guardianId, childId = null, connection = pool) {
-    await assertManagedGuardian(context, guardianId, childId, connection);
+  async function assertGuardianForManagedChild(context, guardianId, childId = null, connection = pool) {
     const projectId = partnerProjectId(context);
     if (!projectId) return guardianId;
-    const [foreign] = await connection.query(`SELECT 1 FROM child_guardians cg JOIN child_enrollments e ON e.child_id=cg.child_id
-      WHERE cg.guardian_id=:guardianId AND e.superseded_at IS NULL AND e.project_id<>:projectId LIMIT 1`, { guardianId, projectId });
-    if (foreign.length) throw new ApiProblem(403, 'FORBIDDEN', 'Аккаунт родителя связан с детьми другого проекта. Изменить общий доступ может только директор.');
+    if (childId == null) throw new ApiProblem(403, 'FORBIDDEN', 'Для операции партнёра требуется доступный ребёнок');
+    await assertManagedChild(context, childId, connection);
+    await assertManagedGuardian(context, guardianId, childId, connection);
     return guardianId;
   }
 
@@ -458,7 +457,7 @@ export function createParentPortal(pool, {
   async function resetPassword(guardianId, context = {}, childId = null) {
     guardianId = identifier(guardianId, 'guardianId'); const password = makePassword(); const passwordHash = await createPasswordHash(password); let account;
     await inTransaction(pool, async (connection) => {
-      await assertGuardianAccountMutable(context, guardianId, childId, connection);
+      await assertGuardianForManagedChild(context, guardianId, childId, connection);
       const [rows] = await connection.query(`SELECT g.user_id,u.email FROM guardians g JOIN users u ON u.id=g.user_id WHERE g.id=:guardianId`, { guardianId });
       if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
       account = rows[0];
@@ -472,7 +471,7 @@ export function createParentPortal(pool, {
     guardianId = identifier(guardianId, 'guardianId');
     if (typeof enabled !== 'boolean') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Поле enabled должно быть boolean');
     await inTransaction(pool, async (connection) => {
-      await assertGuardianAccountMutable(context, guardianId, childId, connection);
+      await assertGuardianForManagedChild(context, guardianId, childId, connection);
       const [rows] = await connection.query('SELECT user_id FROM guardians WHERE id=:guardianId AND user_id IS NOT NULL', { guardianId });
       if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
       await connection.query("UPDATE users SET status=:status,token_version=token_version+1 WHERE id=:userId", { status: enabled ? 'active' : 'blocked', userId: rows[0].user_id });

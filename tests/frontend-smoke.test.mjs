@@ -95,6 +95,77 @@ test('единый frontend загружается и рендерит все т
   ];
   assert.equal(context.__crmProbe.groupChildren(999).length, 1);
   context.__crmProbe.state.children = savedChildren;
+
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false }, 8, true), />Был</);
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false }, 8, false), /Отсутствовал/);
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false }, 8, undefined), /Отсутствовал/);
+  assert.match(context.lessonAttendanceBadge({ done: false, cancelled: false, absenceNoticeChildIds: [8] }, 8, false), /Не будет/);
+  assert.match(context.lessonAttendanceBadge({ done: false, cancelled: false, absenceNoticeChildIds: [] }, 8, false), /Не отмечен/);
+  assert.doesNotMatch(context.lessonAttendanceBadge({ done: false, cancelled: true, absenceNoticeChildIds: [8] }, 8, false), /Отсутствовал|Не будет/);
+
+  const savedLessonState = {
+    groups: context.__crmProbe.state.groups, sites: context.__crmProbe.state.sites,
+    children: context.__crmProbe.state.children, lessons: context.__crmProbe.state.lessons,
+    selectedLesson: context.__crmProbe.state.selectedLesson,
+  };
+  context.__crmProbe.state.groups = [{ id: 4, name: 'Техническое имя', direction: 'Робототехника', project: 'Зебра', siteId: 2, day: 'Пятница', startTime: '18:00', time: '18:00–19:00' }];
+  context.__crmProbe.state.sites = [{ id: 2, name: 'Зебра' }];
+  context.__crmProbe.state.children = [{ id: 8, name: 'Иванов Иван', status: 'Активный', enrollments: [{ direction: 'Робототехника', groupId: 4, status: 'Активный' }] }];
+  context.__crmProbe.state.lessons = [{ id: 50, groupId: 4, date: '25.09.2026', time: '18:00–19:00', scheduledDate: '25.09.2026', scheduledTime: '18:00–19:00',
+    started: false, done: false, cancelled: false, attendance: {}, extras: [], photos: {}, trialChildren: {}, absenceNoticeChildIds: [8], birthdayChildIds: [] }];
+  context.__crmProbe.state.selectedLesson = 50;
+  assert.match(context.teacherLesson(), /Иванов Иван[\s\S]*Не будет/, 'teacher prestart показывает активную отметку отсутствия');
+  assert.match(context.studentCheck(context.__crmProbe.state.children[0], { ...context.__crmProbe.state.lessons[0], started: true }, false), /Не будет/,
+    'teacher attendance row показывает активную отметку отсутствия');
+  context.__crmProbe.state.lessons[0].absenceNoticeChildIds = [];
+  assert.doesNotMatch(context.teacherLesson(), /Не будет/, 'teacher prestart не показывает метку без notice');
+  assert.doesNotMatch(context.studentCheck(context.__crmProbe.state.children[0], { ...context.__crmProbe.state.lessons[0], started: true }, false), /Не будет/,
+    'teacher attendance row не показывает отменённую отметку');
+  Object.assign(context.__crmProbe.state, savedLessonState);
+
+  const savedChildState = {
+    role: context.__crmProbe.state.role, childTab: context.__crmProbe.state.childTab,
+    selectedChild: context.__crmProbe.state.selectedChild, children: context.__crmProbe.state.children,
+    groups: context.__crmProbe.state.groups, sites: context.__crmProbe.state.sites,
+    lessons: context.__crmProbe.state.lessons, payments: context.__crmProbe.state.payments,
+  };
+  context.__crmProbe.state.role = 'director';
+  context.__crmProbe.state.childTab = 'overview';
+  context.__crmProbe.state.selectedChild = 20;
+  context.__crmProbe.state.groups = [
+    { id: 10, name: 'Техническое имя 1', siteId: 1, day: 'Среда', startTime: '15:30' },
+    { id: 11, name: 'Техническое имя 2', siteId: 2, day: 'Пятница', startTime: '18:00' },
+  ];
+  context.__crmProbe.state.sites = [{ id: 1, name: 'Школа №1' }, { id: 2, name: 'Зебра' }];
+  context.__crmProbe.state.lessons = [];
+  context.__crmProbe.state.payments = [];
+  context.__crmProbe.state.children = [{ id: 20, name: 'Смешанный ребёнок', school: '', grade: '', parent: '', phone: '', status: 'Активный', enrollments: [
+    { id: 70, direction: 'Робототехника', projectId: '1', project: 'iCubeRobots', groupId: 10, siteName: 'Школа №1', weekday: 3, startTime: '15:30', status: 'Активный', editable: true, balance: 3, price: 1025 },
+    { id: 71, direction: 'Программирование', projectId: '2', project: 'Зебра', groupId: 11, siteName: 'Зебра', weekday: 5, startTime: '18:00', status: 'Активный', editable: true, balance: 1, price: 1125 },
+  ] }];
+  let childHtml = context.child();
+  assert.match(childHtml, /badge blue[^>]*>iCubeRobots</);
+  assert.match(childHtml, /badge blue[^>]*>Зебра</);
+  assert.match(childHtml, /Школа №1 · Ср 15:30/);
+  assert.match(childHtml, /Зебра · Пт 18:00/);
+  assert.doesNotMatch(childHtml, /Техническое имя [12]/, 'карточка не показывает техническое имя группы');
+
+  context.__crmProbe.state.children[0].enrollments[1].projectId = '1';
+  context.__crmProbe.state.children[0].enrollments[1].project = 'iCubeRobots';
+  childHtml = context.child();
+  assert.doesNotMatch(childHtml, /badge blue[^>]*>iCubeRobots</, 'в одном активном проекте project badge скрыт');
+
+  context.__crmProbe.state.role = 'partner';
+  context.__crmProbe.state.children[0].enrollments[1] = { id: 71, direction: 'Программирование', projectId: '2', project: 'Зебра', groupId: 11,
+    siteName: 'Зебра', weekday: 5, startTime: '18:00', status: 'Активный', editable: true, balance: 1, price: 1125 };
+  context.__crmProbe.state.children[0].enrollments[0].editable = false;
+  context.__crmProbe.state.children[0].enrollments[0].balance = null;
+  childHtml = context.child();
+  assert.match(childHtml, /badge gray[^>]*>iCubeRobots/);
+  assert.match(childHtml, /Другой проект/);
+  assert.equal((childHtml.match(/>\+ Оплата<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает финансовые действия');
+  assert.equal((childHtml.match(/>Изменить направление \/ цену<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает mutation controls');
+  Object.assign(context.__crmProbe.state, savedChildState);
 });
 
 test('фактические save handlers подключены к API namespace', async () => {

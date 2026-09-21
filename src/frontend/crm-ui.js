@@ -138,9 +138,16 @@ function simpleAdd(type){modal(`<h3>${type==='site'?'Новая площадка
 function calendar(){
  const days=['07.09','08.09','09.09','10.09','11.09','12.09','13.09'];return pageHead('Календарь','Конкретные занятия создаются из регулярного расписания, но могут меняться отдельно','<button class="btn">Сегодня</button>')+`<div class="toolbar"><button class="btn soft">Неделя</button><button class="btn">Месяц</button><select class="select" style="max-width:220px"><option>Все проекты</option><option>iCubeRobots</option><option>Зебра</option></select></div><div class="calendar">${days.map(d=>`<div class="day"><div class="date">${d}${d==='09.09'?' · сегодня':''}</div>${state.lessons.filter(l=>l.date.startsWith(d)).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="event ${g.project==='Зебра'?'partner':''} ${l.done?'done':''}" onclick="openLesson(${l.id})"><b>${l.time.split('–')[0]}</b> ${g.direction}<div>${g.name}</div></div>`}).join('')}</div>`).join('')}</div>`;
 }
+function lessonAttendanceBadge(l,childId,present){
+ const hasNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(childId);});
+ if(l.done&&!l.cancelled) return present?'<span class="badge green">Был</span>':'<span class="badge red">Отсутствовал</span>';
+ if(!l.cancelled&&hasNotice) return '<span class="badge amber">Не будет</span>';
+ return '<span class="badge gray">Не отмечен</span>';
+}
+window.lessonAttendanceBadge=lessonAttendanceBadge;
 function lesson(){
  const l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId),t=byId(state.teachers,l.teacherId),kids=groupChildren(g.id);
- return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'gray'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${g.name}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b><span class="badge ${l.attendance[c.id]?'green':'gray'}">${l.attendance[c.id]?'Был':'Не отмечен'}</span></div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div><span class="badge green">Был</span></div>`).join('')}</div></div>`;
+ return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'gray'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${g.name}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b>${lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])}</div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div>${lessonAttendanceBadge(l,e.childId,e.present!==false)}</div>`).join('')}</div></div>`;
 }
 function lToggle(k,v){byId(state.lessons,state.selectedLesson)[k]=v;render()}
 function teacherShell(content){return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>Иванов Сергей</b></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value==='director'?'dashboard':'teacherToday';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div></div><div class="teacher-content">${content}</div></div>`}
@@ -1643,7 +1650,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       '<div class="info-line"><span>Группа</span><b>'+g.name+'</b></div><div class="info-line"><span>Фактический преподаватель</span><b>'+t.name+'</b></div><div class="info-line"><span>Тема</span><b>'+(l.topic||'Не указана')+'</b></div><div class="info-line"><span>Присутствовало</span><b>'+presentCount+'</b></div>'+
       '<div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" '+(l.intro?'checked':'')+' onchange="lToggle(\'intro\',this.checked)"><span><b>Ознакомительное занятие всей группы</b></span></label><label class="student-check"><input type="checkbox" '+(l.emptyTrip?'checked':'')+' onchange="lToggle(\'emptyTrip\',this.checked)"><span><b>Пустой выезд</b></span></label></div></div>'+
       '<div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role=\'teacher\';openLesson('+l.id+',true)">Открыть как преподаватель</button></div>'+
-      kids.map(function(c){return '<div class="kpi-line"><b>'+c.name+'</b><span class="badge '+(l.attendance[c.id]?'green':'gray')+'">'+(l.attendance[c.id]?'Был':'Не отмечен')+'</span></div>';}).join('')+((l.extras||[]).length?'<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div class="muted mini" style="font-weight:700;margin-bottom:6px">Добавлены на занятие</div>'+(l.extras||[]).map(function(e){const c=byId(state.children,e.childId);return '<div class="kpi-line"><div><b>'+c.name+'</b><div style="display:flex;gap:6px;margin-top:4px"><span class="badge blue">Добавлен</span>'+(e.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div><span class="badge green">Был</span></div>';}).join('')+'</div>':'')+'</div></div>';
+      kids.map(function(c){return '<div class="kpi-line"><b>'+c.name+'</b>'+lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])+'</div>';}).join('')+((l.extras||[]).length?'<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div class="muted mini" style="font-weight:700;margin-bottom:6px">Добавлены на занятие</div>'+(l.extras||[]).map(function(e){const c=byId(state.children,e.childId);return '<div class="kpi-line"><div><b>'+c.name+'</b><div style="display:flex;gap:6px;margin-top:4px"><span class="badge blue">Добавлен</span>'+(e.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div>'+lessonAttendanceBadge(l,e.childId,e.present!==false)+'</div>';}).join('')+'</div>':'')+'</div></div>';
   };
 
   function teacherEventCard(e){
@@ -3169,17 +3176,19 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function childOverviewV118(c){
+    const activeProjects=new Set((c.enrollments||[]).filter(function(e){return (e.status||'Активный')==='Активный';}).map(function(e){return String(e.projectId??e.project??'');}).filter(Boolean));
+    const dayShort={1:'Пн',2:'Вт',3:'Ср',4:'Чт',5:'Пт',6:'Сб',7:'Вс','Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
     const directions=(c.enrollments||[]).map(function(e){
       const g=byId(state.groups,e.groupId);
+      const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':'blue')+'" style="margin-left:7px">'+e.project+'</span>':'';
+      const schedule=e.groupId==null?'Без группы':(e.siteName||byId(state.sites,g?.siteId)?.name||'Площадка не указана')+' · '+(dayShort[e.weekday]||dayShort[g?.day]||g?.day||'—')+' '+(e.startTime||g?.startTime||String(g?.time||'').split('–')[0]||'—');
+      const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
+      const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+e.direction+'\')">Изменить направление / цену</button></div>';
       return '<div style="border-top:1px solid var(--line);padding:14px 0">'+
         '<div style="display:flex;justify-content:space-between;gap:12px">'+
-          '<div><b>'+e.direction+'</b><div class="muted">'+(g?g.name:'Без группы')+'</div></div>'+
-          '<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>'+
+          '<div><b>'+e.direction+'</b>'+projectBadge+'<div class="muted">'+schedule+'</div></div>'+finance+
         '</div>'+
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">'+
-          '<button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button>'+
-          '<button class="btn" onclick="manageDirectionForm('+c.id+',\''+e.direction+'\')">Изменить направление / цену</button>'+
-        '</div>'+
+        actions+
       '</div>';
     }).join('');
 
@@ -3215,7 +3224,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function childPaymentsV118(c){
     const rows=(state.payments||[]).filter(function(p){return Number(p.childId)===Number(c.id);}).slice().reverse();
-    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="paymentForm('+c.id+',\''+((c.enrollments||[])[0]?.direction||'Робототехника')+'\')">+ Оплата</button></div>';
+    const paymentEnrollment=(c.enrollments||[]).find(function(e){return e.editable!==false;});
+    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div>'+(paymentEnrollment?'<button class="btn primary" onclick="paymentForm('+c.id+',\''+paymentEnrollment.direction+'\')">+ Оплата</button>':'')+'</div>';
     if(!rows.length) return html+'<div class="empty">Оплат пока нет.</div></div>';
     html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr 1.2fr"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div><div></div></div>';
     html+=rows.map(function(p){
@@ -7771,7 +7781,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<div class="attendance">';
       kids.forEach(function(c){
         const isNew=!hasPreviousVisitInDirection(c.id,lesson,group.direction);
-        html+='<div class="kpi-line teacher-prestart-child"><b>'+c.name+'</b>'+(isNew?'<span class="badge amber">Новый</span>':'')+'</div>';
+        const absence=(lesson.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(c.id);});
+        html+='<div class="kpi-line teacher-prestart-child"><b>'+c.name+'</b><div style="display:flex;gap:6px;flex-wrap:wrap">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
       });
       html+='</div>';
     }

@@ -134,11 +134,11 @@ function adminFixture() {
   };
   async function query(sql, params = {}) {
     if (sql.startsWith('SELECT c.id,c.full_name FROM children')) return [state.children.filter((child) => String(child.id) === String(params.childId)
-      && (params.projectId == null || String(child.project_id) === String(params.projectId)))];
+      && (params.projectId == null || (child.project_ids ?? [child.project_id]).some((id) => String(id) === String(params.projectId))))];
     if (sql.includes('SELECT cg.guardian_id FROM child_guardians cg JOIN child_enrollments')) {
       const allowed = state.links.some((link) => String(link.guardian_id) === String(params.guardianId)
         && (params.childId == null || String(link.child_id) === String(params.childId))
-        && state.children.some((child) => child.id === link.child_id && String(child.project_id) === String(params.projectId)));
+        && state.children.some((child) => child.id === link.child_id && (child.project_ids ?? [child.project_id]).some((id) => String(id) === String(params.projectId))));
       return [[allowed ? { guardian_id: params.guardianId } : undefined].filter(Boolean)];
     }
     if (sql.startsWith('SELECT 1 FROM child_guardians cg JOIN child_enrollments e')) {
@@ -527,15 +527,22 @@ test('partner resets and toggles a parent account used only inside its project',
   assert.equal((await fixture.service.setAccessStatus(5, true, partner, 10)).status, 'active');
 });
 
-test('partner cannot mutate a shared parent account but can unlink its own child; director remains unrestricted', async () => {
+test('partner manages parent access through an own child while direct child and guardian substitution stay blocked', async () => {
   const fixture = adminFixture(); const partner = { userId: '9', roles: ['partner'], projectIds: ['2'] }; const director = { userId: '1', roles: ['director'] };
+  fixture.state.children[0].project_ids = [2, 3];
   await fixture.service.createAccess(10, {}, partner);
   fixture.state.links.push({ child_id: 11, guardian_id: 5, is_primary: 1 });
-  await assert.rejects(fixture.service.resetPassword(5, partner, 10), {
-    status: 403, code: 'FORBIDDEN', message: 'Аккаунт родителя связан с детьми другого проекта. Изменить общий доступ может только директор.',
-  });
-  await assert.rejects(fixture.service.setAccessStatus(5, false, partner, 10), { status: 403, code: 'FORBIDDEN' });
-  await assert.rejects(fixture.service.setAccessStatus(5, true, partner, 10), { status: 403, code: 'FORBIDDEN' });
+  assert.equal((await fixture.service.resetPassword(5, partner, 10)).guardianId, '5');
+  assert.equal((await fixture.service.setAccessStatus(5, false, partner, 10)).status, 'blocked');
+  assert.equal((await fixture.service.setAccessStatus(5, true, partner, 10)).status, 'active');
+  await assert.rejects(fixture.service.resetPassword(5, partner, 11), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.setAccessStatus(5, false, partner, 11), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.unlinkAccess(11, 5, partner), { status: 403, code: 'FORBIDDEN' });
+  fixture.state.users.push({ id: 51, email: 'foreign@test', password_hash: 'x', display_name: 'Чужой', status: 'active', token_version: 1 });
+  fixture.state.guardians.push({ id: 6, user_id: 51, full_name: 'Чужой родитель' });
+  fixture.state.links.push({ child_id: 11, guardian_id: 6, is_primary: 0 });
+  await assert.rejects(fixture.service.resetPassword(6, partner, 10), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.setAccessStatus(6, false, partner, 10), { status: 403, code: 'FORBIDDEN' });
   const statusBefore = fixture.state.users[0].status;
   await fixture.service.unlinkAccess(10, 5, partner);
   assert.equal(fixture.state.users[0].status, statusBefore);

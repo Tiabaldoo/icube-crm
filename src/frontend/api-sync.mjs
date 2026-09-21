@@ -84,9 +84,11 @@ function mapChild(child) {
     note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
     enrollments: child.enrollments.map((enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
       projectId: Number(enrollment.projectId), project: enrollment.projectName,
-      direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId), status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
+      editable: enrollment.editable !== false, direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId),
+      groupName: enrollment.groupName ?? null, siteName: enrollment.siteName ?? null, weekday: enrollment.weekday ?? null, startTime: enrollment.startTime ?? null,
+      status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
       individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
-      balance: enrollment.balanceLessons == null ? 0 : Number(enrollment.balanceLessons) })) };
+      balance: enrollment.balanceLessons == null ? null : Number(enrollment.balanceLessons) })) };
 }
 
 function mapLesson(lesson) {
@@ -794,7 +796,8 @@ function paymentForm(childId, direction, paymentId) {
   if (!legacy.state.children.length && !existing) return window.alert('Сначала создайте ребёнка.');
   const child = legacy.state.children.find((item) => item.id === Number(existing?.childId ?? childId)) ?? legacy.state.children[0];
   const historical = Boolean(existing && !child?.enrollments.some((enrollment) => enrollment.id === existing.enrollmentId));
-  const preferred = existing?.enrollmentId ?? child?.enrollments.find((enrollment) => enrollment.direction === direction)?.id ?? child?.enrollments[0]?.id ?? null;
+  const preferred = existing?.enrollmentId ?? child?.enrollments.find((enrollment) => enrollment.editable !== false && enrollment.direction === direction)?.id
+    ?? child?.enrollments.find((enrollment) => enrollment.editable !== false)?.id ?? null;
   const today = new Date();
   const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   legacy.state.modal = `<h3>${existing ? 'Редактировать оплату' : 'Новая оплата'}</h3><div class="form-grid">
@@ -814,7 +817,8 @@ function refreshPaymentDirections(paymentId, preferredEnrollmentId) {
   const child = legacy.state.children.find((item) => item.id === Number(value('#pf-child')));
   const select = element('#pf-enrollment');
   if (!select) return;
-  select.innerHTML = (child?.enrollments ?? []).map((enrollment) => `<option value="${enrollment.id}"${enrollment.id === Number(preferredEnrollmentId) ? ' selected' : ''}>${html(enrollment.direction)}</option>`).join('');
+  select.innerHTML = (child?.enrollments ?? []).filter((enrollment) => enrollment.editable !== false)
+    .map((enrollment) => `<option value="${enrollment.id}"${enrollment.id === Number(preferredEnrollmentId) ? ' selected' : ''}>${html(enrollment.direction)}</option>`).join('');
   if (!select.innerHTML) select.innerHTML = '<option value="">Нет направлений</option>';
   updatePaymentPrice(paymentId);
 }
