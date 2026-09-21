@@ -120,6 +120,7 @@ function mapLesson(lesson) {
     moved: date !== scheduledDate || time !== scheduledTime, intro: lesson.introGroup, emptyTrip: lesson.emptyTrip,
     attendanceApplied: Boolean(lesson.attendanceAppliedAt), groupChildIdsV146: lesson.roster.filter((item) => item.type === 'main').map((item) => Number(item.childId)),
     groupRosterFrozenV146: Boolean(lesson.rosterFrozenAt), groupRosterFrozenAtV146: lesson.rosterFrozenAt,
+    absenceNoticeChildIds: (lesson.absenceNoticeChildIds ?? []).map(Number), birthdayChildIds: (lesson.birthdayChildIds ?? []).map(Number),
     salaryAccrual: lesson.salary ?? null,
   };
 }

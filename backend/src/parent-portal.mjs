@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { hashPassword } from './auth-service.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { inTransaction } from './db.mjs';
+import { partnerProjectId } from './project-scope.mjs';
 
 export const PARENT_NOTIFICATION_TYPES = Object.freeze([
   { type: 'reminder_day_before', label: 'Напомнить о занятии вечером накануне', defaultEnabled: true },
@@ -37,8 +38,8 @@ const parentOnly = (context = {}) => {
   }
   return identifier(context.userId, 'userId');
 };
-const adminOnly = (context = {}) => {
-  if (!(context.roles ?? []).includes('director')) throw new ApiProblem(403, 'FORBIDDEN', 'Управление родительским доступом доступно директору');
+const accessAdmin = (context = {}) => {
+  if (!(context.roles ?? []).some((role) => role === 'director' || role === 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Управление родительским доступом недоступно');
   return identifier(context.userId, 'userId');
 };
 
@@ -72,12 +73,34 @@ export function createParentPortal(pool, {
 
   async function assertChild(context, childId, connection = pool) {
     const userId = parentOnly(context); childId = identifier(childId, 'childId');
-    const [rows] = await connection.query(`SELECT c.id,c.full_name,c.birth_date,c.status,g.id guardian_id
+    const [rows] = await connection.query(`SELECT c.id,c.full_name,c.birth_date,c.school,c.grade,c.status,g.id guardian_id
       FROM guardians g JOIN child_guardians cg ON cg.guardian_id=g.id
       JOIN children c ON c.id=cg.child_id AND c.deleted_at IS NULL
       WHERE g.user_id=:userId AND c.id=:childId LIMIT 1`, { userId, childId });
     if (!rows.length) throw new ApiProblem(404, 'CHILD_NOT_FOUND', 'Ребёнок недоступен');
     return rows[0];
+  }
+
+  async function assertManagedChild(context, childId, connection = pool) {
+    accessAdmin(context); childId = identifier(childId, 'childId');
+    const projectId = partnerProjectId(context);
+    const [rows] = await connection.query(`SELECT c.id,c.full_name FROM children c WHERE c.id=:childId AND c.deleted_at IS NULL
+      AND (:projectId IS NULL OR EXISTS (SELECT 1 FROM child_enrollments e WHERE e.child_id=c.id
+        AND e.project_id=:projectId AND e.superseded_at IS NULL)) LIMIT 1`, { childId, projectId });
+    if (!rows.length) throw new ApiProblem(projectId ? 403 : 404, projectId ? 'FORBIDDEN' : 'NOT_FOUND', projectId ? 'Ребёнок другого проекта недоступен' : 'Ребёнок не найден');
+    return rows[0];
+  }
+
+  async function assertManagedGuardian(context, guardianId, childId = null, connection = pool) {
+    accessAdmin(context); guardianId = identifier(guardianId, 'guardianId');
+    const projectId = partnerProjectId(context);
+    if (!projectId) return guardianId;
+    const params = { guardianId, projectId, childId: childId == null ? null : identifier(childId, 'childId') };
+    const [rows] = await connection.query(`SELECT cg.guardian_id FROM child_guardians cg JOIN child_enrollments e ON e.child_id=cg.child_id
+      WHERE cg.guardian_id=:guardianId AND e.project_id=:projectId AND e.superseded_at IS NULL
+        AND (:childId IS NULL OR cg.child_id=:childId) LIMIT 1`, params);
+    if (!rows.length) throw new ApiProblem(403, 'FORBIDDEN', 'Родительский доступ другого проекта недоступен');
+    return guardianId;
   }
 
   async function documents(context = {}) {
@@ -149,7 +172,7 @@ export function createParentPortal(pool, {
   async function latestPhoto(childId) {
     const [rows] = await pool.query(`SELECT ph.id,ph.lesson_id,ph.uploaded_at,ph.expires_at FROM lesson_photos ph
       JOIN lessons l ON l.id=ph.lesson_id WHERE ph.child_id=:childId AND ph.deleted_at IS NULL AND ph.purged_at IS NULL
-        AND ph.expires_at>NOW(6) AND l.deleted_at IS NULL ORDER BY ph.uploaded_at DESC,ph.id DESC LIMIT 1`, { childId });
+        AND ph.expires_at>NOW(6) AND l.deleted_at IS NULL ORDER BY l.starts_at DESC,l.id DESC,ph.uploaded_at,ph.id LIMIT 1`, { childId });
     const row = rows[0];
     return row ? { id: String(row.id), lessonId: String(row.lesson_id), uploadedAt: isoDateTime(row.uploaded_at),
       expiresAt: isoDateTime(row.expires_at), fileUrl: `/api/v1/parent/photos/${row.id}/file` } : null;
@@ -182,15 +205,71 @@ export function createParentPortal(pool, {
     if (!groupIds.length) return [];
     for (const groupId of groupIds) await materializeLessons(from, to, groupId);
     const [rows] = await pool.query(`SELECT l.id,l.group_id,l.scheduled_starts_at,l.starts_at,l.ends_at,l.status,l.planned_teacher_id,
-      g.name group_name,t.full_name teacher_name,COALESCE(os.name,s.name) site_name
+      g.name group_name,t.full_name teacher_name,COALESCE(os.name,s.name) site_name,
+      (an.id IS NOT NULL AND an.cancelled_at IS NULL) absence_notice,a.present attendance_present,
+      (l.status='scheduled' AND l.starts_at>NOW(6)) can_change_absence
       FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN teachers t ON t.id=COALESCE(l.actual_teacher_id,l.planned_teacher_id)
       JOIN sites s ON s.id=l.site_id_snapshot LEFT JOIN sites os ON os.id=l.site_override_id
+      LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=?
+      LEFT JOIN attendances a ON a.lesson_id=l.id AND a.child_id=?
       WHERE l.group_id IN (${groupIds.map(() => '?').join(',')}) AND l.deleted_at IS NULL
         AND l.starts_at>=CONCAT(?,' 00:00:00') AND l.starts_at<DATE_ADD(?,INTERVAL 1 DAY)
-      ORDER BY l.starts_at,l.id`, [...groupIds, from, to]);
+      ORDER BY l.starts_at,l.id`, [child.id, child.id, ...groupIds, from, to]);
     return rows.map((row) => ({ id: String(row.id), groupId: String(row.group_id), group: row.group_name,
       startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), site: row.site_name, teacher: row.teacher_name,
-      status: row.status, moved: String(row.starts_at) !== String(row.scheduled_starts_at) }));
+      status: row.status, moved: String(row.starts_at) !== String(row.scheduled_starts_at), absenceNotice: Boolean(row.absence_notice),
+      present: row.attendance_present == null ? false : Boolean(row.attendance_present), canChangeAbsence: Boolean(row.can_change_absence) }));
+  }
+
+  async function about(childId, context = {}) {
+    await assertConsents(context); const child = await assertChild(context, childId);
+    return { child: { id: String(child.id), name: child.full_name, birthDate: isoDate(child.birth_date), school: child.school, grade: child.grade },
+      enrollments: await enrollmentRows(child.id) };
+  }
+
+  async function updateAbout(childId, body = {}, context = {}) {
+    await assertConsents(context); const child = await assertChild(context, childId);
+    const allowed = new Set(['birthDate', 'school', 'grade']);
+    if (Object.keys(body ?? {}).some((key) => !allowed.has(key))) throw new ApiProblem(400, 'FORBIDDEN_FIELDS', 'Родитель может изменить только дату рождения, школу и класс');
+    const birthDate = body.birthDate === undefined ? isoDate(child.birth_date) : nullable(body.birthDate, 10);
+    if (birthDate != null && !/^\d{4}-\d{2}-\d{2}$/.test(birthDate)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректная дата рождения');
+    await pool.query('UPDATE children SET birth_date=:birthDate,school=:school,grade=:grade WHERE id=:id', {
+      id: child.id, birthDate, school: body.school === undefined ? child.school : nullable(body.school), grade: body.grade === undefined ? child.grade : nullable(body.grade, 32),
+    });
+    return about(child.id, context);
+  }
+
+  async function setAbsenceNotice(childId, lessonId, context = {}) {
+    await assertConsents(context); const child = await assertChild(context, childId);
+    lessonId = identifier(lessonId, 'lessonId');
+    await inTransaction(pool, async (connection) => {
+      const [lessons] = await connection.query(`SELECT l.id,l.starts_at,l.status FROM lessons l WHERE l.id=:lessonId AND l.deleted_at IS NULL
+        AND l.status='scheduled' AND l.starts_at>NOW(6) AND EXISTS (
+          SELECT 1 FROM child_enrollments e JOIN group_memberships gm ON gm.enrollment_id=e.id
+          WHERE e.child_id=:childId AND e.superseded_at IS NULL AND e.status='active' AND gm.group_id=l.group_id
+            AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
+        ) FOR UPDATE`, { lessonId, childId: child.id });
+      if (!lessons.length) throw new ApiProblem(409, 'ABSENCE_NOTICE_CLOSED', 'Отметить отсутствие можно только до начала доступного занятия');
+      await connection.query(`INSERT INTO lesson_child_absence_notices (lesson_id,child_id,guardian_id,cancelled_at)
+        VALUES (:lessonId,:childId,:guardianId,NULL) ON DUPLICATE KEY UPDATE guardian_id=VALUES(guardian_id),cancelled_at=NULL,updated_at=NOW(6)`, {
+        lessonId, childId: child.id, guardianId: child.guardian_id,
+      });
+    });
+    return { lessonId, childId: String(child.id), active: true };
+  }
+
+  async function cancelAbsenceNotice(childId, lessonId, context = {}) {
+    await assertConsents(context); const child = await assertChild(context, childId);
+    lessonId = identifier(lessonId, 'lessonId');
+    await inTransaction(pool, async (connection) => {
+      const [lessons] = await connection.query(`SELECT id FROM lessons WHERE id=:lessonId AND deleted_at IS NULL
+        AND status='scheduled' AND starts_at>NOW(6) FOR UPDATE`, { lessonId });
+      if (!lessons.length) throw new ApiProblem(409, 'ABSENCE_NOTICE_CLOSED', 'Отменить отметку можно только до начала занятия');
+      const [result] = await connection.query(`UPDATE lesson_child_absence_notices SET cancelled_at=NOW(6)
+        WHERE lesson_id=:lessonId AND child_id=:childId AND cancelled_at IS NULL`, { lessonId, childId: child.id });
+      if (!result.affectedRows) throw new ApiProblem(404, 'NOT_FOUND', 'Активная отметка отсутствия не найдена');
+    });
+    return { lessonId, childId: String(child.id), active: false };
   }
 
   async function attendance(childId, context = {}) {
@@ -230,7 +309,7 @@ export function createParentPortal(pool, {
   async function updateProfile(body, context = {}) {
     await assertConsents(context); const guardian = await guardianForUser(parentOnly(context));
     await pool.query('UPDATE guardians SET full_name=:name,phone=:phone,email=:email WHERE id=:id', {
-      id: guardian.id, name: nullable(body.name), phone: nullable(body.phone, 32), email: nullable(body.email, 254),
+      id: guardian.id, name: nullable(body.name), phone: nullable(body.phone, 32), email: body.email === undefined ? guardian.email : nullable(body.email, 254),
     });
     if (nullable(body.name)) await pool.query('UPDATE users SET display_name=:name WHERE id=:userId', { name: nullable(body.name), userId: guardian.user_id });
     return profile(context);
@@ -275,33 +354,44 @@ export function createParentPortal(pool, {
   async function documentsForMe(context = {}) { return { documents: await documents(context), consentRequired: await consentRequired(context) }; }
 
   async function listAccess(childId, context = {}) {
-    adminOnly(context); childId = identifier(childId, 'childId');
+    await assertManagedChild(context, childId); childId = identifier(childId, 'childId');
     const [rows] = await pool.query(`SELECT g.id guardian_id,g.full_name,g.phone,g.email,u.email login,u.status,
       GROUP_CONCAT(DISTINCT c2.full_name ORDER BY c2.full_name SEPARATOR ', ') linked_children
       FROM child_guardians cg JOIN guardians g ON g.id=cg.guardian_id JOIN users u ON u.id=g.user_id
       LEFT JOIN child_guardians cg2 ON cg2.guardian_id=g.id LEFT JOIN children c2 ON c2.id=cg2.child_id
-      WHERE cg.child_id=:childId GROUP BY g.id,g.full_name,g.phone,g.email,u.email,u.status ORDER BY g.id`, { childId });
+        AND (:projectId IS NULL OR EXISTS (SELECT 1 FROM child_enrollments visible_e WHERE visible_e.child_id=c2.id
+          AND visible_e.project_id=:projectId AND visible_e.superseded_at IS NULL))
+      WHERE cg.child_id=:childId GROUP BY g.id,g.full_name,g.phone,g.email,u.email,u.status ORDER BY g.id`, {
+      childId, projectId: partnerProjectId(context),
+    });
     return rows.map((row) => ({ id: String(row.guardian_id), name: row.full_name, phone: row.phone, email: row.email,
       login: row.login, status: row.status, linkedChildren: row.linked_children ? row.linked_children.split(', ') : [] }));
   }
 
   async function searchAccess(query, context = {}) {
-    adminOnly(context); const value = `%${String(query ?? '').trim().slice(0, 100)}%`;
+    accessAdmin(context); const value = `%${String(query ?? '').trim().slice(0, 100)}%`; const projectId = partnerProjectId(context);
     const [rows] = await pool.query(`SELECT g.id guardian_id,g.full_name,u.email login,u.status,
       GROUP_CONCAT(DISTINCT c.full_name ORDER BY c.full_name SEPARATOR ', ') linked_children
       FROM guardians g JOIN users u ON u.id=g.user_id JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id AND r.code='parent'
       LEFT JOIN child_guardians cg ON cg.guardian_id=g.id LEFT JOIN children c ON c.id=cg.child_id
-      WHERE g.full_name LIKE :query OR u.email LIKE :query GROUP BY g.id,g.full_name,u.email,u.status ORDER BY g.full_name,u.email LIMIT 20`, { query: value });
+        AND (:projectId IS NULL OR EXISTS (SELECT 1 FROM child_enrollments visible_e WHERE visible_e.child_id=c.id
+          AND visible_e.project_id=:projectId AND visible_e.superseded_at IS NULL))
+      WHERE (g.full_name LIKE :query OR u.email LIKE :query) AND (:projectId IS NULL OR EXISTS (
+        SELECT 1 FROM child_guardians own_cg JOIN child_enrollments own_e ON own_e.child_id=own_cg.child_id
+        WHERE own_cg.guardian_id=g.id AND own_e.project_id=:projectId AND own_e.superseded_at IS NULL
+      )) GROUP BY g.id,g.full_name,u.email,u.status ORDER BY g.full_name,u.email LIMIT 20`, { query: value, projectId });
     return rows.map((row) => ({ id: String(row.guardian_id), name: row.full_name, login: row.login, status: row.status,
       linkedChildren: row.linked_children ? row.linked_children.split(', ') : [] }));
   }
 
   async function createAccess(childId, body = {}, context = {}) {
-    const actorId = adminOnly(context); childId = identifier(childId, 'childId'); const password = makePassword(); const passwordHash = await createPasswordHash(password);
+    const actorId = accessAdmin(context); childId = identifier(childId, 'childId'); const password = makePassword(); const passwordHash = await createPasswordHash(password);
     let login; let guardianId;
     await inTransaction(pool, async (connection) => {
-      const [children] = await connection.query('SELECT id,full_name FROM children WHERE id=:childId AND deleted_at IS NULL FOR UPDATE', { childId });
-      if (!children.length) throw new ApiProblem(404, 'NOT_FOUND', 'Ребёнок не найден');
+      const child = await assertManagedChild(context, childId, connection);
+      const [primary] = await connection.query(`SELECT g.id,g.user_id,g.full_name FROM guardians g JOIN child_guardians cg ON cg.guardian_id=g.id
+        WHERE cg.child_id=:childId AND cg.is_primary=TRUE LIMIT 1 FOR UPDATE`, { childId });
+      const displayName = nullable(primary[0]?.full_name) ?? `Родитель: ${child.full_name}`;
       for (let attempt = 0; attempt < 5; attempt += 1) {
         login = makeLogin();
         const [duplicate] = await connection.query('SELECT id FROM users WHERE LOWER(email)=LOWER(:login) LIMIT 1', { login });
@@ -310,17 +400,15 @@ export function createParentPortal(pool, {
       }
       if (!login) throw new ApiProblem(409, 'LOGIN_GENERATION_FAILED', 'Не удалось создать уникальный логин');
       const [created] = await connection.query(`INSERT INTO users (email,password_hash,display_name,status)
-        VALUES (:login,:passwordHash,:displayName,'active')`, { login, passwordHash, displayName: nullable(body.name) ?? `Родитель: ${children[0].full_name}` });
+        VALUES (:login,:passwordHash,:displayName,'active')`, { login, passwordHash, displayName });
       const [role] = await connection.query("SELECT id FROM roles WHERE code='parent' LIMIT 1");
       if (!role.length) throw new Error('Роль parent не найдена');
       await connection.query('INSERT INTO user_roles (user_id,role_id,granted_by_user_id) VALUES (:userId,:roleId,:actorId)', { userId: created.insertId, roleId: role[0].id, actorId });
-      const [primary] = await connection.query(`SELECT g.id,g.user_id FROM guardians g JOIN child_guardians cg ON cg.guardian_id=g.id
-        WHERE cg.child_id=:childId AND cg.is_primary=TRUE LIMIT 1 FOR UPDATE`, { childId });
       if (primary[0] && primary[0].user_id == null) {
         guardianId = primary[0].id;
-        await connection.query('UPDATE guardians SET user_id=:userId,full_name=COALESCE(:name,full_name) WHERE id=:guardianId', { userId: created.insertId, name: nullable(body.name), guardianId });
+        await connection.query('UPDATE guardians SET user_id=:userId,full_name=COALESCE(full_name,:name) WHERE id=:guardianId', { userId: created.insertId, name: displayName, guardianId });
       } else {
-        const [guardian] = await connection.query('INSERT INTO guardians (user_id,full_name) VALUES (:userId,:name)', { userId: created.insertId, name: nullable(body.name) });
+        const [guardian] = await connection.query('INSERT INTO guardians (user_id,full_name) VALUES (:userId,:name)', { userId: created.insertId, name: displayName });
         guardianId = guardian.insertId;
         await connection.query(`INSERT INTO child_guardians (child_id,guardian_id,is_primary,can_receive_notifications)
           VALUES (:childId,:guardianId,:isPrimary,TRUE)`, { childId, guardianId, isPrimary: primary.length === 0 });
@@ -330,7 +418,7 @@ export function createParentPortal(pool, {
   }
 
   async function linkAccess(childId, guardianId, context = {}) {
-    adminOnly(context); childId = identifier(childId, 'childId'); guardianId = identifier(guardianId, 'guardianId');
+    await assertManagedChild(context, childId); childId = identifier(childId, 'childId'); guardianId = identifier(guardianId, 'guardianId');
     const [result] = await pool.query(`INSERT IGNORE INTO child_guardians (child_id,guardian_id,is_primary,can_receive_notifications)
       SELECT :childId,:guardianId,NOT EXISTS(SELECT 1 FROM child_guardians WHERE child_id=:childId),TRUE
       FROM guardians g JOIN users u ON u.id=g.user_id
@@ -344,7 +432,7 @@ export function createParentPortal(pool, {
   }
 
   async function unlinkAccess(childId, guardianId, context = {}) {
-    adminOnly(context); childId = identifier(childId, 'childId'); guardianId = identifier(guardianId, 'guardianId');
+    await assertManagedChild(context, childId); await assertManagedGuardian(context, guardianId, childId); childId = identifier(childId, 'childId'); guardianId = identifier(guardianId, 'guardianId');
     await inTransaction(pool, async (connection) => {
       const [rows] = await connection.query(`SELECT is_primary FROM child_guardians
         WHERE child_id=:childId AND guardian_id=:guardianId FOR UPDATE`, { childId, guardianId });
@@ -356,8 +444,8 @@ export function createParentPortal(pool, {
     return null;
   }
 
-  async function resetPassword(guardianId, context = {}) {
-    adminOnly(context); guardianId = identifier(guardianId, 'guardianId'); const password = makePassword(); const passwordHash = await createPasswordHash(password);
+  async function resetPassword(guardianId, context = {}, childId = null) {
+    await assertManagedGuardian(context, guardianId, childId); guardianId = identifier(guardianId, 'guardianId'); const password = makePassword(); const passwordHash = await createPasswordHash(password);
     const [rows] = await pool.query(`SELECT g.user_id,u.email FROM guardians g JOIN users u ON u.id=g.user_id WHERE g.id=:guardianId`, { guardianId });
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
     await inTransaction(pool, async (connection) => {
@@ -367,8 +455,8 @@ export function createParentPortal(pool, {
     return { guardianId, login: rows[0].email, password };
   }
 
-  async function setAccessStatus(guardianId, enabled, context = {}) {
-    adminOnly(context); guardianId = identifier(guardianId, 'guardianId');
+  async function setAccessStatus(guardianId, enabled, context = {}, childId = null) {
+    await assertManagedGuardian(context, guardianId, childId); guardianId = identifier(guardianId, 'guardianId');
     if (typeof enabled !== 'boolean') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Поле enabled должно быть boolean');
     const [rows] = await pool.query('SELECT user_id FROM guardians WHERE id=:guardianId AND user_id IS NOT NULL', { guardianId });
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Родительский аккаунт не найден');
@@ -379,7 +467,7 @@ export function createParentPortal(pool, {
     return { guardianId, status: enabled ? 'active' : 'blocked' };
   }
 
-  return { me, children, home, schedule, attendance, payments, photos, profile, updateProfile,
+  return { me, children, home, schedule, attendance, payments, photos, about, updateAbout, setAbsenceNotice, cancelAbsenceNotice, profile, updateProfile,
     notificationSettings, updateNotificationSettings, notifications, markNotificationRead,
     documents: documentsForMe, acceptDocument, assertChild, assertConsents,
     listAccess, searchAccess, createAccess, linkAccess, unlinkAccess, resetPassword, setAccessStatus };

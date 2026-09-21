@@ -15,17 +15,19 @@ const isoDateTime = (value) => {
 
 export function createNotifications(pool) {
   function scope(context = {}) {
-    if (!hasRole(context, 'director') && !hasRole(context, 'partner')) {
+    if (!hasRole(context, 'director') && !hasRole(context, 'partner') && !hasRole(context, 'teacher')) {
       throw new ApiProblem(403, 'FORBIDDEN', 'Уведомления недоступны');
     }
     const projectId = partnerProjectId(context);
-    return { userId: context.userId ?? null, roleCode: projectId ? 'partner' : 'director', projectId };
+    const roleCode = hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')
+      ? 'teacher' : projectId ? 'partner' : 'director';
+    return { userId: context.userId ?? null, roleCode, projectId, allowRoleWide: roleCode !== 'teacher' };
   }
 
   async function list(context = {}) {
     const params = scope(context);
     const [rows] = await pool.query(`SELECT id,notification_type,title,body,entity_type,entity_id,created_at,read_at
-      FROM notifications WHERE (user_id=:userId OR (user_id IS NULL AND role_code=:roleCode))
+      FROM notifications WHERE (user_id=:userId OR (:allowRoleWide=TRUE AND user_id IS NULL AND role_code=:roleCode))
         AND (:projectId IS NULL OR recipient_project_id=:projectId)
         AND dismissed_at IS NULL
       ORDER BY created_at DESC,id DESC LIMIT 50`, params);
@@ -46,7 +48,7 @@ export function createNotifications(pool) {
 
     const addressedToActor = notification.user_id != null
       ? String(notification.user_id) === String(params.userId)
-      : notification.role_code === params.roleCode;
+      : params.allowRoleWide && notification.role_code === params.roleCode;
     const projectAllowed = params.projectId == null
       || String(notification.recipient_project_id ?? '') === String(params.projectId);
     if (!addressedToActor || !projectAllowed) {

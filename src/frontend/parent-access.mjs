@@ -8,7 +8,7 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) =
 const message = (error) => error instanceof ApiError ? error.message : 'Операция не выполнена';
 
 async function load(childId) {
-  if (!childId || loading.has(String(childId)) || legacy.state.role !== 'director') return;
+  if (!childId || loading.has(String(childId)) || !['director', 'partner'].includes(legacy.state.role)) return;
   loading.add(String(childId));
   try { cache.set(String(childId), await api.request(`/children/${childId}/parent-access`)); }
   catch (error) { cache.set(String(childId), { error: message(error) }); }
@@ -20,24 +20,22 @@ function accessBlock(childId) {
   if (!result) { queueMicrotask(() => load(childId)); return '<div class="card pad"><h2>Родительский доступ</h2><div class="muted">Загрузка…</div></div>'; }
   if (result.error) return `<div class="card pad"><h2>Родительский доступ</h2><div class="notice">${escapeHtml(result.error)}</div></div>`;
   const accounts = result;
-  const rows = accounts.map((account) => `<div class="kpi-line"><div><b>${escapeHtml(account.name || 'Родитель')}</b><div class="muted mini">${escapeHtml(account.login)} · ${account.status === 'active' ? 'Активен' : 'Отключён'}</div><div class="muted mini">Дети: ${escapeHtml(account.linkedChildren.join(', ') || '—')}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeResetParentPassword(${account.id})">Сбросить пароль</button><button class="btn" onclick="icubeSetParentStatus(${account.id},${account.status !== 'active'})">${account.status === 'active' ? 'Отключить' : 'Включить'}</button><button class="btn danger" onclick="icubeUnlinkParent(${childId},${account.id})">Отвязать</button></div></div>`).join('');
-  return `<div class="card pad" style="margin-top:16px"><div class="section-title"><div><h2>Родительский доступ</h2><div class="muted mini">Один аккаунт можно связать с несколькими детьми</div></div>${accounts.length ? '' : `<button class="btn primary" onclick="icubeCreateParentAccess(${childId})">Создать доступ</button>`}</div>${rows || '<div class="empty">Доступ ещё не создан.</div>'}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${accounts.length ? `<button class="btn primary" onclick="icubeCreateParentAccess(${childId})">Создать ещё аккаунт</button>` : ''}<button class="btn soft" onclick="icubeShowParentSearch(${childId})">Привязать существующего родителя</button></div><div id="parent-access-search"></div></div>`;
+  const rows = accounts.map((account) => `<div class="kpi-line"><div><b>${escapeHtml(account.name || 'Родитель')}</b><div class="muted mini">${escapeHtml(account.login)} · ${account.status === 'active' ? 'Активен' : 'Отключён'}</div><div class="muted mini">Дети: ${escapeHtml(account.linkedChildren.join(', ') || '—')}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeResetParentPassword(${childId},${account.id})">Сбросить пароль</button><button class="btn" onclick="icubeSetParentStatus(${childId},${account.id},${account.status !== 'active'})">${account.status === 'active' ? 'Отключить' : 'Включить'}</button><button class="btn danger" onclick="icubeUnlinkParent(${childId},${account.id})">Отвязать</button></div></div>`).join('');
+  return `<div class="card pad" style="margin-top:16px"><div class="section-title"><div><h2>Родительский доступ</h2><div class="muted mini">Один аккаунт можно связать с несколькими детьми</div></div>${accounts.length ? '' : `<button class="btn primary" onclick="icubeCreateParentAccess(${childId})">Создать доступ</button>`}</div>${rows || '<div class="empty">Доступ ещё не создан.</div>'}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${accounts.length ? `<button class="btn primary" onclick="icubeCreateParentAccess(${childId})">Создать ещё аккаунт</button>` : ''}<button class="btn soft" onclick="icubeShowParentSearch(${childId})">Привязать существующего родителя</button></div>${accounts.length ? '<div class="muted mini" style="margin-top:8px">Создать ещё аккаунт — отдельный доступ для второго родителя или законного представителя.</div>' : ''}<div id="parent-access-search"></div></div>`;
 }
 
 const originalChild = window.child;
 if (typeof originalChild === 'function') {
   window.child = function (...args) {
     const base = originalChild.apply(this, args);
-    if (legacy.state.role !== 'director') return base;
+    if (!['director', 'partner'].includes(legacy.state.role)) return base;
     return `${base}${accessBlock(legacy.state.selectedChild)}`;
   };
 }
 
 window.icubeCreateParentAccess = async (childId) => {
-  const name = window.prompt('Имя родителя (необязательно):', '') ?? null;
-  if (name == null) return;
   try {
-    const credentials = await api.request(`/children/${childId}/parent-access`, { method: 'POST', body: { name } });
+    const credentials = await api.request(`/children/${childId}/parent-access`, { method: 'POST', body: {} });
     window.alert(`Родительский доступ создан. Сохраните данные сейчас — пароль больше не будет показан.\n\nЛогин: ${credentials.login}\nПароль: ${credentials.password}`);
     cache.delete(String(childId)); await load(childId);
   } catch (error) { window.alert(message(error)); }
@@ -63,13 +61,13 @@ window.icubeUnlinkParent = async (childId, guardianId) => {
   try { await api.request(`/children/${childId}/parent-access/${guardianId}`, { method: 'DELETE' }); cache.delete(String(childId)); await load(childId); }
   catch (error) { window.alert(message(error)); }
 };
-window.icubeResetParentPassword = async (guardianId) => {
+window.icubeResetParentPassword = async (childId, guardianId) => {
   if (!window.confirm('Сбросить пароль? Все текущие сессии родителя будут завершены.')) return;
-  try { const credentials = await api.request(`/parent-access/${guardianId}/reset-password`, { method: 'POST' }); window.alert(`Новый пароль показывается один раз.\n\nЛогин: ${credentials.login}\nПароль: ${credentials.password}`); }
+  try { const credentials = await api.request(`/parent-access/${guardianId}/reset-password`, { method: 'POST', body: { childId } }); window.alert(`Новый пароль показывается один раз.\n\nЛогин: ${credentials.login}\nПароль: ${credentials.password}`); }
   catch (error) { window.alert(message(error)); }
 };
-window.icubeSetParentStatus = async (guardianId, enabled) => {
+window.icubeSetParentStatus = async (childId, guardianId, enabled) => {
   if (!window.confirm(enabled ? 'Включить родительский доступ?' : 'Отключить родительский доступ и завершить текущие сессии?')) return;
-  try { await api.request(`/parent-access/${guardianId}/status`, { method: 'PATCH', body: { enabled } }); cache.clear(); await load(legacy.state.selectedChild); }
+  try { await api.request(`/parent-access/${guardianId}/status`, { method: 'PATCH', body: { enabled, childId } }); cache.clear(); await load(legacy.state.selectedChild); }
   catch (error) { window.alert(message(error)); }
 };

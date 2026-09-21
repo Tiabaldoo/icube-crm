@@ -184,7 +184,7 @@ PARENT_PAYMENT_QR_URL=https://example.invalid/payment-qr.png
 
 URL QR пока является статической заглушкой и не создаёт оплату. До production замените три seeded документа `draft-2026-09` юридически проверенными версиями: создайте новые строки `parent_documents`, деактивируйте черновые только после проверки и не редактируйте уже принятую версию задним числом.
 
-Напоминания накануне создаёт oneshot-задача `npm run parent-notifications:daily`. Она материализует только занятия следующего локального дня, проверяет текущий серверный баланс и использует уникальный dedup key. Units рассчитаны на `/opt/icube-crm`, пользователя `icube` и Сахалинское время:
+Напоминания накануне и адресные уведомления о днях рождения создаёт oneshot-задача `npm run parent-notifications:daily`. Она материализует только занятия следующего локального дня, проверяет текущий серверный баланс, вычисляет дни рождения по текущей дате `Asia/Sakhalin` и использует уникальные dedup key. Units рассчитаны на `/opt/icube-crm`, пользователя `icube` и Сахалинское время:
 
 ```bash
 cp deploy/icube-crm-parent-notifications.service /etc/systemd/system/
@@ -194,4 +194,4 @@ systemctl enable --now icube-crm-parent-notifications.timer
 systemctl list-timers | grep icube-crm-parent-notifications
 ```
 
-До включения timer на production сначала примените `016_parent_portal.sql`, выполните команду вручную на test и проверьте созданные строки `notifications`. Timer не отправляет push и не обращается к внешним каналам.
+Перед выкладкой этой версии примените `017_parent_absence_notices.sql` на test, затем выполните команду вручную и проверьте строки `notifications` типов `reminder_day_before` и `child_birthday`. На production миграция применяется только после test и резервной копии. Timer не отправляет push и не обращается к внешним каналам.

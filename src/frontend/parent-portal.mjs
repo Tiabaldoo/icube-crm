@@ -4,9 +4,9 @@ const api = new ApiClient();
 const app = globalThis.document?.querySelector('#app') ?? null;
 const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
-  ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['settings', 'Настройки'],
+  ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['about', 'О ребёнке'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, payment: null, lessonInfo: null, scheduleCursor: null, touchX: null };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, payment: null, lessonInfo: null, scheduleCursor: null, menuOpen: false, touchX: null };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
@@ -16,13 +16,47 @@ const selectedChild = () => state.profile?.children?.find((child) => String(chil
 
 export function parentScheduleStatus(lesson) {
   if (lesson.status === 'cancelled') return 'Отменено';
-  if (lesson.status === 'completed') return 'Проведено';
+  if (lesson.status === 'completed') return lesson.present ? 'Проведено' : 'Отсутствовал';
+  if (lesson.status === 'scheduled' && lesson.absenceNotice) return 'Не будет';
   if (lesson.moved) return 'Перенесено';
   return '';
 }
 
 const pad = (value) => String(value).padStart(2, '0');
 const localIsoDate = (date = new Date()) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+export function ageFromBirthDate(birthDate, onDate = localIsoDate()) {
+  if (!birthDate) return null;
+  const [birthYear, birthMonth, birthDay] = String(birthDate).slice(0, 10).split('-').map(Number);
+  const [year, month, day] = String(onDate).slice(0, 10).split('-').map(Number);
+  if (![birthYear, birthMonth, birthDay, year, month, day].every(Number.isInteger)) return null;
+  return year - birthYear - (month < birthMonth || (month === birthMonth && day < birthDay) ? 1 : 0);
+}
+function decimalUnits(value) {
+  const match = String(value ?? '0').trim().match(/^(-?)(\d+)(?:\.(\d{1,8}))?$/);
+  if (!match) return 0n;
+  const units = BigInt(match[2]) * 100000000n + BigInt((match[3] ?? '').padEnd(8, '0'));
+  return match[1] ? -units : units;
+}
+function lessonValue(value) {
+  const normalized = String(value ?? '0').replace(/\.0+$/, '').replace(/(\.\d*?[1-9])0+$/, '$1');
+  return normalized.replace('.', ',');
+}
+function lessonNoun(units) {
+  if (units % 100000000n !== 0n) return 'занятия';
+  const integer = units / 100000000n; const lastTwo = integer % 100n; const last = integer % 10n;
+  if (lastTwo >= 11n && lastTwo <= 14n) return 'занятий';
+  if (last === 1n) return 'занятие';
+  if (last >= 2n && last <= 4n) return 'занятия';
+  return 'занятий';
+}
+export function parentBalancePresentation(value) {
+  const units = decimalUnits(value); const absolute = units < 0n ? -units : units;
+  if (units < 0n) return { tone: 'danger', text: `Задолженность: ${lessonValue(String(value).replace('-', ''))} ${lessonNoun(absolute)}` };
+  if (units === 0n) return { tone: 'danger', text: 'Оплаченные занятия закончились' };
+  const count = lessonValue(value); const noun = lessonNoun(units);
+  const adjective = noun === 'занятие' ? 'оплаченное' : 'оплаченных';
+  return { tone: units >= 200000000n ? 'success' : 'warning', text: `Осталось ${count} ${adjective} ${noun}` };
+}
 function parseIsoDate(value) {
   const [year, month, day] = String(value ?? '').split('-').map(Number);
   const date = new Date(year, month - 1, day || 1);
@@ -51,9 +85,10 @@ function childSelector() {
 function shell(content) {
   const unread = state.notifications.filter((item) => !item.readAt).length;
   app.innerHTML = `<div class="parent-app">
-    <header class="parent-header"><div><b>iCube</b><span>Кабинет родителя</span></div>${childSelector()}<button class="parent-bell" data-action="notifications" aria-label="Уведомления">🔔${unread ? `<i>${unread}</i>` : ''}</button></header>
-    <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main>
-    <nav class="parent-nav">${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav>
+    <aside class="parent-sidebar ${state.menuOpen ? 'open' : ''}"><div class="parent-brand"><b>iCube</b><span>Кабинет родителя</span></div><nav>${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav></aside>
+    ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
+    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>iCube</b></div>${childSelector()}<button class="parent-bell" data-action="notifications" aria-label="Уведомления">🔔${unread ? `<i>${unread}</i>` : ''}</button></header>
+    <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
     ${viewerHtml()}${paymentModalHtml()}${lessonInfoHtml()}
   </div>`;
 }
@@ -61,18 +96,16 @@ function shell(content) {
 function homeHtml(data) {
   const child = data.child;
   const next = data.nextLesson;
-  const enrollmentCards = data.enrollments.map((item) => `<article class="parent-card parent-balance"><div><span>${escapeHtml(item.direction)}</span><strong>${lessonCount(item.balanceLessons)}</strong><small>оплаченных занятий</small></div><div><span>Абонемент</span><strong>${item.subscriptionPrice == null ? '—' : money(item.subscriptionPrice)}</strong></div></article>`).join('');
-  const about = data.enrollments.map((item) => `<div class="parent-info"><b>${escapeHtml(item.direction)}</b><span>${escapeHtml(item.group ?? 'Группа не назначена')}</span><span>${escapeHtml(item.teacher ?? 'Преподаватель не назначен')}</span><span>${escapeHtml(item.site ?? 'Площадка не назначена')}</span><span>${escapeHtml(item.schedule ?? 'Расписание не назначено')}</span></div>`).join('');
-  return `<section class="parent-title"><span>Здравствуйте!</span><h1>${escapeHtml(child.name)}</h1></section>
+  const enrollmentCards = data.enrollments.map((item) => { const balance = parentBalancePresentation(item.balanceLessons); return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong></article>`; }).join('');
+  return `<section class="parent-title"><h1>${escapeHtml(child.name)}</h1></section>
     <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<div class="parent-next"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></div>` : empty('Нет будущих занятий.')}</article>
     <section class="parent-balances">${enrollmentCards || empty('Нет активных направлений.')}</section>
-    <article class="parent-card"><h2>Последнее фото</h2>${data.latestPhoto ? `<button class="parent-photo-preview" data-action="tab" data-tab="photos"><img src="${escapeHtml(data.latestPhoto.fileUrl)}" alt="Последнее фото ${escapeHtml(child.name)}"></button>` : empty('Нет доступных фотографий.')}</article>
-    <article class="parent-card"><h2>О ребёнке</h2>${about || empty('Информация о направлениях пока не добавлена.')}</article>`;
+    <article class="parent-card"><h2>Последнее фото</h2>${data.latestPhoto ? `<button class="parent-photo-preview" data-action="tab" data-tab="photos"><img src="${escapeHtml(data.latestPhoto.fileUrl)}" alt="Последнее фото ${escapeHtml(child.name)}"></button>` : empty('Нет доступных фотографий.')}</article>`;
 }
 
 function scheduleEventHtml(lesson) {
   const status = parentScheduleStatus(lesson);
-  const statusClass = status === 'Отменено' ? 'red' : status === 'Перенесено' ? 'amber' : 'green';
+  const statusClass = ['Отменено', 'Отсутствовал'].includes(status) ? 'red' : ['Перенесено', 'Не будет'].includes(status) ? 'amber' : 'green';
   return `<button class="event parent-calendar-event${status === 'Проведено' ? ' done' : ''}" data-action="lesson-info" data-lesson="${lesson.id}">
     <span class="calendar-event-site">${escapeHtml(lesson.site ?? 'Площадка не указана')}</span>
     <span class="calendar-event-meta">${time(lesson.startsAt)} · ${escapeHtml(lesson.group)}</span>
@@ -118,7 +151,13 @@ function attendanceHtml(rows) {
 function paymentsHtml(data) {
   const rows = data?.rows ?? [];
   const enrollments = data?.home?.enrollments?.filter((item) => item.subscriptionPrice != null) ?? [];
-  return `<section class="parent-title"><h1>Оплаты</h1></section>${enrollments.length ? `<div class="parent-pay-actions">${enrollments.map((item) => `<button class="parent-primary" data-action="pay" data-amount="${escapeHtml(item.subscriptionPrice)}" data-direction="${escapeHtml(item.direction)}">Оплатить ${escapeHtml(item.direction)} · ${money(item.subscriptionPrice)}</button>`).join('')}</div>` : ''}${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong></article>`).join('')}</div>` : empty('Оплат пока нет.')}`;
+  return `<section class="parent-title"><h1>Оплаты</h1></section>${enrollments.length ? `<div class="parent-pay-actions">${enrollments.map((item) => `<article class="parent-card parent-subscription"><b>${escapeHtml(item.direction)}</b><span>Текущая стоимость абонемента: <strong>${money(item.subscriptionPrice)}</strong></span><button class="parent-primary" data-action="pay" data-amount="${escapeHtml(item.subscriptionPrice)}" data-direction="${escapeHtml(item.direction)}">Оплатить</button></article>`).join('')}</div>` : ''}${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong></article>`).join('')}</div>` : empty('Оплат пока нет.')}`;
+}
+
+function aboutHtml(data) {
+  const child = data.child ?? {}; const age = ageFromBirthDate(child.birthDate);
+  const directions = (data.enrollments ?? []).map((item) => `<div class="parent-about-direction"><b>${escapeHtml(item.direction)}</b><span>Группа: ${escapeHtml(item.group ?? '—')}</span><span>Преподаватель: ${escapeHtml(item.teacher ?? '—')}</span><span>Площадка: ${escapeHtml(item.site ?? '—')}</span><span>Расписание: ${escapeHtml(item.schedule ?? '—')}</span></div>`).join('');
+  return `<section class="parent-title"><h1>О ребёнке</h1></section><article class="parent-card parent-about"><div class="parent-info"><span>ФИО</span><b>${escapeHtml(child.name ?? '—')}</b><span>Возраст</span><b>${age == null ? '—' : `${age} лет`}</b></div><form data-action="child-about"><label>Дата рождения<input name="birthDate" type="date" value="${escapeHtml(child.birthDate ?? '')}"></label><label>Школа<input name="school" value="${escapeHtml(child.school ?? '')}"></label><label>Класс<input name="grade" value="${escapeHtml(child.grade ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article><article class="parent-card"><h2>Направления</h2>${directions || empty('Нет активных направлений.')}</article>`;
 }
 
 function groupPhotos(rows) {
@@ -132,11 +171,11 @@ function photosHtml(rows) {
 function settingsHtml(data) {
   const contact = state.profile.contact ?? {};
   return `<section class="parent-title"><h1>Настройки</h1></section>
-    <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><label>Email<input name="email" type="email" value="${escapeHtml(data.profile.email ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
+    <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
     <article class="parent-card"><h2>Уведомления</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
     <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
-    <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a href="tel:${escapeHtml(contact.phone)}">Позвонить ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
+    <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-contact-button primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a class="parent-contact-button" href="tel:${escapeHtml(String(contact.phone).replace(/[^\d+]/g, ''))}">Позвонить ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
     <button class="parent-logout" data-action="logout">Выйти</button>`;
 }
 
@@ -147,7 +186,7 @@ function notificationsHtml(rows) {
 function viewerHtml() {
   if (!state.viewer?.photos?.length) return '';
   const photo = state.viewer.photos[state.viewer.index];
-  return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть">×</button><button data-action="viewer-prev" aria-label="Предыдущее">‹</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">›</button><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
+  return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть">×</button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
 }
 
 function paymentModalHtml() {
@@ -160,7 +199,7 @@ function lessonInfoHtml() {
   const lesson = state.lessonInfo;
   if (!lesson) return '';
   const status = parentScheduleStatus(lesson) || 'Запланировано';
-  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div></article></div>`;
+  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div>${lesson.canChangeAbsence ? `<button class="${lesson.absenceNotice ? 'parent-secondary' : 'parent-primary'}" data-action="${lesson.absenceNotice ? 'absence-cancel' : 'absence-set'}" data-lesson="${lesson.id}">${lesson.absenceNotice ? 'Отменить отметку' : 'Не будет'}</button>` : ''}</article></div>`;
 }
 
 function consentHtml(documents) {
@@ -202,6 +241,7 @@ function render() {
   if (state.tab === 'schedule') return shell(scheduleHtml(state.data ?? []));
   if (state.tab === 'attendance') return shell(attendanceHtml(state.data ?? []));
   if (state.tab === 'payments') return shell(paymentsHtml(state.data ?? { rows: [], home: null }));
+  if (state.tab === 'about') return shell(aboutHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [] }));
   if (state.tab === 'photos') return shell(photosHtml(state.data ?? []));
   return shell(settingsHtml(state.data ?? { profile: {}, settings: [], documents: [] }));
 }
@@ -239,16 +279,17 @@ app?.addEventListener('change', async (event) => {
   }
 });
 app?.addEventListener('submit', async (event) => {
-  if (event.target.dataset.action !== 'profile') return;
+  if (!['profile', 'child-about'].includes(event.target.dataset.action)) return;
   event.preventDefault(); const form = new FormData(event.target);
-  try { await api.request('/parent/profile', { method: 'PATCH', body: Object.fromEntries(form) }); await loadTab(); }
+  const path = event.target.dataset.action === 'profile' ? '/parent/profile' : `/parent/children/${state.childId}/about`;
+  try { await api.request(path, { method: 'PATCH', body: Object.fromEntries(form) }); await loadTab(); }
   catch (error) { window.alert(errorMessage(error)); }
 });
 app?.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return;
   const action = target.dataset.action;
   try {
-  if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; await loadTab(); }
+  if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; state.menuOpen = false; await loadTab(); }
   else if (action === 'retry') await loadTab();
   else if (action === 'notifications') { state.tab = 'notifications'; await loadTab(); }
   else if (action === 'notification') { await api.request(`/parent/notifications/${target.dataset.id}/read`, { method: 'POST' }); if (state.profile.children.some((child) => String(child.id) === target.dataset.child)) state.childId = target.dataset.child; state.tab = target.dataset.destination || 'home'; await loadTab(); }
@@ -269,6 +310,13 @@ app?.addEventListener('click', async (event) => {
   else if (action === 'schedule-today') { state.scheduleCursor = localIsoDate(); state.data = null; await loadTab(); }
   else if (action === 'lesson-info') { state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === target.dataset.lesson) ?? null; render(); }
   else if (action === 'lesson-info-close') { state.lessonInfo = null; render(); }
+  else if (action === 'menu') { state.menuOpen = !state.menuOpen; render(); }
+  else if (action === 'menu-close') { state.menuOpen = false; render(); }
+  else if (action === 'absence-set' || action === 'absence-cancel') {
+    const lessonId = target.dataset.lesson; const method = action === 'absence-set' ? 'PUT' : 'DELETE';
+    await api.request(`/parent/children/${state.childId}/lessons/${lessonId}/absence-notice`, { method });
+    await loadTab(); state.lessonInfo = (state.data ?? []).find((lesson) => String(lesson.id) === lessonId) ?? null; render();
+  }
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) window.icubeAuthLogout?.();
     else window.alert(errorMessage(error));

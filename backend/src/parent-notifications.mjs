@@ -9,7 +9,7 @@ const eventStamp = (value) => (value instanceof Date ? value.toISOString() : Str
 export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
   reminder_day_before: ({ startsAt }) => ({
     title: 'Занятие завтра',
-    body: `Завтра состоится занятие по расписанию в ${clock(startsAt)}. Если вас не будет, пожалуйста, сообщите об этом в чате MAX.`,
+    body: `Завтра занятие по расписанию в ${clock(startsAt)}. Если ребёнка не будет, отметьте это в расписании.`,
     destination: 'schedule',
   }),
   lesson_move: ({ previousStartsAt, startsAt }) => ({

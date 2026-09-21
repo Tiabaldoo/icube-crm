@@ -822,7 +822,7 @@ render();
         '<div class="info-line"><span>Создано детей / групп</span><b>'+p.newChildren+' / '+p.newGroups+'</b></div>'+
         '<div class="info-line"><span>Важные изменения</span><b>'+p.importantChanges+'</b></div></div></div>';
     }).join('')+'</div>';
-    const notices=(state.notifications||[]).filter(function(n){return n.type==='project_transfer'||n.type==='project_change';});
+    const notices=(state.notifications||[]).filter(function(n){return n.type==='project_transfer'||n.type==='project_change'||n.type==='child_birthday';});
     if(notices.length) html+='<div class="card pad" style="margin-top:16px"><h2>Важные уведомления</h2>'+notices.map(function(n){
       return '<div class="kpi-line"><div><b>'+safe(n.title)+'</b><div class="muted mini">'+safe(n.body)+'</div></div>'+
         (n.entityType==='child'&&state.children.some(function(c){return c.id===Number(n.entityId);})?'<button class="btn soft" onclick="openChild('+Number(n.entityId)+')">Открыть</button>':'')+'</div>';
@@ -3156,6 +3156,18 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return '<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>История переводов</h2><span class="muted mini">денежный остаток</span></div>'+rows+'</div>';
   }
 
+  function childAgeV118(value){
+    if(!value) return null;
+    const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})/)||String(value).match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+    if(!match) return null;
+    const iso=match[1].length===4;
+    const year=Number(iso?match[1]:match[3]);
+    const month=Number(match[2]);
+    const day=Number(iso?match[3]:match[1]);
+    const now=new Date();
+    return now.getFullYear()-year-((now.getMonth()+1<month||(now.getMonth()+1===month&&now.getDate()<day))?1:0);
+  }
+
   function childOverviewV118(c){
     const directions=(c.enrollments||[]).map(function(e){
       const g=byId(state.groups,e.groupId);
@@ -3182,10 +3194,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+' · '+x.group.direction+'</b><div class="muted mini">'+(x.lesson.topic||x.group.name)+'</div></div><span class="badge green">Был</span></div>';
     }).join(''):'<div class="empty">Посещений пока нет</div>';
 
+    const age=childAgeV118(c.birth);
     return '<div class="split">'+
       '<div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge '+statusBadge(c.status)+'">'+c.status+'</span></div>'+directions+'</div>'+
       '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list">'+
         '<div class="info-line"><span>Дата рождения</span><b>'+(c.birth||'—')+'</b></div>'+
+        '<div class="info-line"><span>Возраст</span><b>'+(age==null?'—':age+' лет')+'</b></div>'+
+        '<div class="info-line"><span>Школа</span><b>'+(c.school||'—')+'</b></div>'+
+        '<div class="info-line"><span>Класс</span><b>'+(c.grade||'—')+'</b></div>'+
         '<div class="info-line"><span>Родитель</span><b>'+(c.parent||'—')+'</b></div>'+
         '<div class="info-line"><span>Телефон</span><b>'+(c.phone||'—')+'</b></div>'+
         '<div class="info-line"><span>Примечание</span><span style="text-align:right">'+(c.note||'—')+'</span></div>'+
@@ -7861,7 +7877,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         '<button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
     }).join('');
 
-    return '<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">'+longRu(d)+' · '+events.length+' занятий</div>'+
+    const birthdays=(state.notifications||[]).filter(function(n){return n.type==='child_birthday';});
+    const birthdaySafe=function(value){return String(value||'').replace(/[&<>"']/g,function(char){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char];});};
+    const birthdayHtml=birthdays.length?'<div class="teacher-card" style="border-color:#d6bbfb;background:#faf5ff"><b>Дни рождения</b>'+birthdays.map(function(n){return '<div class="muted" style="margin-top:6px">'+birthdaySafe(n.body)+'</div>';}).join('')+'</div>':'';
+    return '<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">'+longRu(d)+' · '+events.length+' занятий</div>'+birthdayHtml+
       (cards||'<div class="teacher-card"><div class="empty">Сегодня занятий нет.</div></div>');
   };
 
@@ -8283,6 +8302,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const trial=extra?!!ex?.trial:!!l.trialChildren?.[c.id];
     const firstInDirection=!hasPreviousPresentVisitInDirection(c.id,l);
     const showTrial=trial||firstInDirection;
+    const absenceNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(c.id);});
+    const birthday=(l.birthdayChildIds||[]).some(function(id){return Number(id)===Number(c.id);});
 
     let subtitle='';
     if(extra){
@@ -8303,9 +8324,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       ? '<button class="btn small student-extra-remove" aria-label="Убрать с занятия" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">×</button>'
       : (l.done?'<button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="visitTrialOptionsV121('+c.id+',false)">⋯</button>':'');
 
+    const flags=(absenceNotice?'<span class="lesson-student-flag absence">Не будет</span>':'')+
+      (birthday?'<span class="lesson-student-flag birthday">🎂 День рождения</span>':'');
     return '<div class="student-check lesson-student-card">'+
       '<div class="lesson-student-attendance-slot">'+attendanceControl+'</div>'+
-      '<div class="lesson-student-name-cell"><b class="lesson-student-name" title="'+c.name+'">'+c.name+'</b>'+subtitle+'</div>'+
+      '<div class="lesson-student-name-cell"><b class="lesson-student-name" title="'+c.name+'">'+c.name+'</b>'+subtitle+(flags?'<div class="lesson-student-flags">'+flags+'</div>':'')+'</div>'+
       '<div class="lesson-photo-control-slot"><button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button></div>'+
       '<div class="lesson-student-more-slot">'+secondaryAction+'</div>'+
       '<div class="lesson-student-trial-slot">'+trialControl+'</div>'+

@@ -11,9 +11,9 @@ Auth v1 использует серверные сессии. Временног
 - `POST /auth/logout` отзывает текущую сессию и очищает cookie.
 - `POST /auth/refresh` в Auth v1 не используется и пока возвращает `501`.
 - `director`: полный доступ к рабочим сущностям и настройкам.
-- `teacher`: чтение назначенных групп/детей/занятий; отдельные permissions на старт, посещаемость, завершение, фотографии, quick child, изменение даты/времени и фактического преподавателя, отмену занятия.
+- `teacher`: чтение назначенных групп/детей/занятий и адресных уведомлений; отдельные permissions на старт, посещаемость, завершение, фотографии, quick child, изменение даты/времени и фактического преподавателя, отмену занятия.
 - `partner`: вход в общий интерфейс с проектным ограничением по активной связи `partner_users → partners → projects`; сейчас один активный проект на сессию. Несколько пользователей одного партнёра допустимы.
-- `parent`, `child`: заложены в permission-модели, но вход и кабинеты этих ролей не реализованы.
+- `parent`: отдельный кабинет только для связанных через guardian детей. Роль `child` пока остаётся заделом без кабинета.
 
 Cookie содержит случайный непрозрачный token; в `auth_sessions` хранится только его SHA-256 hash. Middleware на каждом запросе проверяет срок, `revoked_at`, активный статус user и совпадение session/user `token_version`, после чего загружает роли и связанную запись `teachers.user_id`. Cookie имеет `HttpOnly`, `Secure`, `SameSite=Lax` и недоступна JavaScript.
 
@@ -46,10 +46,11 @@ Permission преподавателя не даёт доступ к любому
 | Партнёр | live calculation `GET /partner-settlements?projectId=&from=&to=`; фиксация `POST /partner-settlements` пока не реализована |
 | Статистика | `GET /statistics?from=&to=&projectId=all&directionId=all` |
 | Уведомления CRM | `GET /notifications`, `POST /notifications/:id/read` |
-| Кабинет родителя | `GET /parent/me`, `/parent/children`, `/parent/children/:id/{home,schedule,attendance,payments,photos}`, защищённый `GET /parent/photos/:photoId/file` |
+| Кабинет родителя | `GET /parent/me`, `/parent/children`, `/parent/children/:id/{home,schedule,attendance,payments,photos,about}`, `PATCH /parent/children/:id/about`, защищённый `GET /parent/photos/:photoId/file` |
+| Предварительное отсутствие | `PUT/DELETE /parent/children/:id/lessons/:lessonId/absence-notice` до начала занятия |
 | Настройки родителя | `GET/PATCH /parent/profile`, `GET/PATCH /parent/notification-settings`, `GET /parent/notifications`, `POST /parent/notifications/:id/read` |
 | Согласия родителя | `GET /parent/documents`, `POST /parent/documents/:id/accept` |
-| Родительский доступ | директорские маршруты `/children/:id/parent-access`, `/parent-access/search`, link/unlink/reset/status |
+| Родительский доступ | директорские и project-scoped партнёрские маршруты `/children/:id/parent-access`, `/parent-access/search`, link/unlink/reset/status |
 
 Партнёру разрешены рабочие CRUD-операции только своего проекта: дети и их текущие направления, группы, площадки, преподаватели, оплаты, возвраты, балансы, занятия и зарплата. `GET /lessons` и `GET /lessons/:id` для чужого проекта возвращают только календарный read-only DTO: время, группа, преподаватель, проект и фактическая площадка. Любая мутация такого занятия отклоняется `403`. Статистика, настройки, управление аккаунтами преподавателей и директорский партнёрский расчёт партнёру недоступны. `GET /sites/venues` не даёт права редактировать чужую площадку: она служит только физическим местом конкретного занятия.
 

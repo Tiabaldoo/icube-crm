@@ -12,6 +12,7 @@ export const permissions = Object.freeze({
     'lessons:quick-child',
     'lessons:update-assigned',
     'lessons:cancel',
+    'notifications:read',
   ]),
   partner: new Set(['projects:read', 'directions:read', 'sites:read', 'sites:write', 'teachers:read', 'teachers:write',
     'groups:read', 'groups:write', 'children:read', 'children:write', 'enrollments:write',

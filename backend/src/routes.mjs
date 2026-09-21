@@ -83,6 +83,10 @@ export function createApiRouter(pool, {
   router.get('/parent/children', requirePermission('own-children:read'), run((request) => parentPortal.children(request.auth)));
   router.get('/parent/children/:id/home', requirePermission('own-children:read'), run((request) => parentPortal.home(request.params.id, request.auth)));
   router.get('/parent/children/:id/schedule', requirePermission('own-children:read'), run((request) => parentPortal.schedule(request.params.id, request.query, request.auth)));
+  router.put('/parent/children/:id/lessons/:lessonId/absence-notice', requirePermission('own-children:read'), run((request) => parentPortal.setAbsenceNotice(request.params.id, request.params.lessonId, request.auth)));
+  router.delete('/parent/children/:id/lessons/:lessonId/absence-notice', requirePermission('own-children:read'), run((request) => parentPortal.cancelAbsenceNotice(request.params.id, request.params.lessonId, request.auth)));
+  router.get('/parent/children/:id/about', requirePermission('own-children:read'), run((request) => parentPortal.about(request.params.id, request.auth)));
+  router.patch('/parent/children/:id/about', requirePermission('own-children:read'), run((request) => parentPortal.updateAbout(request.params.id, request.body, request.auth)));
   router.get('/parent/children/:id/attendance', requirePermission('own-attendance:read'), run((request) => parentPortal.attendance(request.params.id, request.auth)));
   router.get('/parent/children/:id/payments', requirePermission('own-payments:read'), run((request) => parentPortal.payments(request.params.id, request.auth)));
   router.get('/parent/children/:id/photos', requirePermission('own-children:read'), run((request) => parentPortal.photos(request.params.id, request.auth)));
@@ -108,13 +112,13 @@ export function createApiRouter(pool, {
     } catch (error) { next(error); }
   });
 
-  router.get('/parent-access/search', requirePermission('*'), run((request) => parentPortal.searchAccess(request.query.q, request.auth)));
-  router.get('/children/:id/parent-access', requirePermission('*'), run((request) => parentPortal.listAccess(request.params.id, request.auth)));
-  router.post('/children/:id/parent-access', requirePermission('*'), run((request) => parentPortal.createAccess(request.params.id, request.body, request.auth), 201));
-  router.post('/children/:id/parent-access/link', requirePermission('*'), run((request) => parentPortal.linkAccess(request.params.id, request.body.guardianId, request.auth)));
-  router.delete('/children/:id/parent-access/:guardianId', requirePermission('*'), run((request) => parentPortal.unlinkAccess(request.params.id, request.params.guardianId, request.auth), 204));
-  router.post('/parent-access/:guardianId/reset-password', requirePermission('*'), run((request) => parentPortal.resetPassword(request.params.guardianId, request.auth)));
-  router.patch('/parent-access/:guardianId/status', requirePermission('*'), run((request) => parentPortal.setAccessStatus(request.params.guardianId, request.body.enabled, request.auth)));
+  router.get('/parent-access/search', requirePermission('children:write'), run((request) => parentPortal.searchAccess(request.query.q, request.auth)));
+  router.get('/children/:id/parent-access', requirePermission('children:write'), run((request) => parentPortal.listAccess(request.params.id, request.auth)));
+  router.post('/children/:id/parent-access', requirePermission('children:write'), run((request) => parentPortal.createAccess(request.params.id, request.body, request.auth), 201));
+  router.post('/children/:id/parent-access/link', requirePermission('children:write'), run((request) => parentPortal.linkAccess(request.params.id, request.body.guardianId, request.auth)));
+  router.delete('/children/:id/parent-access/:guardianId', requirePermission('children:write'), run((request) => parentPortal.unlinkAccess(request.params.id, request.params.guardianId, request.auth), 204));
+  router.post('/parent-access/:guardianId/reset-password', requirePermission('children:write'), run((request) => parentPortal.resetPassword(request.params.guardianId, request.auth, request.body.childId)));
+  router.patch('/parent-access/:guardianId/status', requirePermission('children:write'), run((request) => parentPortal.setAccessStatus(request.params.guardianId, request.body.enabled, request.auth, request.body.childId)));
   router.get('/project-transfer-targets', requirePermission('enrollments:write'), run(async (request) => {
     const partnerProject = partnerProjectId(request.auth);
     const [rows] = await pool.query(`SELECT id,code,name FROM projects WHERE active=TRUE

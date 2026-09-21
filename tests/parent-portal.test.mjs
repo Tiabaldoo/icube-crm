@@ -5,33 +5,35 @@ import { createParentPortal } from '../backend/src/parent-portal.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
 import { permissions } from '../backend/src/auth.mjs';
-import { parentScheduleCalendar, parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
+import { ageFromBirthDate, parentBalancePresentation, parentScheduleCalendar, parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
+import { ageOnDate, createBirthdayNotifications } from '../backend/src/birthday-notifications.mjs';
 import { localDate, nextDate } from '../scripts/generate-parent-notifications.mjs';
 
 const parent = { userId: '50', roles: ['parent'] };
 
 function portalFixture() {
   const state = {
-    accepted: new Set(), materialized: [],
+    accepted: new Set(), materialized: [], notices: new Set(), sql: [],
     documents: [
       { id: 1, document_type: 'privacy_policy', document_version: 'v1', title: 'Privacy', body: 'Text', is_required: 1 },
       { id: 2, document_type: 'personal_data_parent', document_version: 'v1', title: 'Parent', body: 'Text', is_required: 1 },
       { id: 3, document_type: 'personal_data_child_legal_representative', document_version: 'v1', title: 'Child', body: 'Text', is_required: 1 },
     ],
     children: [
-      { id: 10, full_name: 'Петя', birth_date: '2018-01-02', status: 'active', group: 100, balance: '4.00000000' },
+      { id: 10, full_name: 'Петя', birth_date: '2018-01-02', school: 'Школа 1', grade: '2Б', status: 'active', group: 100, balance: '4.00000000' },
       { id: 11, full_name: 'Маша', birth_date: '2019-03-04', status: 'active', group: 101, balance: '1.50000000' },
       { id: 12, full_name: 'Чужой ребёнок', birth_date: '2018-05-06', status: 'active', group: 102, balance: '9.00000000' },
     ],
   };
   const linked = new Set([10, 11]);
   async function query(sql, params = {}) {
+    state.sql.push(sql);
     if (sql.includes('FROM guardians g JOIN users u') && sql.includes('WHERE g.user_id=')) return [[{ id: 5, user_id: 50, full_name: 'Родитель', phone: null, email: null, login: 'parent@example.test', status: 'active' }]];
     if (sql.includes('FROM parent_documents d LEFT JOIN')) return [state.documents.map((row) => ({ ...row, accepted_at: state.accepted.has(row.id) ? new Date('2026-09-20T00:00:00Z') : null }))];
     if (sql.startsWith('SELECT id FROM parent_documents')) return [state.documents.filter((row) => String(row.id) === String(params.id)).map(({ id }) => ({ id }))];
     if (sql.startsWith('INSERT INTO parent_document_acceptances')) { state.accepted.add(Number(params.documentId)); return [{ affectedRows: 1 }]; }
     if (sql.includes('SELECT c.id,c.full_name,c.birth_date,c.status FROM guardians')) return [state.children.filter((child) => linked.has(child.id))];
-    if (sql.includes('SELECT c.id,c.full_name,c.birth_date,c.status,g.id guardian_id')) {
+    if (sql.includes('SELECT c.id,c.full_name,c.birth_date,c.school,c.grade,c.status,g.id guardian_id')) {
       const child = state.children.find((item) => String(item.id) === String(params.childId) && linked.has(item.id));
       return [[child ? { ...child, guardian_id: 5 } : undefined].filter(Boolean)];
     }
@@ -41,13 +43,17 @@ function portalFixture() {
         group_id: child.group, group_name: `Группа ${child.group}`, weekday: 3, start_time: '17:00:00', end_time: '18:00:00',
         site_name: 'Площадка', teacher_name: 'Учитель', current_price: '1025.00' } : undefined].filter(Boolean)];
     }
-    if (sql.includes('FROM lesson_photos ph') && sql.includes('ORDER BY ph.uploaded_at DESC')) return [[]];
+    if (sql.startsWith('UPDATE children SET birth_date=')) { const child = state.children.find((item) => String(item.id) === String(params.id)); Object.assign(child, { birth_date: params.birthDate, school: params.school, grade: params.grade }); return [{ affectedRows: 1 }]; }
+    if (sql.includes('SELECT l.id,l.starts_at,l.status FROM lessons l') && sql.includes('FOR UPDATE')) return [[String(params.lessonId) === '70' && String(params.childId) === '10' ? { id: 70, starts_at: '2026-09-22 17:00:00', status: 'scheduled' } : undefined].filter(Boolean)];
+    if (sql.startsWith('INSERT INTO lesson_child_absence_notices')) { state.notices.add(`${params.lessonId}:${params.childId}`); return [{ affectedRows: 1 }]; }
+    if (sql.includes('SELECT id FROM lessons WHERE id=:lessonId') && sql.includes('FOR UPDATE')) return [[String(params.lessonId) === '70' ? { id: 70 } : undefined].filter(Boolean)];
+    if (sql.startsWith('UPDATE lesson_child_absence_notices SET cancelled_at=')) { const key = `${params.lessonId}:${params.childId}`; const found = state.notices.delete(key); return [{ affectedRows: found ? 1 : 0 }]; }
     if (sql.includes('FROM lessons l JOIN sites') && sql.includes("l.status='scheduled'")) return [[{ id: 70, starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', site_name: 'Площадка' }]];
     if (sql.includes('SELECT l.id,l.group_id,l.scheduled_starts_at')) return [[
-      { id: 70, group_id: 100, scheduled_starts_at: '2026-09-22 17:00:00', starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
-      { id: 71, group_id: 100, scheduled_starts_at: '2026-09-23 17:00:00', starts_at: '2026-09-24 18:00:00', ends_at: '2026-09-24 19:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
-      { id: 72, group_id: 100, scheduled_starts_at: '2026-09-25 17:00:00', starts_at: '2026-09-25 17:00:00', ends_at: '2026-09-25 18:00:00', status: 'cancelled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
-      { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 15:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка' },
+      { id: 70, group_id: 100, scheduled_starts_at: '2026-09-22 17:00:00', starts_at: '2026-09-22 17:00:00', ends_at: '2026-09-22 18:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 0, attendance_present: null, can_change_absence: 1 },
+      { id: 71, group_id: 100, scheduled_starts_at: '2026-09-23 17:00:00', starts_at: '2026-09-24 18:00:00', ends_at: '2026-09-24 19:00:00', status: 'scheduled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 0, attendance_present: null, can_change_absence: 1 },
+      { id: 72, group_id: 100, scheduled_starts_at: '2026-09-25 17:00:00', starts_at: '2026-09-25 17:00:00', ends_at: '2026-09-25 18:00:00', status: 'cancelled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 1, attendance_present: 0, can_change_absence: 0 },
+      { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 15:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: 1, attendance_present: 1, can_change_absence: 0 },
     ]];
     if (sql.includes('FROM attendances a JOIN lessons')) {
       const childId = Number(params.childId); return [[{ lesson_id: childId * 10, starts_at: `2026-09-${childId === 10 ? '10' : '11'} 17:00:00`, is_trial: childId === 11, direction_name: 'Робототехника', group_name: `Группа ${childId}` }]];
@@ -61,7 +67,8 @@ function portalFixture() {
     if (sql.includes('FROM notifications n LEFT JOIN children')) return [[]];
     throw new Error(`Unexpected parent portal SQL: ${sql}`);
   }
-  const pool = { query };
+  const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+  const pool = { query, getConnection: async () => connection };
   const service = createParentPortal(pool, { materializeLessons: async (...args) => state.materialized.push(args), contact: { phone: '+70000000000' } });
   return { state, service };
 }
@@ -103,7 +110,7 @@ test('parent schedule materializes only linked current group and exposes no futu
 test('parent schedule uses the shared calendar layout in read-only mode and completed overrides moved', () => {
   const rows = [
     { id: '70', startsAt: '2026-09-22T17:00:00', endsAt: '2026-09-22T18:00:00', status: 'scheduled', moved: false, group: 'Группа 1', site: 'Площадка', teacher: 'Учитель' },
-    { id: '71', startsAt: '2026-09-24T18:00:00', endsAt: '2026-09-24T19:00:00', status: 'completed', moved: true, group: 'Группа 1', site: 'Площадка', teacher: 'Учитель' },
+    { id: '71', startsAt: '2026-09-24T18:00:00', endsAt: '2026-09-24T19:00:00', status: 'completed', moved: true, present: true, group: 'Группа 1', site: 'Площадка', teacher: 'Учитель' },
   ];
   const html = parentScheduleCalendar(rows, '2026-09-15');
   assert.match(html, /calendar-desktop/); assert.match(html, /calendar calendar-grid/); assert.match(html, /calendar-mobile/);
@@ -121,11 +128,18 @@ test('parent role has no universal CRM or mutation permissions', () => {
 function adminFixture() {
   const state = {
     users: [], guardians: [{ id: 5, user_id: null, full_name: 'Мама', phone: null, email: null }],
-    children: [{ id: 10, full_name: 'Петя' }, { id: 11, full_name: 'Маша' }],
+    children: [{ id: 10, full_name: 'Петя', project_id: 2 }, { id: 11, full_name: 'Маша', project_id: 3 }],
     links: [{ child_id: 10, guardian_id: 5, is_primary: 1 }], sessions: [], nextUserId: 50,
   };
   async function query(sql, params = {}) {
-    if (sql.startsWith('SELECT id,full_name FROM children')) return [state.children.filter((child) => String(child.id) === String(params.childId))];
+    if (sql.startsWith('SELECT c.id,c.full_name FROM children')) return [state.children.filter((child) => String(child.id) === String(params.childId)
+      && (params.projectId == null || String(child.project_id) === String(params.projectId)))];
+    if (sql.includes('SELECT cg.guardian_id FROM child_guardians cg JOIN child_enrollments')) {
+      const allowed = state.links.some((link) => String(link.guardian_id) === String(params.guardianId)
+        && (params.childId == null || String(link.child_id) === String(params.childId))
+        && state.children.some((child) => child.id === link.child_id && String(child.project_id) === String(params.projectId)));
+      return [[allowed ? { guardian_id: params.guardianId } : undefined].filter(Boolean)];
+    }
     if (sql.startsWith('SELECT id FROM users WHERE LOWER(email)')) return [state.users.filter((user) => user.email.toLowerCase() === params.login.toLowerCase()).map(({ id }) => ({ id }))];
     if (sql.startsWith('INSERT INTO users')) { const user = { id: state.nextUserId++, email: params.login, password_hash: params.passwordHash, display_name: params.displayName, status: 'active', token_version: 1 }; state.users.push(user); return [{ insertId: user.id }]; }
     if (sql === "SELECT id FROM roles WHERE code='parent' LIMIT 1") return [[{ id: 4 }]];
@@ -133,7 +147,7 @@ function adminFixture() {
     if (sql.includes('WHERE cg.child_id=:childId AND cg.is_primary=TRUE')) {
       const link = state.links.find((item) => String(item.child_id) === String(params.childId) && item.is_primary);
       const guardian = link && state.guardians.find((item) => item.id === link.guardian_id);
-      return [[guardian ? { id: guardian.id, user_id: guardian.user_id } : undefined].filter(Boolean)];
+      return [[guardian ? { id: guardian.id, user_id: guardian.user_id, full_name: guardian.full_name } : undefined].filter(Boolean)];
     }
     if (sql.startsWith('UPDATE guardians SET user_id=')) { const guardian = state.guardians.find((item) => String(item.id) === String(params.guardianId)); guardian.user_id = Number(params.userId); guardian.full_name = params.name ?? guardian.full_name; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('INSERT INTO guardians')) { const row = { id: state.guardians.length + 10, user_id: Number(params.userId), full_name: params.name }; state.guardians.push(row); return [{ insertId: row.id }]; }
@@ -171,9 +185,10 @@ function adminFixture() {
 
 test('director creates one-time credentials, links a second child and reset revokes sessions', async () => {
   const fixture = adminFixture(); const director = { userId: '1', roles: ['director'] };
-  const created = await fixture.service.createAccess(10, { name: 'Мама' }, director);
+  const created = await fixture.service.createAccess(10, {}, director);
   assert.deepEqual(created, { guardianId: '5', login: 'generated@cabinet.test', password: 'Random-Password-1' });
   assert.equal(fixture.state.users[0].password_hash, 'hash:Random-Password-1');
+  assert.equal(fixture.state.users[0].display_name, 'Мама');
   await fixture.service.linkAccess(11, 5, director);
   const access = await fixture.service.listAccess(11, director);
   assert.deepEqual(access[0].linkedChildren, ['Маша', 'Петя']);
@@ -339,4 +354,121 @@ test('daily notification scheduler uses project timezone and a persistent 19:00 
   ]);
   assert.match(service, /Type=oneshot/); assert.match(service, /npm run parent-notifications:daily/);
   assert.match(timer, /OnCalendar=\*-\*-\* 19:00:00 Asia\/Sakhalin/); assert.match(timer, /Persistent=true/);
+});
+
+test('parent balance wording preserves fractional values and required color states', () => {
+  assert.deepEqual(parentBalancePresentation('4.00000000'), { tone: 'success', text: 'Осталось 4 оплаченных занятия' });
+  assert.deepEqual(parentBalancePresentation('2.50000000'), { tone: 'success', text: 'Осталось 2,5 оплаченных занятия' });
+  assert.deepEqual(parentBalancePresentation('1.00000000'), { tone: 'warning', text: 'Осталось 1 оплаченное занятие' });
+  assert.deepEqual(parentBalancePresentation('0.00000000'), { tone: 'danger', text: 'Оплаченные занятия закончились' });
+  assert.deepEqual(parentBalancePresentation('-2.00000000'), { tone: 'danger', text: 'Задолженность: 2 занятия' });
+});
+
+test('parent can edit only child birth date, school and grade', async () => {
+  const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  const before = await fixture.service.about(10, parent);
+  assert.deepEqual(before.child, { id: '10', name: 'Петя', birthDate: '2018-01-02', school: 'Школа 1', grade: '2Б' });
+  const updated = await fixture.service.updateAbout(10, { birthDate: '2018-02-03', school: 'Школа 2', grade: '3А' }, parent);
+  assert.deepEqual(updated.child, { id: '10', name: 'Петя', birthDate: '2018-02-03', school: 'Школа 2', grade: '3А' });
+  await assert.rejects(fixture.service.updateAbout(10, { name: 'Другое имя' }, parent), { status: 400, code: 'FORBIDDEN_FIELDS' });
+  assert.equal(ageFromBirthDate('2018-09-22', '2026-09-21'), 7);
+  assert.equal(ageFromBirthDate('2018-09-21', '2026-09-21'), 8);
+});
+
+test('absence notice can be set and cancelled only for own future lesson without financial writes', async () => {
+  const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  assert.deepEqual(await fixture.service.setAbsenceNotice(10, 70, parent), { lessonId: '70', childId: '10', active: true });
+  assert.equal(fixture.state.notices.has('70:10'), true);
+  assert.deepEqual(await fixture.service.cancelAbsenceNotice(10, 70, parent), { lessonId: '70', childId: '10', active: false });
+  assert.equal(fixture.state.notices.has('70:10'), false);
+  await assert.rejects(fixture.service.setAbsenceNotice(12, 70, parent), { status: 404, code: 'CHILD_NOT_FOUND' });
+  await assert.rejects(fixture.service.setAbsenceNotice(10, 72, parent), { status: 409, code: 'ABSENCE_NOTICE_CLOSED' });
+  const mutationSql = fixture.state.sql.filter((sql) => /INSERT INTO lesson_child_absence|UPDATE lesson_child_absence/.test(sql)).join('\n');
+  assert.doesNotMatch(mutationSql, /attendances|balance_|salary_/i);
+});
+
+test('parent lesson status uses fact after completion and notice only before completion', () => {
+  assert.equal(parentScheduleStatus({ status: 'scheduled', absenceNotice: true }), 'Не будет');
+  assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: true, present: true }), 'Проведено');
+  assert.equal(parentScheduleStatus({ status: 'completed', absenceNotice: true, present: false }), 'Отсутствовал');
+  assert.equal(parentScheduleStatus({ status: 'cancelled', absenceNotice: true, present: true }), 'Отменено');
+});
+
+test('latest parent photo uses the first upload from the latest photographed lesson', async () => {
+  const source = await readFile(new URL('../backend/src/parent-portal.mjs', import.meta.url), 'utf8');
+  assert.match(source, /ORDER BY l\.starts_at DESC,l\.id DESC,ph\.uploaded_at,ph\.id LIMIT 1/);
+  assert.match(source, /ph\.deleted_at IS NULL AND ph\.purged_at IS NULL/);
+});
+
+test('parent UI moves price and child data to their sections and removes email and bottom tabbar', async () => {
+  const [portal, css, access] = await Promise.all([
+    readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/ui/parent-portal.css', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/parent-access.mjs', import.meta.url), 'utf8'),
+  ]);
+  const home = portal.slice(portal.indexOf('function homeHtml'), portal.indexOf('function scheduleEventHtml'));
+  const payments = portal.slice(portal.indexOf('function paymentsHtml'), portal.indexOf('function aboutHtml'));
+  assert.doesNotMatch(home, /subscriptionPrice|Стоимость абонемента|Здравствуйте/);
+  assert.match(payments, /Текущая стоимость абонемента/);
+  assert.match(portal, /О ребёнке/); assert.match(portal, /data-action="child-about"/);
+  assert.doesNotMatch(portal, /name="email"/);
+  assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить/);
+  assert.match(css, /\.parent-sidebar/); assert.match(css, /\.parent-menu-button/); assert.match(css, /\.parent-nav\{display:none!important\}/);
+  assert.doesNotMatch(access, /prompt\(/);
+  assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
+});
+
+test('birthday daily generation addresses director and current teacher once per child per day', async () => {
+  const notifications = new Set();
+  const pool = { query: async (sql, params = {}) => {
+    if (sql.includes('FROM children')) return [[{ id: 10, full_name: 'Петя', birth_date: '2017-09-21' }]];
+    if (sql.includes("'director' role_code")) return [[
+      { user_id: 1, role_code: 'director' }, { user_id: 2, role_code: 'teacher' }, { user_id: 2, role_code: 'teacher' },
+    ]];
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) {
+      const key = `${params.userId}:${params.dedupKey}`; if (notifications.has(key)) return [{ affectedRows: 0 }];
+      notifications.add(key); return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Unexpected birthday SQL: ${sql}`);
+  } };
+  const service = createBirthdayNotifications(pool);
+  assert.equal(ageOnDate('2017-09-21', '2026-09-21'), 9);
+  assert.equal((await service.generate('2026-09-21')).created, 2);
+  assert.equal((await service.generate('2026-09-21')).created, 0);
+  assert.deepEqual([...notifications].sort(), ['1:child_birthday:2026-09-21:10', '2:child_birthday:2026-09-21:10']);
+});
+
+test('teacher lesson payload exposes only child marker ids and teacher can read addressed notifications', async () => {
+  const [lessons, ui] = await Promise.all([
+    readFile(new URL('../backend/src/lessons.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+  ]);
+  assert.match(lessons, /absenceNoticeChildIds: jsonIds/); assert.match(lessons, /birthdayChildIds: jsonIds/);
+  assert.match(ui, />Не будет<\/span>/); assert.match(ui, /🎂 День рождения/);
+  assert.match(ui, /n\.type==='child_birthday'/);
+  assert.equal(permissions.teacher.has('notifications:read'), true);
+});
+
+test('partner parent access is restricted to children and relations in its project', async () => {
+  const fixture = adminFixture(); const partner = { userId: '9', roles: ['partner'], projectIds: ['2'] };
+  const created = await fixture.service.createAccess(10, {}, partner);
+  assert.equal(created.guardianId, '5');
+  await assert.rejects(fixture.service.createAccess(11, {}, partner), { status: 403, code: 'FORBIDDEN' });
+  fixture.state.users.push({ id: 51, email: 'foreign@test', password_hash: 'x', display_name: 'Чужой', status: 'active', token_version: 1 });
+  fixture.state.guardians.push({ id: 6, user_id: 51, full_name: 'Чужой родитель' });
+  fixture.state.links.push({ child_id: 11, guardian_id: 6, is_primary: 1 });
+  await assert.rejects(fixture.service.linkAccess(11, 5, partner), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.resetPassword(6, partner, 11), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.setAccessStatus(6, false, partner, 11), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(fixture.service.unlinkAccess(11, 6, partner), { status: 403, code: 'FORBIDDEN' });
+  assert.equal((await fixture.service.resetPassword(5, partner, 10)).guardianId, '5');
+  assert.equal((await fixture.service.setAccessStatus(5, false, partner, 10)).status, 'blocked');
+});
+
+test('migration 017 keeps absence notices separate from attendance and is non-destructive', async () => {
+  const migration = await readFile(new URL('../database/migrations/017_parent_absence_notices.sql', import.meta.url), 'utf8');
+  assert.match(migration, /CREATE TABLE lesson_child_absence_notices/);
+  assert.match(migration, /UNIQUE KEY uq_lesson_child_absence_notice \(lesson_id, child_id\)/);
+  assert.match(migration, /cancelled_at DATETIME\(6\)/);
+  assert.doesNotMatch(migration, /DROP|TRUNCATE|attendances/i);
 });

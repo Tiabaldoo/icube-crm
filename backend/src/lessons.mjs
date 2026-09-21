@@ -48,6 +48,17 @@ function lessonKind(row) {
 
 export function createMysqlLessons(pool, { lessonPhotos = null, parentNotifications = null } = {}) {
   const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
+    (SELECT JSON_ARRAYAGG(an.child_id) FROM lesson_child_absence_notices an
+      WHERE an.lesson_id=l.id AND an.cancelled_at IS NULL) absence_notice_child_ids,
+    (SELECT JSON_ARRAYAGG(c.id) FROM children c WHERE c.deleted_at IS NULL
+      AND c.birth_date IS NOT NULL AND DATE_FORMAT(c.birth_date,'%m-%d')=DATE_FORMAT(l.starts_at,'%m-%d') AND (
+        EXISTS (SELECT 1 FROM lesson_roster_members br WHERE br.lesson_id=l.id AND br.child_id=c.id) OR
+        (NOT EXISTS (SELECT 1 FROM lesson_roster_members frozen WHERE frozen.lesson_id=l.id) AND EXISTS (
+          SELECT 1 FROM child_enrollments be JOIN group_memberships bgm ON bgm.enrollment_id=be.id
+          WHERE be.child_id=c.id AND be.status='active' AND be.superseded_at IS NULL AND bgm.group_id=l.group_id
+            AND bgm.started_on<=DATE(l.starts_at) AND (bgm.ended_on IS NULL OR bgm.ended_on>=DATE(l.starts_at))
+        ))
+      )) birthday_child_ids,
     pt.full_name planned_teacher_name,act.full_name actual_teacher_name
     FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
     JOIN projects p ON p.id=l.project_id_snapshot JOIN sites s ON s.id=l.site_id_snapshot
@@ -78,6 +89,11 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         ? connection.query(`SELECT sa.* FROM salary_accruals sa WHERE sa.lesson_id IN (${ids}) AND sa.reversed_at IS NULL ORDER BY sa.id`)
         : Promise.resolve([[]]),
     ]);
+    const jsonIds = (value) => {
+      if (value == null) return [];
+      const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+      return Array.isArray(parsed) ? parsed.map(String) : [];
+    };
     return lessonRows.map((row) => {
       if (partnerProject && String(row.project_id_snapshot) !== partnerProject) return {
         id: String(row.id), groupId: String(row.group_id), groupName: row.group_name,
@@ -109,6 +125,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         topic: row.topic, introGroup: bool(row.is_intro_group), emptyTrip: bool(row.is_empty_trip), rosterFrozenAt: isoDateTime(row.roster_frozen_at),
         attendanceAppliedAt: isoDateTime(row.attendance_applied_at), completedAt: isoDateTime(row.completed_at), cancelledAt: isoDateTime(row.cancelled_at),
         lockVersion: Number(row.lock_version), roster, attendances,
+        absenceNoticeChildIds: jsonIds(row.absence_notice_child_ids), birthdayChildIds: jsonIds(row.birthday_child_ids),
         ...(salary ? { salary: { id: String(salary.id), teacherId: String(salary.teacher_id), rateVersionId: salary.rate_version_id == null ? null : String(salary.rate_version_id),
           type: salary.accrual_type, presentChildren: Number(salary.present_children), fixedAmount: String(salary.fixed_amount), childrenAmount: String(salary.children_amount), totalAmount: String(salary.total_amount) } } : {}),
       };

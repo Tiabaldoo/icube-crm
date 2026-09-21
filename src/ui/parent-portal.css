@@ -2,3 +2,33 @@
 .parent-payment-modal{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:20px;background:#101828b8}.parent-payment-modal article{position:relative;width:min(100%,420px);text-align:center}.parent-payment-modal article>button{position:absolute;right:12px;top:10px;width:38px;height:38px;border:0;background:transparent;font-size:28px}.parent-payment-modal strong{display:block;margin:12px;font-size:30px}.parent-payment-modal img{display:block;width:min(260px,100%);aspect-ratio:1;object-fit:contain;margin:10px auto;border-radius:12px}.parent-payment-modal p{color:#667085}
 .parent-calendar-event{display:block;width:100%;border-top:0;border-right:0;border-bottom:0;text-align:left;color:#172033}.parent-calendar-event>span{display:block}.parent-calendar-event .badge{display:inline-flex}.parent-lesson-modal{position:fixed;z-index:90;inset:0;display:grid;place-items:center;padding:20px;background:#101828b8}.parent-lesson-modal article{position:relative;width:min(100%,420px)}.parent-lesson-modal article>button{position:absolute;right:12px;top:10px;width:38px;height:38px;border:0;background:transparent;font-size:28px}.parent-lesson-modal h2{padding-right:36px}.parent-app .calendar-toolbar{margin-top:0}.parent-app .calendar-toolbar-nav .btn{background:#fff}.parent-app .calendar-grid .day{overflow:hidden}.parent-app .calendar-mobile .event{cursor:pointer}
 @media(max-width:640px){.parent-header{padding:9px 12px}.parent-header>div span{display:none}.parent-child-select{min-width:0}.parent-child-select select{width:100%;max-width:150px}.parent-main{width:min(100% - 20px,920px);padding-top:16px}.parent-title h1{font-size:24px}.parent-balances{grid-template-columns:1fr}.parent-balance strong{font-size:21px}.parent-lesson{grid-template-columns:88px 1fr}.parent-lesson em{grid-column:2}.parent-photo-day>div{grid-template-columns:repeat(2,minmax(0,1fr))}.parent-nav{overflow-x:auto;justify-content:flex-start}.parent-nav button{flex:0 0 78px}.parent-photo-preview img{height:230px}}
+
+/* Parent portal uses the same sidebar/mobile-drawer pattern as the main CRM. */
+.parent-app{padding-bottom:0}
+.parent-sidebar{position:fixed;z-index:42;inset:0 auto 0 0;display:flex;flex-direction:column;width:232px;padding:22px 14px;background:#172033;color:#fff}
+.parent-brand{display:flex;flex-direction:column;padding:0 10px 22px}.parent-brand b{font-size:24px}.parent-brand span{font-size:12px;opacity:.68}
+.parent-sidebar nav{display:grid;gap:5px}.parent-sidebar nav button{min-height:44px;padding:10px 12px;border:0;border-radius:10px;background:transparent;color:#d0d5dd;text-align:left;font:inherit}
+.parent-sidebar nav button:hover,.parent-sidebar nav button.active{background:#ffffff18;color:#fff;font-weight:700}
+.parent-work{min-height:100vh;margin-left:232px}
+.parent-header{padding:10px max(16px,calc((100vw - 232px - 960px)/2));background:#fff;color:#172033;border-bottom:1px solid #e4e7ec}
+.parent-mobile-brand,.parent-menu-button{display:none}.parent-bell{background:#eef2f6;color:#172033}
+.parent-menu-backdrop{display:none}.parent-nav{display:none!important}
+.parent-balance{display:flex;flex-direction:column;gap:7px;border-width:2px}.parent-balance>span{font-size:13px}.parent-balance>strong{font-size:20px;line-height:1.3}
+.parent-balance-success{border-color:#75e0a7;background:#ecfdf3}.parent-balance-success strong{color:#067647}
+.parent-balance-warning{border-color:#fedf89;background:#fffaeb}.parent-balance-warning strong{color:#b54708}
+.parent-balance-danger{border-color:#fda29b;background:#fef3f2}.parent-balance-danger strong{color:#b42318}
+.parent-subscription{display:grid;gap:9px}.parent-subscription>span{color:#475467}.parent-subscription .parent-primary{justify-self:start}
+.parent-about .parent-info{grid-template-columns:minmax(110px,.7fr) minmax(0,1fr)}
+.parent-about-direction{display:grid;gap:4px;padding:12px 0;border-top:1px solid #eaecf0}.parent-about-direction:first-child{border-top:0}.parent-about-direction span{color:#667085}
+.parent-secondary{display:inline-flex;justify-content:center;align-items:center;min-height:46px;padding:10px 16px;border:1px solid #d0d5dd;border-radius:12px;background:#fff;color:#344054;font-weight:700}
+.parent-contact-button{display:inline-flex!important;justify-content:center;min-height:46px;padding:10px 16px!important;border:1px solid #175cd3;border-radius:12px;color:#175cd3!important;font-weight:700;text-decoration:none}.parent-contact-button.primary{background:#175cd3;color:#fff!important}
+.parent-viewer button,.parent-payment-modal article>button,.parent-lesson-modal article>button{display:grid;place-items:center;padding:0;line-height:1}
+@media(max-width:760px){
+  .parent-sidebar{transform:translateX(-104%);transition:transform .18s ease;box-shadow:12px 0 30px #10182833}.parent-sidebar.open{transform:translateX(0)}
+  .parent-work{margin-left:0}.parent-menu-backdrop{position:fixed;z-index:41;inset:0;display:block;border:0;background:#10182880}
+  .parent-menu-button{display:grid;place-items:center;width:42px;height:42px;padding:0;border:0;border-radius:10px;background:#eef2f6;color:#172033;font-size:22px;line-height:1}
+  .parent-mobile-brand{display:block!important;min-width:0!important}.parent-mobile-brand b{font-size:20px}
+  .parent-header{padding:9px 12px}.parent-child-select{margin-left:auto}.parent-main{width:min(100% - 20px,920px);padding-top:16px}
+  .parent-balances{grid-template-columns:1fr}.parent-subscription .parent-primary{justify-self:stretch}.parent-actions{display:grid}.parent-contact-button{width:100%}
+  .parent-about .parent-info{grid-template-columns:1fr}.parent-viewer{grid-template-columns:46px minmax(0,1fr) 46px}.parent-viewer button{width:40px;height:40px}
+}
