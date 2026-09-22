@@ -20,6 +20,8 @@ import { createSiteRentService } from './site-rent.mjs';
 import { createLessonPhotoService } from './lesson-photos.mjs';
 import { createParentNotifications } from './parent-notifications.mjs';
 import { createParentPortal } from './parent-portal.mjs';
+import { createLoginRateLimiter } from './login-rate-limit.mjs';
+import { requireIdempotencyKey } from './idempotency.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -49,16 +51,22 @@ export function createApiRouter(pool, {
   partnerSettlements = createPartnerSettlements(pool),
   statistics = createStatistics(pool),
   authService = createAuthService(pool),
+  loginRateLimiter = createLoginRateLimiter(),
   testAuth = null,
 } = {}) {
   const router = Router();
   router.get('/health', async (_request, response, next) => { try { await pool.query('SELECT 1'); response.json({ data: { status: 'ok' } }); } catch (error) { next(error); } });
   router.post('/auth/login', async (request, response, next) => {
     try {
-      const result = await authService.login(request.body, { userAgent: request.get('user-agent') });
+      loginRateLimiter.assertAllowed(request.ip, request.body?.login);
+      const result = await authService.login(request.body, { userAgent: request.get('user-agent'), ipAddress: request.ip });
+      loginRateLimiter.success(request.ip, request.body?.login);
       response.cookie(SESSION_COOKIE, result.sessionToken, sessionCookieOptions({ expires: result.expiresAt }));
       response.json({ data: result.profile });
-    } catch (error) { next(error); }
+    } catch (error) {
+      if (error?.code === 'INVALID_CREDENTIALS') loginRateLimiter.failure(request.ip, request.body?.login);
+      next(error);
+    }
   });
   router.post('/auth/refresh', notImplemented('auth/refresh'));
 
@@ -70,7 +78,7 @@ export function createApiRouter(pool, {
   }, authenticate);
   router.get('/auth/me', run((request) => ({ id: request.auth.userId, displayName: request.auth.displayName,
     roles: request.auth.roles, teacherId: request.auth.teacherId ?? null, projectIds: request.auth.projectIds ?? [] })));
-  router.get('/dashboard/daily', requirePermission('children:read'), run((request) => dailyDashboard.get(request.auth)));
+  router.get('/dashboard/daily', requirePermission('dashboard:financial'), run((request) => dailyDashboard.get(request.auth)));
   router.post('/auth/logout', async (request, response, next) => {
     try {
       await authService.logout(request.auth.sessionId);
@@ -157,7 +165,7 @@ export function createApiRouter(pool, {
   router.get('/payments/:id', requirePermission('payments:read'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.get(request.params.id); }));
   router.post('/payments', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
-    idempotencyKey: request.get('Idempotency-Key') ?? null,
+    idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }); }, 201));
   router.patch('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); if (request.body.enrollmentId) await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.update(request.params.id, request.body, {
     actorUserId: request.auth?.userId ?? null,
@@ -167,7 +175,7 @@ export function createApiRouter(pool, {
   router.get('/refunds', requirePermission('refunds:read'), run((request) => refunds.list(projectFilters(request))));
   router.post('/refunds', requirePermission('refunds:write'), run(async (request) => { await assertOwned(pool, 'payments', request.body.paymentId, request.auth); return refunds.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
-    idempotencyKey: request.get('Idempotency-Key') ?? null,
+    idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }); }, 201));
   router.delete('/refunds/:id', requirePermission('refunds:write'), run(async (request) => { await assertOwned(pool, 'refunds', request.params.id, request.auth); return refunds.remove(request.params.id); }, 204));
 
@@ -225,7 +233,7 @@ export function createApiRouter(pool, {
   router.get('/balance-transfers', requirePermission('balance-transfers:read'), run((request) => balanceTransfers.list(projectFilters(request))));
   router.post('/balance-transfers', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.body.sourceEnrollmentId, request.auth); await assertOwned(pool, 'enrollments', request.body.targetEnrollmentId, request.auth); return balanceTransfers.create(request.body, {
     actorUserId: request.auth?.userId ?? null,
-    idempotencyKey: request.get('Idempotency-Key') ?? null,
+    idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }); }, 201));
   router.delete('/balance-transfers/:id', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'transfers', request.params.id, request.auth); return balanceTransfers.remove(request.params.id); }, 204));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));

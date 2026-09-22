@@ -95,9 +95,10 @@ export function createAuthService(pool, {
     await inTransaction(pool, async (connection) => {
       await connection.query(`INSERT INTO auth_sessions
         (id,user_id,refresh_token_hash,token_version,user_agent,ip_address,expires_at)
-        VALUES (:id,:userId,:tokenHash,:tokenVersion,:userAgent,NULL,:expiresAt)`, {
+        VALUES (:id,:userId,:tokenHash,:tokenVersion,:userAgent,:ipAddress,:expiresAt)`, {
         id: makeSessionId(), userId: user.id, tokenHash: tokenHash(sessionToken), tokenVersion: user.token_version,
-        userAgent: String(metadata.userAgent ?? '').slice(0, 512) || null, expiresAt,
+        userAgent: String(metadata.userAgent ?? '').slice(0, 512) || null,
+        ipAddress: String(metadata.ipAddress ?? '').slice(0, 45) || null, expiresAt,
       });
       await connection.query('UPDATE users SET last_login_at=NOW(6) WHERE id=:userId', { userId: user.id });
     });

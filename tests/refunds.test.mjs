@@ -20,6 +20,10 @@ function fixture({ amount = '4100.00', price = '1025.00', lessons = '4.00000000'
     if (sql.startsWith('SELECT id,balance_lessons FROM child_enrollments')) return [[state.enrollment]];
     if (sql.startsWith('SELECT id FROM child_enrollments')) return [[{ id: 7 }]];
     if (sql.includes('FROM balance_entries be') && sql.includes('JOIN balance_lots bl') && sql.includes('be.payment_id')) return [[state.lot]];
+    if (sql.startsWith('SELECT refund_id FROM balance_entries')) {
+      const entry = state.entries.find((item) => item.idempotency_key === params.idempotencyKey);
+      return [[entry ? { refund_id: entry.refund_id } : undefined].filter(Boolean)];
+    }
     if (sql.includes('COALESCE(SUM(amount),0) refunded_amount')) {
       const cents = state.refunds.reduce((sum, item) => sum + BigInt(item.amount.replace('.', '')), 0n);
       return [[{ refunded_amount: `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}` }]];
@@ -31,7 +35,8 @@ function fixture({ amount = '4100.00', price = '1025.00', lessons = '4.00000000'
       state.refunds.push(refund); return [{ insertId: refund.id }];
     }
     if (sql.startsWith('INSERT INTO balance_entries')) {
-      const entry = { id: nextEntryId++, refund_id: params.refundId, entry_type: 'refund', lessons_delta: params.lessons, amount_delta: params.amount };
+      const entry = { id: nextEntryId++, refund_id: params.refundId, entry_type: 'refund', lessons_delta: params.lessons,
+        amount_delta: params.amount, idempotency_key: params.idempotencyKey ?? null };
       state.entries.push(entry); return [{ insertId: entry.id }];
     }
     if (sql.startsWith('UPDATE balance_lots SET remaining_lessons=remaining_lessons-')) {
@@ -116,4 +121,20 @@ test('refund использует historical price и сохраняет cash/ca
     const refund = await f.refunds.create({ paymentId: 11, refundedOn: '2026-10-01', amount: '2050.00' });
     assert.equal(refund.priceSnapshot, '1025.00'); assert.equal(refund.lessonsDebit, '2.00000000'); assert.equal(refund.paymentMethod, method);
   }
+});
+
+test('refund отклоняет невозможную дату и дату раньше исходной оплаты', async () => {
+  const f = fixture();
+  await assert.rejects(() => f.refunds.create({ paymentId: 11, refundedOn: '2026-02-31', amount: '1025.00' }), { code: 'VALIDATION_ERROR' });
+  await assert.rejects(() => f.refunds.create({ paymentId: 11, refundedOn: '2026-08-31', amount: '1025.00' }), { code: 'REFUND_BEFORE_PAYMENT' });
+  const sameDay = await f.refunds.create({ paymentId: 11, refundedOn: '2026-09-01', amount: '1025.00' });
+  assert.equal(sameDay.refundedOn, '2026-09-01');
+});
+
+test('повтор refund с тем же scoped key возвращает исходную операцию', async () => {
+  const f = fixture();
+  const context = { actorUserId: 7, idempotencyKey: 'refund-submit-1' };
+  const first = await f.refunds.create({ paymentId: 11, refundedOn: '2026-09-15', amount: '1025.00' }, context);
+  const repeated = await f.refunds.create({ paymentId: 11, refundedOn: '2026-09-15', amount: '1025.00' }, context);
+  assert.equal(repeated.id, first.id); assert.equal(f.state.refunds.length, 1); assert.equal(f.state.entries.length, 1);
 });

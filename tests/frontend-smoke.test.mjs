@@ -165,6 +165,17 @@ test('единый frontend загружается и рендерит все т
   assert.match(childHtml, /Другой проект/);
   assert.equal((childHtml.match(/>\+ Оплата<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает финансовые действия');
   assert.equal((childHtml.match(/>Изменить направление \/ цену<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает mutation controls');
+
+  const payload = '<img src=x onerror=alert(1)>';
+  context.__crmProbe.state.role = 'director'; context.__crmProbe.state.page = 'children';
+  context.__crmProbe.state.children = [{ id: 99, name: payload, school: '""><script>alert(2)</script>', grade: '5&А', parent: payload,
+    phone: '+7 <b>1</b>', status: 'Активный', note: payload, enrollments: [{ direction: 'Робототехника', project: 'iCubeRobots', projectId: 1, groupId: null, balance: 0, status: 'Активный' }] }];
+  context.__crmProbe.render();
+  assert.doesNotMatch(app.innerHTML, /<img src=x|<script>alert|<[^>]+\sonerror=/);
+  assert.match(app.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  context.__crmProbe.state.selectedChild = 99; context.__crmProbe.state.childTab = 'overview'; context.__crmProbe.state.page = 'child';
+  context.__crmProbe.render();
+  assert.doesNotMatch(app.innerHTML, /<img src=x|<[^>]+\sonerror=/); assert.match(app.innerHTML, /5&amp;А/);
   Object.assign(context.__crmProbe.state, savedChildState);
 });
 

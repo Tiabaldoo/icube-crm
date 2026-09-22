@@ -14,7 +14,7 @@ export const permissions = Object.freeze({
     'lessons:cancel',
     'notifications:read',
   ]),
-  partner: new Set(['projects:read', 'directions:read', 'sites:read', 'sites:write', 'teachers:read', 'teachers:write',
+  partner: new Set(['dashboard:financial', 'projects:read', 'directions:read', 'sites:read', 'sites:write', 'teachers:read', 'teachers:write',
     'groups:read', 'groups:write', 'children:read', 'children:write', 'enrollments:write',
     'payments:read', 'payments:write', 'refunds:read', 'refunds:write', 'balances:read',
     'balance-transfers:read', 'balance-transfers:write', 'lessons:read', 'lessons:create',

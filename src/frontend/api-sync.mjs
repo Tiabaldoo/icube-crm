@@ -1,4 +1,5 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
+import { businessDate } from '../shared/business-time.mjs';
 
 const legacy = window.icubeLegacy;
 const api = new ApiClient();
@@ -12,6 +13,10 @@ let directories = { projects: [], directions: [] };
 let groupSavePending = false;
 let balanceTransferPending = false;
 let balanceTransferKey = null;
+let paymentSavePending = false;
+let paymentCreateKey = null;
+let refundSavePending = false;
+let refundCreateKey = null;
 let authProfile = null;
 let resolveAuthReady = null;
 
@@ -71,6 +76,7 @@ const isoToRu = (date) => String(date ?? '').split('-').reverse().join('.');
 const timestampDate = (value) => String(value ?? '').slice(0, 10);
 const timestampTime = (value) => String(value ?? '').slice(11, 16);
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
+const operationKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function mapGroup(group) {
   return { id: Number(group.id), name: group.name, direction: group.directionName, siteId: Number(group.siteId), teacherId: Number(group.teacherId),
@@ -798,8 +804,8 @@ function paymentForm(childId, direction, paymentId) {
   const historical = Boolean(existing && !child?.enrollments.some((enrollment) => enrollment.id === existing.enrollmentId));
   const preferred = existing?.enrollmentId ?? child?.enrollments.find((enrollment) => enrollment.editable !== false && enrollment.direction === direction)?.id
     ?? child?.enrollments.find((enrollment) => enrollment.editable !== false)?.id ?? null;
-  const today = new Date();
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const todayIso = businessDate();
+  paymentCreateKey = existing ? null : operationKey(); paymentSavePending = false;
   legacy.state.modal = `<h3>${existing ? 'Редактировать оплату' : 'Новая оплата'}</h3><div class="form-grid">
     <div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="${html(existing?.paidOn ?? todayIso)}"></div>
     <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.childId}">${html(existing.childName)}</option>` : legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
@@ -807,7 +813,7 @@ function paymentForm(childId, direction, paymentId) {
     <div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" min="0.01" step="0.01" value="${html(existing?.amount ?? '4100')}" oninput="icubeApi.updatePaymentCalc()"></div>
     <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" ${existing ? '' : 'readonly'} data-price-edited="false" oninput="this.dataset.priceEdited='true';icubeApi.updatePaymentCalc()"></div>
     <div class="field"><label>Способ оплаты</label><select class="select" id="pf-method"><option value="cashless"${(existing?.methodCode ?? 'cashless') === 'cashless' ? ' selected' : ''}>Безналичный расчёт</option><option value="cash"${existing?.methodCode === 'cash' ? ' selected' : ''}>Наличные</option></select></div>
-    </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
+    </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="pf-submit" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
   legacy.render();
   if (historical) setTimeout(updatePaymentCalc, 0);
   else setTimeout(() => refreshPaymentDirections(existing?.id ?? null, preferred), 0);
@@ -840,14 +846,23 @@ function updatePaymentCalc() {
 }
 
 async function savePayment(paymentId) {
+  if (paymentSavePending) return;
+  paymentSavePending = true;
+  const submit = element('#pf-submit'); const originalText = submit?.textContent;
+  if (submit) { submit.disabled = true; submit.textContent = 'Сохраняем…'; }
   try {
     const body = { enrollmentId: value('#pf-enrollment'), paidOn: value('#pf-date'), amount: value('#pf-amount'), method: value('#pf-method') };
     if (paymentId && element('#pf-price')?.dataset.priceEdited === 'true') body.priceSnapshot = value('#pf-price');
-    const saved = paymentId ? await api.update('payments', paymentId, body) : await api.create('payments', body);
+    const saved = paymentId ? await api.update('payments', paymentId, body) : await api.create('payments', body, paymentCreateKey);
     await reload({ render: false });
     legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'payments'; legacy.state.modal = null;
     legacy.state.page = legacy.state.children.some((child) => child.id === Number(saved.childId)) ? 'child' : 'payments'; legacy.render();
+    if (!paymentId) paymentCreateKey = null;
   } catch (error) { fail(error); }
+  finally {
+    paymentSavePending = false;
+    const current = element('#pf-submit'); if (current) { current.disabled = false; current.textContent = originalText || 'Сохранить'; }
+  }
 }
 
 function deletePaymentPrompt(paymentId) {
@@ -875,13 +890,13 @@ function refundForm(paymentId = null, childId = null) {
   const available = refundablePayments(childId);
   const selected = available.find((payment) => payment.id === Number(paymentId)) ?? available[0];
   if (!selected) return window.alert('Нет оплат со свободным остатком для возврата.');
-  const today = new Date();
-  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const todayIso = businessDate();
+  refundCreateKey = operationKey(); refundSavePending = false;
   legacy.state.modal = `<h3>Возврат оплаты</h3><div class="form-grid">
     <div class="field span-2"><label>Оплата</label><select class="select" id="rf-payment" onchange="icubeApi.refreshRefundMaximum()">${available.map((payment) => `<option value="${payment.id}"${payment.id === selected.id ? ' selected' : ''}>${html(payment.date)} · ${html(payment.direction)} · ${html(payment.amount)} ₽</option>`).join('')}</select></div>
     <div class="field"><label>Дата возврата</label><input class="input" id="rf-date" type="date" value="${todayIso}"></div>
     <div class="field"><label>Сумма, ₽</label><input class="input" id="rf-amount" type="number" min="0.01" step="0.01" value="${html(selected.refundableAmount)}"></div>
-    </div><div class="notice" id="rf-max" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveRefund()">Сохранить возврат</button></div>`;
+    </div><div class="notice" id="rf-max" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="rf-submit" onclick="icubeApi.saveRefund()">Сохранить возврат</button></div>`;
   legacy.render(); setTimeout(refreshRefundMaximum, 0);
 }
 
@@ -896,12 +911,21 @@ function refreshRefundMaximum() {
 async function saveRefund() {
   const payment = legacy.state.payments.find((item) => item.id === Number(value('#rf-payment')));
   if (!payment) return window.alert('Выберите оплату.');
+  if (refundSavePending) return;
+  refundSavePending = true;
+  const submit = element('#rf-submit'); const originalText = submit?.textContent;
+  if (submit) { submit.disabled = true; submit.textContent = 'Сохраняем…'; }
   try {
-    const saved = await api.create('refunds', { paymentId: String(payment.id), refundedOn: value('#rf-date'), amount: value('#rf-amount') });
+    const saved = await api.create('refunds', { paymentId: String(payment.id), refundedOn: value('#rf-date'), amount: value('#rf-amount') }, refundCreateKey);
     await reload({ render: false });
     legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'refunds'; legacy.state.modal = null;
     legacy.state.page = legacy.state.children.some((child) => child.id === Number(saved.childId)) ? 'child' : 'refunds'; legacy.render();
+    refundCreateKey = null;
   } catch (error) { fail(error); }
+  finally {
+    refundSavePending = false;
+    const current = element('#rf-submit'); if (current) { current.disabled = false; current.textContent = originalText || 'Сохранить'; }
+  }
 }
 
 function deleteRefundPrompt(refundId) {

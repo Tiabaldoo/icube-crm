@@ -2,6 +2,8 @@ import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { calculateLessonsCredit, normalizeMoney, refundablePaymentAmount } from './payments.mjs';
 import { lessonDecimal, lessonUnits } from './lesson-rules.mjs';
+import { parseCalendarDate } from '../../src/shared/business-time.mjs';
+import { scopedIdempotencyKey } from './idempotency.mjs';
 
 function identifier(value, field = 'id') {
   const result = String(value ?? '').trim();
@@ -9,9 +11,8 @@ function identifier(value, field = 'id') {
   return result;
 }
 function refundDate(value) {
-  const result = String(value ?? '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(result)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректная дата возврата');
-  return result;
+  try { return parseCalendarDate(value, 'Некорректная дата возврата'); }
+  catch { throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректная дата возврата'); }
 }
 const isoDate = (value) => typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
 const mapRefund = (row) => ({
@@ -56,9 +57,19 @@ export function createMysqlRefunds(pool) {
         const date = refundDate(body.refundedOn);
         const amount = normalizeMoney(body.amount);
         const [payments] = await connection.query(`SELECT id,enrollment_id,child_id,direction_id,group_id_snapshot,project_id_snapshot,
-          amount,price_snapshot,method FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE`, { id: paymentId });
+          paid_on,amount,price_snapshot,method FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE`, { id: paymentId });
         if (!payments.length) throw new ApiProblem(404, 'PAYMENT_NOT_FOUND', 'Оплата не найдена');
         const payment = payments[0];
+        if (date < isoDate(payment.paid_on)) throw new ApiProblem(400, 'REFUND_BEFORE_PAYMENT', 'Дата возврата не может быть раньше даты оплаты');
+        const idempotencyKey = context.idempotencyKey == null ? null : scopedIdempotencyKey({
+          key: context.idempotencyKey, actorUserId: context.actorUserId, operation: 'refund',
+          projectId: payment.project_id_snapshot, entity: payment.id,
+        });
+        if (idempotencyKey) {
+          const [existing] = await connection.query(`SELECT refund_id FROM balance_entries
+            WHERE idempotency_key=:idempotencyKey AND entry_type='refund' LIMIT 1`, { idempotencyKey });
+          if (existing.length) return String(existing[0].refund_id);
+        }
         const [enrollments] = await connection.query('SELECT id,balance_lessons FROM child_enrollments WHERE id=:id FOR UPDATE', { id: payment.enrollment_id });
         if (!enrollments.length) throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Направление оплаты не найдено');
         const [lots] = await connection.query(`SELECT bl.id,bl.original_lessons,bl.remaining_lessons,bl.unit_price
@@ -88,7 +99,7 @@ export function createMysqlRefunds(pool) {
           (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,refund_id,idempotency_key,occurred_at,created_by_user_id)
           VALUES (:enrollmentId,'refund',:lessons,:amount,:price,:refundId,:idempotencyKey,CONCAT(:refundedOn,' 12:00:00'),:actorId)`, {
           enrollmentId: payment.enrollment_id, lessons: lessonDecimal(-lessonUnits(lessons)), amount: `-${amount}`,
-          price: String(payment.price_snapshot), refundId: result.insertId, idempotencyKey: context.idempotencyKey ?? null,
+          price: String(payment.price_snapshot), refundId: result.insertId, idempotencyKey,
           refundedOn: date, actorId: context.actorUserId ?? null,
         });
         await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', { id: lots[0].id, lessons });

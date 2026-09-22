@@ -2,6 +2,7 @@ import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { calculateLessonsCredit, normalizeMoney } from './payments.mjs';
 import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal, planFifoConsumption } from './lesson-rules.mjs';
+import { scopedIdempotencyKey } from './idempotency.mjs';
 
 const identifier = (value, field = 'id') => {
   const result = String(value ?? '').trim();
@@ -115,8 +116,22 @@ export function createBalanceTransfers(pool) {
     return rows[0] ? mapTransfer(rows[0]) : null;
   }
 
+  async function operationIdempotencyKey(body, context) {
+    if (context.idempotencyKey == null) return null;
+    const sourceId = identifier(body.sourceEnrollmentId, 'sourceEnrollmentId');
+    const targetId = identifier(body.targetEnrollmentId, 'targetEnrollmentId');
+    const [rows] = await (context.connection ?? pool).query(`SELECT id,project_id FROM child_enrollments
+      WHERE id IN (:sourceId,:targetId) ORDER BY id`, { sourceId, targetId });
+    const source = rows.find((row) => String(row.id) === sourceId); const target = rows.find((row) => String(row.id) === targetId);
+    if (!source || !target) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
+    return scopedIdempotencyKey({
+      key: context.idempotencyKey, actorUserId: context.actorUserId, operation: 'balance-transfer',
+      projectId: `${source.project_id}->${target.project_id}`, entity: `${sourceId}->${targetId}`,
+    });
+  }
+
   async function create(body, context = {}) {
-    const idempotencyKey = context.idempotencyKey == null ? null : String(context.idempotencyKey).slice(0, 128);
+    const idempotencyKey = await operationIdempotencyKey(body, context);
     const existing = await getByIdempotencyKey(idempotencyKey); if (existing) return existing;
     try {
       const transferId = await (context.connection ? async (fn) => fn(context.connection) : (fn) => inTransaction(pool, fn))(async (connection) => {

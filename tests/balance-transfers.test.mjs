@@ -46,8 +46,8 @@ test('target с нулевым или положительным балансо�
 
 function fixture(overrides = {}) {
   const state = {
-    source: { id: 9, child_id: 8, direction_id: 1, status: 'finished', balance_lessons: '3.00000000', current_price: '9999.00' },
-    target: { id: 10, child_id: 8, direction_id: 2, status: 'active', balance_lessons: '1.00000000', current_price: '1125.00' },
+    source: { id: 9, child_id: 8, direction_id: 1, project_id: 1, status: 'finished', balance_lessons: '3.00000000', current_price: '9999.00' },
+    target: { id: 10, child_id: 8, direction_id: 2, project_id: 1, status: 'active', balance_lessons: '1.00000000', current_price: '1125.00' },
     lots: [{ id: 60, remaining_lessons: '3.00000000', unit_price: '1025.00' }], transfers: [], entries: [], lotChanges: [], calls: [],
     ...overrides,
   };
@@ -60,6 +60,7 @@ function fixture(overrides = {}) {
       const entry = state.entries.find((item) => item.idempotencyKey === params.key);
       return [entry ? [state.transfers.find((item) => item.id === entry.transferId)] : []];
     }
+    if (sql.startsWith('SELECT id,project_id FROM child_enrollments')) return [[state.source, state.target]];
     if (sql.includes('FROM child_enrollments e') && sql.includes('FOR UPDATE')) return [[state.source, state.target]];
     if (sql.startsWith('SELECT id,remaining_lessons,unit_price FROM balance_lots')) return [[...state.lots]];
     if (sql.startsWith('INSERT INTO balance_transfers')) {
@@ -87,13 +88,13 @@ function fixture(overrides = {}) {
 
 test('transfer одной транзакцией обнуляет source, пополняет target и создаёт новый lot', async () => {
   const { state, service } = fixture();
-  const result = await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 }, { idempotencyKey: 'transfer-1' });
+  const result = await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 }, { idempotencyKey: 'transfer-1', actorUserId: 5 });
   assert.equal(result.transferredAmount, '3075.00'); assert.equal(result.targetPriceSnapshot, '1125.00');
   assert.equal(state.source.balance_lessons, '0.00000000'); assert.equal(state.target.balance_lessons, '3.73333333');
   assert.equal(state.targetLot.lessons, '2.73333333'); assert.equal(state.targetLot.remainingLessons, '2.73333333'); assert.equal(state.targetLot.price, '1125.00');
   assert.deepEqual(state.entries.map((item) => item.type), ['out', 'in']);
   assert.equal(state.calls.some(({ sql }) => /UPDATE (?:payments|refunds|attendances)/.test(sql)), false);
-  await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 }, { idempotencyKey: 'transfer-1' });
+  await service.create({ sourceEnrollmentId: 9, targetEnrollmentId: 10 }, { idempotencyKey: 'transfer-1', actorUserId: 5 });
   assert.equal(state.transfers.length, 1); assert.equal(state.entries.length, 2);
 });
 

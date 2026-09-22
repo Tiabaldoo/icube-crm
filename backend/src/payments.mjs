@@ -1,6 +1,8 @@
 import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal } from './lesson-rules.mjs';
+import { parseCalendarDate, businessDate } from '../../src/shared/business-time.mjs';
+import { scopedIdempotencyKey } from './idempotency.mjs';
 
 const SCALE = 100000000n;
 const methods = new Set(['cashless', 'cash']);
@@ -42,9 +44,8 @@ export function refundablePaymentAmount({ paymentAmount, refundedAmount = '0.00'
 }
 
 function paidOn(value) {
-  const result = String(value ?? '');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(result)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректная дата оплаты');
-  return result;
+  try { return parseCalendarDate(value, 'Некорректная дата оплаты'); }
+  catch { throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректная дата оплаты'); }
 }
 function paymentMethod(value) {
   if (!methods.has(value)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректный способ оплаты');
@@ -95,7 +96,7 @@ export function createMysqlPayments(pool) {
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
     return mapPayment(rows[0]);
   }
-  async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = isoDate(new Date()) } = {}) {
+  async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = businessDate() } = {}) {
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
@@ -119,6 +120,15 @@ export function createMysqlPayments(pool) {
         const date = paidOn(body.paidOn);
         const enrollment = await lockEnrollment(connection, body.enrollmentId, { priceDate: date });
         if (enrollment.superseded_at != null) throw new ApiProblem(409, 'ENROLLMENT_TRANSFERRED', 'Новая оплата должна относиться к текущему проекту направления');
+        const idempotencyKey = context.idempotencyKey == null ? null : scopedIdempotencyKey({
+          key: context.idempotencyKey, actorUserId: context.actorUserId, operation: 'payment',
+          projectId: enrollment.project_id, entity: enrollment.id,
+        });
+        if (idempotencyKey) {
+          const [existing] = await connection.query(`SELECT payment_id FROM balance_entries
+            WHERE idempotency_key=:idempotencyKey AND entry_type='payment' LIMIT 1`, { idempotencyKey });
+          if (existing.length) return String(existing[0].payment_id);
+        }
         const amount = normalizeMoney(body.amount);
         const price = normalizeMoney(enrollment.current_price, 'priceSnapshot');
         const lessons = calculateLessonsCredit(amount, price);
@@ -135,7 +145,7 @@ export function createMysqlPayments(pool) {
           (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,payment_id,idempotency_key,occurred_at,created_by_user_id)
           VALUES (:enrollmentId,'payment',:lessons,:amount,:price,:paymentId,:idempotencyKey,CONCAT(:paidOn,' 12:00:00'),:actorId)`, {
           enrollmentId: enrollment.id, lessons, amount, price, paymentId: result.insertId,
-          idempotencyKey: context.idempotencyKey ?? null, paidOn: date, actorId: context.actorUserId ?? null,
+          idempotencyKey, paidOn: date, actorId: context.actorUserId ?? null,
         });
         await connection.query(`INSERT INTO balance_lots
           (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
