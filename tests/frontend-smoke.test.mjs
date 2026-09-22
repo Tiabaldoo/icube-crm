@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { installDashboardUi } from '../src/frontend/dashboard-ui.mjs';
 
 test('единый frontend загружается и рендерит все текущие разделы', async () => {
   const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
@@ -176,7 +177,22 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.selectedChild = 99; context.__crmProbe.state.childTab = 'overview'; context.__crmProbe.state.page = 'child';
   context.__crmProbe.render();
   assert.doesNotMatch(app.innerHTML, /<img src=x|<[^>]+\sonerror=/); assert.match(app.innerHTML, /5&amp;А/);
+  context.__crmProbe.state.projects = [{ id: 1, code: 'icube-robots', name: payload, active: true }];
+  context.__crmProbe.state.sites = [{ id: 31, projectId: 1, name: payload, shortName: payload, type: payload, address: payload, note: payload, active: true }];
   context.__crmProbe.state.teachers = [{ id: 7, name: payload, active: true, directions: [] }];
+  context.__crmProbe.state.groups = [{ id: 41, name: payload, direction: payload, project: payload, projectId: 1, siteId: 31, teacherId: 7,
+    day: 'Среда', startTime: '10:00', endTime: '11:00', active: true }];
+  for (const renderPage of [context.groups, context.sites, context.teachers]) {
+    const rendered = renderPage(); assert.doesNotMatch(rendered, /<img\s+src=x/i); assert.match(rendered, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  }
+  context.__crmProbe.state.selectedGroup = 41;
+  const groupHtml = context.group(); assert.doesNotMatch(groupHtml, /<img\s+src=x/i); assert.match(groupHtml, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  context.__crmProbe.state.lessons = [{ id: 51, groupId: 41, teacherId: 7, date: '22.09.2026', time: '10:00–11:00', scheduledDate: '22.09.2026', scheduledTime: '10:00–11:00',
+    siteName: payload, topic: payload, status: 'Идёт', started: true, done: false, cancelled: false, moved: false, attendance: {}, extras: [], photos: {}, trialChildren: {} }];
+  context.__crmProbe.state.selectedLesson = 51;
+  for (const rendered of [context.lesson(), context.teacherLesson()]) {
+    assert.doesNotMatch(rendered, /<img\s+src=x/i); assert.match(rendered, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  }
   context.__crmProbe.state.salaryTeacher = 7;
   context.__crmProbe.state.salaryReportRows = [{ lesson: { date: '22.09.2026', time: '10:00–11:00', groupName: payload, siteName: payload, projectName: payload },
     group: null, calc: { type: 'Обычное занятие', children: 1, fixed: 600, childrenPay: 100, total: 700 } }];
@@ -184,6 +200,17 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.render();
   assert.doesNotMatch(app.innerHTML, /<img src=x|<[^>]+\sonerror=/); assert.match(app.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
   Object.assign(context.__crmProbe.state, savedChildState);
+});
+
+test('dashboard notification renders editable text as text', () => {
+  const payload = '<img src=x onerror=alert(1)>';
+  const state = { role: 'director', projects: [], children: [], groups: [], payments: [], lessons: [], sites: [], teachers: [],
+    notifications: [{ id: 1, title: payload, body: payload, readAt: null, entityType: null, entityId: null }] };
+  const windowObject = { icubeLegacy: { state, pageHead: () => '', render() {} }, alert() {} };
+  installDashboardUi({ windowObject, api: { request: async () => ({}) } });
+  const rendered = windowObject.serverDashboard();
+  assert.doesNotMatch(rendered, /<img src=x|<[^>]+\sonerror=/);
+  assert.equal((rendered.match(/&lt;img src=x onerror=alert\(1\)&gt;/g) ?? []).length, 2);
 });
 
 test('фактические save handlers подключены к API namespace', async () => {

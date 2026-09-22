@@ -115,6 +115,7 @@ test('teacher не читает и не изменяет чужой lesson id', 
 test('teacher start игнорирует чужой actualTeacherId, director teacher-mode сохраняет actor director', async () => {
   const makeHandler = (lesson, captured) => async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [[{ teacher_id: 5 }]];
     if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: params.id }]];
     if (sql.includes('FROM group_memberships gm')) return [[{ child_id: 8, enrollment_id: 10 }]];
     if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) { captured.actorId = params.actorId; return [{ affectedRows: 1 }]; }
@@ -380,6 +381,7 @@ function quickChildRemovalFixture(history = {}) {
     calls.push({ sql, params });
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
     if (sql.startsWith('SELECT id FROM teachers WHERE user_id=')) return [[{ id: 6 }]];
+    if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [[{ teacher_id: 6 }]];
     if (sql.startsWith('SELECT a.* FROM attendances')) return [[{ id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'extra', present: 1, is_trial: 1 }]];
     if (sql.startsWith('SELECT id,full_name FROM children')) return [[{ id: 8, full_name: 'Новый Ребёнок' }]];
     if (sql === 'SELECT id FROM child_enrollments WHERE child_id=:childId FOR UPDATE') return [[{ id: 9 }]];
@@ -406,4 +408,32 @@ test('quick child с другой историей сохраняется при
   await createMysqlLessons(pool).removeExtra(50, 8, { roles: ['director'] });
   assert.equal(calls.some(({ sql }) => sql.startsWith('DELETE FROM children')), false);
   assert.equal(calls.some(({ sql }) => sql.includes('INSERT INTO notifications')), false);
+});
+
+test('teacher lesson access requires active project and allowed direction while director and partner retain scope access', async () => {
+  const rows = [
+    { id: 101, group_id: 11, group_name: 'iCube', direction_id_snapshot: 1, direction_name: 'Робототехника', project_id_snapshot: 1, project_name: 'iCubeRobots', site_id_snapshot: 1, site_name: 'Площадка', planned_teacher_id: 5, planned_teacher_name: 'Учитель', actual_teacher_id: null, actual_teacher_name: null, scheduled_starts_at: '2026-09-24 10:00:00', scheduled_ends_at: '2026-09-24 11:00:00', starts_at: '2026-09-24 10:00:00', ends_at: '2026-09-24 11:00:00', status: 'scheduled', topic: null, is_intro_group: 0, is_empty_trip: 0, lock_version: 1 },
+    { id: 202, group_id: 22, group_name: 'Zebra', direction_id_snapshot: 1, direction_name: 'Робототехника', project_id_snapshot: 2, project_name: 'Зебра', site_id_snapshot: 2, site_name: 'Зебра', planned_teacher_id: 5, planned_teacher_name: 'Учитель', actual_teacher_id: null, actual_teacher_name: null, scheduled_starts_at: '2026-09-25 10:00:00', scheduled_ends_at: '2026-09-25 11:00:00', starts_at: '2026-09-25 10:00:00', ends_at: '2026-09-25 11:00:00', status: 'scheduled', topic: null, is_intro_group: 0, is_empty_trip: 0, lock_version: 1 },
+  ];
+  let teacherSql = '';
+  const handler = async (sql, params = {}) => {
+    if (sql.includes('FROM study_groups g WHERE g.deleted_at IS NULL')) return [[]];
+    if (sql.includes('FROM lessons l') && sql.includes('l.deleted_at IS NOT NULL')) return [[]];
+    if (sql.includes('FROM lessons l JOIN study_groups')) {
+      if (params.actorTeacherId) { teacherSql = sql; return [[rows[0]]]; }
+      if (params.id) return [[rows.find((row) => String(row.id) === String(params.id))].filter(Boolean)];
+      return [rows];
+    }
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN') || sql.includes('FROM attendances WHERE lesson_id IN') || sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[rows[1]]];
+    if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [[]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const service = createMysqlLessons(transactionPool(handler));
+  const teacherRows = await service.list({}, { roles: ['teacher'], userId: '9', teacherId: '5' });
+  assert.deepEqual(teacherRows.map((lesson) => lesson.id), ['101']);
+  assert.match(teacherSql, /tp\.active=TRUE/); assert.match(teacherSql, /teacher_project_directions/);
+  await assert.rejects(service.start(202, {}, { roles: ['teacher'], userId: '9', teacherId: '5' }), (error) => error.status === 403);
+  assert.deepEqual((await service.list({}, { roles: ['director'], userId: '1' })).map((lesson) => lesson.id), ['101', '202']);
+  assert.equal((await service.get(202, { roles: ['partner'], userId: '2', projectIds: ['2'] })).id, '202');
 });

@@ -77,7 +77,11 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
 
   async function loadRows(where, params, context, connection = pool) {
     const teacherId = await teacherForContext(connection, context);
-    const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)` : '';
+    const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)
+      AND EXISTS (SELECT 1 FROM teacher_projects tp
+        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
+          AND tpd.direction_id=l.direction_id_snapshot)` : '';
     const [lessonRows] = await connection.query(`${baseSelect} WHERE (${where}) AND l.deleted_at IS NULL${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
     if (!lessonRows.length) return [];
     const partnerProject = partnerProjectId(context);
@@ -217,11 +221,15 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
 
   async function deletedOccurrences(context = {}) {
     const actorTeacherId = await teacherForContext(pool, context);
-    const scope = actorTeacherId ? ' AND (planned_teacher_id=:actorTeacherId OR actual_teacher_id=:actorTeacherId)' : '';
+    const scope = actorTeacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)
+      AND EXISTS (SELECT 1 FROM teacher_projects tp
+        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
+          AND tpd.direction_id=l.direction_id_snapshot)` : '';
     const projectId = partnerProjectId(context);
     const projectScope = projectId ? ' AND project_id_snapshot=:projectId' : '';
-    const [rows] = await pool.query(`SELECT group_id,scheduled_starts_at FROM lessons
-      WHERE deleted_at IS NOT NULL${scope}${projectScope} ORDER BY scheduled_starts_at,id`, { actorTeacherId, projectId });
+    const [rows] = await pool.query(`SELECT l.group_id,l.scheduled_starts_at FROM lessons l
+      WHERE l.deleted_at IS NOT NULL${scope}${projectScope} ORDER BY l.scheduled_starts_at,l.id`, { actorTeacherId, projectId });
     return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at) }));
   }
 
@@ -235,6 +243,15 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     assertProjectScope(context, lesson.project_id_snapshot);
     const actorTeacherId = await teacherForContext(connection, context);
     if (actorTeacherId && ![lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id) === actorTeacherId)) throw new ApiProblem(403, 'FORBIDDEN', 'Занятие не назначено преподавателю');
+    if (actorTeacherId) {
+      const [access] = await connection.query(`SELECT tp.teacher_id FROM teacher_projects tp
+        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        WHERE tp.teacher_id=:teacherId AND tp.project_id=:projectId AND tp.active=TRUE
+          AND tpd.direction_id=:directionId LIMIT 1`, {
+        teacherId: actorTeacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot,
+      });
+      if (!access.length) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не активен в проекте или направлении занятия');
+    }
     return actorTeacherId;
   }
 

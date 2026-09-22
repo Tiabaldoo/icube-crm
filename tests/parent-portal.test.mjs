@@ -549,12 +549,12 @@ test('parent access create and reset share a selectable one-time credentials dia
 });
 
 test('birthday daily generation addresses director and current teacher once per child per day', async () => {
-  const notifications = new Set();
+  const notifications = new Set(); let recipientSql = '';
   const pool = { query: async (sql, params = {}) => {
     if (sql.includes('FROM children')) return [[{ id: 10, full_name: 'Петя', birth_date: '2017-09-21' }]];
-    if (sql.includes("'director' role_code")) return [[
+    if (sql.includes("'director' role_code")) { recipientSql = sql; return [[
       { user_id: 1, role_code: 'director' }, { user_id: 2, role_code: 'teacher' }, { user_id: 2, role_code: 'teacher' },
-    ]];
+    ]]; }
     if (sql.startsWith('INSERT IGNORE INTO notifications')) {
       const key = `${params.userId}:${params.dedupKey}`; if (notifications.has(key)) return [{ affectedRows: 0 }];
       notifications.add(key); return [{ affectedRows: 1 }];
@@ -566,6 +566,8 @@ test('birthday daily generation addresses director and current teacher once per 
   assert.equal((await service.generate('2026-09-21')).created, 2);
   assert.equal((await service.generate('2026-09-21')).created, 0);
   assert.deepEqual([...notifications].sort(), ['1:child_birthday:2026-09-21:10', '2:child_birthday:2026-09-21:10']);
+  assert.match(recipientSql, /teacher_projects[\s\S]*tp\.active=TRUE/);
+  assert.match(recipientSql, /teacher_project_directions[\s\S]*tpd\.direction_id=sg\.direction_id/);
 });
 
 test('birthday age never becomes NaN and Feb 29 is delivered on Feb 28 in a non-leap year', async () => {

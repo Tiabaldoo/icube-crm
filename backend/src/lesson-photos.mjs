@@ -89,7 +89,7 @@ export function createLessonPhotoService(pool, {
   };
   async function lessonForAccess(connection, lessonId, context, { lock = false } = {}) {
     lessonId = identifier(lessonId, 'lessonId');
-    const [rows] = await connection.query(`SELECT id,status,completed_at,project_id_snapshot,planned_teacher_id,actual_teacher_id
+    const [rows] = await connection.query(`SELECT id,status,completed_at,project_id_snapshot,direction_id_snapshot,planned_teacher_id,actual_teacher_id
       FROM lessons WHERE id=:id AND deleted_at IS NULL${lock ? ' FOR UPDATE' : ''}`, { id: lessonId });
     const lesson = rows[0];
     if (!lesson) throw new ApiProblem(404, 'LESSON_NOT_FOUND', 'Занятие не найдено');
@@ -98,7 +98,16 @@ export function createLessonPhotoService(pool, {
       if (!(context.projectIds ?? []).map(String).includes(String(lesson.project_id_snapshot))) throw new ApiProblem(403, 'FORBIDDEN', 'Занятие другого проекта недоступно');
       return lesson;
     }
-    if (hasRole(context, 'teacher') && [lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id ?? '') === String(context.teacherId ?? ''))) return lesson;
+    if (hasRole(context, 'teacher') && [lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id ?? '') === String(context.teacherId ?? ''))) {
+      const [access] = await connection.query(`SELECT tp.teacher_id FROM teacher_projects tp
+        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        WHERE tp.teacher_id=:teacherId AND tp.project_id=:projectId AND tp.active=TRUE
+          AND tpd.direction_id=:directionId LIMIT 1`, {
+        teacherId: context.teacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot,
+      });
+      if (access.length) return lesson;
+      throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не активен в проекте или направлении занятия');
+    }
     throw new ApiProblem(403, 'FORBIDDEN', 'Занятие недоступно');
   }
   async function list(lessonId, context = {}) {

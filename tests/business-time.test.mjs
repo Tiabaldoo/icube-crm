@@ -31,6 +31,20 @@ test('dashboard month follows Sakhalin at midnight boundary in every client time
   assert.deepEqual(results, ['20', '20', '20', '20']);
 });
 
+test('parent calendar and photo expiry date are identical in supported client timezones', async () => {
+  const parentUrl = new URL('../src/frontend/parent-portal.mjs', import.meta.url).href;
+  const photosUrl = new URL('../src/frontend/lesson-photos.mjs', import.meta.url).href;
+  const script = `globalThis.window={icubeLegacy:{state:{lessons:[]}},addEventListener(){}};
+    const {parentScheduleCalendar}=await import(${JSON.stringify(parentUrl)});
+    const {photoExpiryDate}=await import(${JSON.stringify(photosUrl)});
+    const calendar=parentScheduleCalendar([{id:'1',startsAt:'2026-09-01T10:00:00+11:00',endsAt:'2026-09-01T11:00:00+11:00',site:'A',group:'B',status:'scheduled'}],'2026-09-01');
+    process.stdout.write(JSON.stringify({first:calendar.indexOf('01.09'),label:calendar.includes('1 сентября'),expiry:photoExpiryDate('2026-09-30T13:30:00Z')}));`;
+  const results = await Promise.all(['Asia/Sakhalin', 'Asia/Omsk', 'Europe/Moscow', 'UTC'].map(async (TZ) =>
+    (await exec(process.execPath, ['--input-type=module', '--eval', script], { env: { ...process.env, TZ } })).stdout));
+  assert.equal(new Set(results).size, 1);
+  assert.deepEqual(JSON.parse(results[0]), { first: JSON.parse(results[0]).first, label: true, expiry: '01.10.2026' });
+});
+
 test('database and serialized lesson wall time use the Sakhalin business offset', async () => {
   const [db, lessons] = await Promise.all([
     readFile(new URL('../backend/src/db.mjs', import.meta.url), 'utf8'),

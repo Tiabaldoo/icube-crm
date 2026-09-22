@@ -20,6 +20,7 @@ export function createBirthdayNotifications(pool) {
         SELECT DISTINCT u.id user_id,'teacher' role_code FROM child_enrollments e
         JOIN group_memberships gm ON gm.enrollment_id=e.id JOIN study_groups sg ON sg.id=gm.group_id AND sg.active=TRUE
         JOIN teacher_projects tp ON tp.teacher_id=sg.default_teacher_id AND tp.project_id=sg.project_id AND tp.active=TRUE
+        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=sg.direction_id
         JOIN teachers t ON t.id=sg.default_teacher_id AND t.deleted_at IS NULL
         JOIN users u ON u.id=t.user_id AND u.status='active' AND u.deleted_at IS NULL
         WHERE e.child_id=:childId AND e.status='active' AND e.superseded_at IS NULL

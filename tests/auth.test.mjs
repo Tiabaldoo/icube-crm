@@ -213,8 +213,10 @@ test('teacher catalog scope использует только доверенны
   await catalog.list('children', { roles: ['teacher'], teacherId: '7' });
   assert.equal(calls[0].params.actorTeacherId, '7'); assert.match(calls[0].sql, /g\.default_teacher_id=:actorTeacherId/);
   assert.match(calls[0].sql, /sl\.planned_teacher_id=:actorTeacherId OR sl\.actual_teacher_id=:actorTeacherId/);
+  assert.match(calls[0].sql, /teacher_projects/); assert.match(calls[0].sql, /tp\.active=TRUE/); assert.match(calls[0].sql, /teacher_project_directions/);
   assert.equal(calls[1].params.actorTeacherId, '7');
   assert.match(calls[1].sql, /group_memberships[\s\S]*sg\.default_teacher_id=:actorTeacherId/);
   assert.match(calls[1].sql, /lesson_roster_members[\s\S]*l\.planned_teacher_id=:actorTeacherId/);
   assert.match(calls[1].sql, /attendances[\s\S]*l\.actual_teacher_id=:actorTeacherId/);
+  assert.match(calls[1].sql, /teacher_projects/); assert.match(calls[1].sql, /tp\.active=TRUE/); assert.match(calls[1].sql, /teacher_project_directions/);
 });

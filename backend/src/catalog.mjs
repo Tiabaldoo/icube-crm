@@ -127,9 +127,12 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       FROM study_groups g JOIN directions d ON d.id=g.direction_id JOIN sites s ON s.id=g.site_id
       JOIN projects p ON p.id=g.project_id JOIN teachers t ON t.id=g.default_teacher_id
       WHERE g.deleted_at IS NULL AND (:projectId IS NULL OR g.project_id=:projectId)
-        AND (:actorTeacherId IS NULL OR g.default_teacher_id=:actorTeacherId
+        AND (:actorTeacherId IS NULL OR (EXISTS (SELECT 1 FROM teacher_projects tp
+          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+          WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=g.project_id AND tp.active=TRUE AND tpd.direction_id=g.direction_id)
+        AND (g.default_teacher_id=:actorTeacherId
         OR EXISTS (SELECT 1 FROM lessons sl WHERE sl.group_id=g.id AND sl.deleted_at IS NULL
-          AND (sl.planned_teacher_id=:actorTeacherId OR sl.actual_teacher_id=:actorTeacherId))) ORDER BY g.name`, { actorTeacherId, projectId });
+          AND (sl.planned_teacher_id=:actorTeacherId OR sl.actual_teacher_id=:actorTeacherId))))) ORDER BY g.name`, { actorTeacherId, projectId });
     return groupRows.map((row) => ({ id: rowId(row), name: row.name, directionId: String(row.direction_id), directionName: row.direction_name,
       siteId: String(row.site_id), siteName: row.site_name, projectId: String(row.project_id), projectName: row.project_name,
       teacherId: String(row.teacher_id), teacherName: row.teacher_name, weekday: Number(row.weekday), startTime: String(row.start_time).slice(0, 5),
@@ -147,10 +150,17 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       AND (:projectId IS NULL OR EXISTS (SELECT 1 FROM child_enrollments pe WHERE pe.child_id=c.id
         AND pe.project_id=:projectId AND pe.superseded_at IS NULL)) AND (:actorTeacherId IS NULL
         OR EXISTS (SELECT 1 FROM child_enrollments se JOIN group_memberships gm ON gm.enrollment_id=se.id
-          JOIN study_groups sg ON sg.id=gm.group_id WHERE se.child_id=c.id AND gm.ended_on IS NULL AND sg.default_teacher_id=:actorTeacherId)
+          JOIN study_groups sg ON sg.id=gm.group_id JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId
+            AND tp.project_id=sg.project_id AND tp.active=TRUE
+          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=sg.direction_id
+          WHERE se.child_id=c.id AND gm.ended_on IS NULL AND sg.default_teacher_id=:actorTeacherId)
         OR EXISTS (SELECT 1 FROM lesson_roster_members lrm JOIN lessons l ON l.id=lrm.lesson_id
+          JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
+          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=l.direction_id_snapshot
           WHERE lrm.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId))
         OR EXISTS (SELECT 1 FROM attendances a JOIN lessons l ON l.id=a.lesson_id
+          JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
+          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=l.direction_id_snapshot
           WHERE a.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)))
       ORDER BY c.full_name`, { actorTeacherId, projectId });
     if (!childRows.length) return [];
@@ -169,7 +179,10 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.ended_on IS NULL ORDER BY gm2.started_on DESC, gm2.id DESC LIMIT 1)
       LEFT JOIN study_groups sg ON sg.id=gm.group_id LEFT JOIN sites s ON s.id=sg.site_id
       WHERE e.child_id IN (${visibleIds.join(',')}) AND e.superseded_at IS NULL
-      ORDER BY e.child_id, e.id`, { projectId });
+        AND (:actorTeacherId IS NULL OR EXISTS (SELECT 1 FROM teacher_projects tp
+          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+          WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=e.project_id AND tp.active=TRUE AND tpd.direction_id=e.direction_id))
+      ORDER BY e.child_id, e.id`, { projectId, actorTeacherId });
     return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
       status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
       enrollments: enrollmentRows.filter((item) => String(item.child_id) === String(row.id)).map((item) => ({ id: String(item.id), directionId: String(item.direction_id),

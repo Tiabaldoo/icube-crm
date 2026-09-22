@@ -1,4 +1,5 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
+import { BUSINESS_TIME_ZONE } from '../shared/business-time.mjs';
 
 const api = new ApiClient();
 const DB_NAME = 'icube-crm-photo-queue';
@@ -13,6 +14,7 @@ const legacy = window.icubeLegacy;
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 const id = () => globalThis.crypto?.randomUUID?.() ?? `photo-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const currentLesson = () => legacy.state.lessons.find((lesson) => lesson.id === Number(legacy.state.selectedLesson));
+export const photoExpiryDate = (value) => new Intl.DateTimeFormat('ru-RU', { timeZone: BUSINESS_TIME_ZONE }).format(new Date(value));
 
 export function createPhotoQueue(indexedDb = globalThis.indexedDB) {
   let dbPromise;
@@ -250,7 +252,7 @@ async function download(photoId) {
 
 function openPhoto(childId, key) {
   const lesson = currentLesson(); const photo = photoItems(lesson, childId).find((item) => String(item.id ?? item.localId) === String(key)); if (!photo) return;
-  const status = photo.localId ? (photo.status === 'error' ? `Ошибка: ${esc(photo.error)}` : 'Фото сохранено на устройстве · ожидает загрузки') : photo.expired ? 'Срок хранения фотографии истёк' : `Доступно до ${new Date(photo.expiresAt).toLocaleDateString('ru-RU')}`;
+  const status = photo.localId ? (photo.status === 'error' ? `Ошибка: ${esc(photo.error)}` : 'Фото сохранено на устройстве · ожидает загрузки') : photo.expired ? 'Срок хранения фотографии истёк' : `Доступно до ${photoExpiryDate(photo.expiresAt)}`;
   const source = photo.previewUrl || photo.fileUrl;
   legacy.state.modal = `<h3>Фотография</h3>${source ? `<img src="${esc(source)}" alt="Фотография ребёнка" class="lesson-photo-preview">` : '<div class="lesson-photo-expired">Файл удалён по сроку хранения</div>'}<div class="muted mini" style="margin-top:8px">${status}</div><div class="modal-actions lesson-photo-actions">
     ${photo.localId ? `<button class="btn primary" onclick="icubePhotos.retry('${photo.localId}')">Повторить загрузку</button><button class="btn danger" onclick="icubePhotos.remove(null,'${photo.localId}')">Удалить</button>` : `${photo.fileUrl ? `<button class="btn" onclick="icubePhotos.download('${photo.id}')">Скачать</button>` : ''}${photo.canReplace ? `<button class="btn" onclick="icubePhotos.capture(${childId},'${photo.id}')">Заменить</button>` : ''}${photo.canDelete ? `<button class="btn danger" onclick="icubePhotos.remove('${photo.id}')">Удалить</button>` : ''}`}

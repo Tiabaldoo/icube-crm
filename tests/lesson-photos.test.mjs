@@ -15,9 +15,9 @@ let uploadSequence = 0;
 const uploadInput = (overrides = {}) => ({ childId: 20, buffer: jpeg, mimeType: 'image/jpeg',
   clientUploadId: `test-upload-${++uploadSequence}`, capturedAt: '2026-09-19T12:00:00.000Z', ...overrides });
 
-function memoryPool({ lesson = {}, present = true, photos = [] } = {}) {
+function memoryPool({ lesson = {}, present = true, photos = [], teacherProjectActive = true } = {}) {
   const state = {
-    lesson: { id: 10, status: 'in_progress', project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: 7, ...lesson },
+    lesson: { id: 10, status: 'in_progress', project_id_snapshot: 2, direction_id_snapshot: 3, planned_teacher_id: 7, actual_teacher_id: 7, ...lesson },
     photos: photos.map((photo, index) => ({ id: index + 1, lesson_id: 10, child_id: 20, storage_key: `2026/09/${index + 1}.jpg`, mime_type: 'image/jpeg',
       size_bytes: jpeg.length, width: 1, height: 1, original_filename: 'photo.jpg', uploaded_by_user_id: 9,
       client_upload_id: `existing-${index + 1}`,
@@ -27,6 +27,7 @@ function memoryPool({ lesson = {}, present = true, photos = [] } = {}) {
   let nextId = state.photos.length + 1;
   async function query(sql, params = {}) {
     if (sql.includes('FROM lessons WHERE id=')) return [[state.lesson]];
+    if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [teacherProjectActive ? [{ teacher_id: 7 }] : []];
     if (sql.includes('JOIN guardians g ON g.user_id=') && sql.includes('JOIN child_guardians')) {
       return [String(params.userId) === '50' ? state.photos.filter((photo) => String(photo.id) === String(params.photoId) && !photo.deleted_at) : []];
     }
@@ -101,6 +102,14 @@ test('teacher and partner cannot access a foreign lesson', async (t) => {
   await assert.rejects(f.service.upload(10, uploadInput(), { ...partner, projectIds: ['1'] }), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(f.service.file(10, 1, { ...partner, projectIds: ['1'] }), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(f.service.list(10, { roles: [], userId: '8' }), { status: 403, code: 'FORBIDDEN' });
+  assert.deepEqual(await f.service.list(10, partner), []);
+});
+
+test('assigned teacher cannot access photos when inactive in the lesson project', async (t) => {
+  const f = await fixture({ teacherProjectActive: false }); t.after(f.close);
+  await assert.rejects(f.service.list(10, teacher), { status: 403, code: 'FORBIDDEN' });
+  await assert.rejects(f.service.upload(10, uploadInput(), teacher), { status: 403, code: 'FORBIDDEN' });
+  assert.deepEqual(await f.service.list(10, director), []);
   assert.deepEqual(await f.service.list(10, partner), []);
 });
 

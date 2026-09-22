@@ -53,6 +53,7 @@ const state = {
 const byId=(arr,id)=>arr.find(x=>x.id===Number(id));
 const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,symbol=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[symbol]));
 const escapeAttr=escapeHtml;
+const escapeInlineJs=value=>escapeAttr(String(value??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r/g,'\\r').replace(/\n/g,'\\n'));
 const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
@@ -598,11 +599,11 @@ render();
     const box = document.querySelector('#ac-list');
     if (!box) return;
     if (!candidates.length) {
-      box.innerHTML = '<div class="empty">Нет подходящих детей с направлением «' + g.direction + '» без основной группы.</div>';
+      box.innerHTML = '<div class="empty">Нет подходящих детей с направлением «' + escapeHtml(g.direction) + '» без основной группы.</div>';
     } else {
       box.innerHTML = candidates.map(function(c){
         const e = c.enrollments.find(function(x){return x.direction===g.direction;});
-        return '<label class="student-check"><input type="checkbox" class="ac-check" value="' + c.id + '" onchange="updateAddChildrenCount()"><div><b>' + c.name + '</b><div class="muted mini">' + c.status + ' · баланс ' + Number(e.balance.toFixed(4)) + '</div></div><span class="badge gray">Без группы</span></label>';
+        return '<label class="student-check"><input type="checkbox" class="ac-check" value="' + c.id + '" onchange="updateAddChildrenCount()"><div><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.status) + ' · баланс ' + Number(e.balance.toFixed(4)) + '</div></div><span class="badge gray">Без группы</span></label>';
       }).join('');
     }
     updateAddChildrenCount();
@@ -628,16 +629,16 @@ render();
       kidsHtml = '<div class="empty" style="padding:22px 4px">Пока нет детей в основной группе.</div>';
     } else {
       kidsHtml = kids.map(function(c){
-        return '<div class="kpi-line clickable" onclick="openChild(' + c.id + ')"><div><b>' + c.name + '</b><div class="muted mini">' + c.parent + '</div></div><span class="badge ' + statusBadge(c.status) + '">' + c.status + '</span></div>';
+        return '<div class="kpi-line clickable" onclick="openChild(' + c.id + ')"><div><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.parent) + '</div></div><span class="badge ' + statusBadge(c.status) + '">' + escapeHtml(c.status) + '</span></div>';
       }).join('');
     }
 
     return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'groups\')">← Группы</button>' +
       pageHead(g.name,g.direction + ' · ' + g.project,'<button class="btn" onclick="groupForm(' + g.id + ')">Редактировать</button>') +
       '<div class="split"><div class="card pad"><div class="section-title"><h2>Основные данные</h2><span class="badge ' + (g.active?'green':'gray') + '">' + (g.active?'Активна':'Неактивна') + '</span></div>' +
-        '<div class="info-line"><span>Регулярное расписание</span><b>' + g.day + ', ' + g.startTime + '–' + g.endTime + '</b></div>' +
-        '<div class="info-line"><span>Площадка</span><b>' + byId(state.sites,g.siteId).name + '</b></div>' +
-        '<div class="info-line"><span>Основной преподаватель</span><b>' + byId(state.teachers,g.teacherId).name + '</b></div>' +
+        '<div class="info-line"><span>Регулярное расписание</span><b>' + escapeHtml(g.day) + ', ' + escapeHtml(g.startTime) + '–' + escapeHtml(g.endTime) + '</b></div>' +
+        '<div class="info-line"><span>Площадка</span><b>' + escapeHtml(byId(state.sites,g.siteId)?.name||'—') + '</b></div>' +
+        '<div class="info-line"><span>Основной преподаватель</span><b>' + escapeHtml(byId(state.teachers,g.teacherId)?.name||'—') + '</b></div>' +
         '<div class="info-line"><span>Цена группы</span><b>' + (g.price?money(g.price):'Наследуется от направления') + '</b></div>' +
         '<div class="notice" style="margin-top:12px">Изменение регулярных параметров влияет на будущие занятия; уже проведённые занятия должны хранить свой фактический снимок.</div></div>' +
       '<div class="card pad"><div class="section-title"><h2>Основная группа</h2><div style="display:flex;gap:8px;align-items:center"><b>' + kids.length + ' детей</b><button class="btn soft" onclick="addChildrenToGroup(' + g.id + ')">+ Добавить детей</button></div></div>' +
@@ -1653,8 +1654,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+
       pageHead(l.date+' · '+g.direction,l.time+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||''),
         '<div style="display:flex;gap:8px"><button class="btn" onclick="editLessonForm('+l.id+',\'director\')">Изменить занятие</button><button class="btn danger" onclick="deleteLessonPrompt('+l.id+')">Удалить занятие</button></div>')+
-      '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+g.project+'</span></div></div>'+
-      (l.moved?'<div class="notice" style="margin-bottom:12px">Перенесено с '+l.scheduledDate+' · '+l.scheduledTime+'</div>':'')+
+      '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div></div>'+
+      (l.moved?'<div class="notice" style="margin-bottom:12px">Перенесено с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</div>':'')+
       (l.cancelled?'<div class="notice" style="margin-bottom:12px;background:var(--redbg);border-color:#fecdca;color:var(--red)">Занятие отменено. Оно остаётся в календарях с отметкой «Отменено».</div>':'')+
       '<div class="info-line"><span>Группа</span><b>'+escapeHtml(g.name)+'</b></div><div class="info-line"><span>Фактический преподаватель</span><b>'+escapeHtml(t.name)+'</b></div><div class="info-line"><span>Тема</span><b>'+escapeHtml(l.topic||'Не указана')+'</b></div><div class="info-line"><span>Присутствовало</span><b>'+presentCount+'</b></div>'+
       '<div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" '+(l.intro?'checked':'')+' onchange="lToggle(\'intro\',this.checked)"><span><b>Ознакомительное занятие всей группы</b></span></label><label class="student-check"><input type="checkbox" '+(l.emptyTrip?'checked':'')+' onchange="lToggle(\'emptyTrip\',this.checked)"><span><b>Пустой выезд</b></span></label></div></div>'+
@@ -1664,7 +1665,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function teacherEventCard(e){
     const g=byId(state.groups,e.groupId),site=byId(state.sites,g.siteId);
-    return '<div class="teacher-card" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'teacher\')"><div class="teacher-lesson-head"><div><div class="teacher-time">'+timeStart(e.time)+'</div><h3 style="margin:4px 0">'+g.direction+'</h3><div class="muted">'+g.name+'<br>'+site.name+'</div></div><div>'+statusBadgeHtml(e)+'</div></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
+    return '<div class="teacher-card" onclick="openUnifiedCalendarEvent(\''+escapeInlineJs(e.key)+'\',\'teacher\')"><div class="teacher-lesson-head"><div><div class="teacher-time">'+escapeHtml(timeStart(e.time))+'</div><h3 style="margin:4px 0">'+escapeHtml(g.direction)+'</h3><div class="muted">'+escapeHtml(g.name)+'<br>'+escapeHtml(site?.name||'—')+'</div></div><div>'+statusBadgeHtml(e)+'</div></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
   }
 
   window.teacherToday=function(){
@@ -1678,7 +1679,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const l=byId(state.lessons,state.selectedLesson); if(!l)return teacherToday();
     const g=byId(state.groups,l.groupId),kids=groupChildren(g.id);
     let html='<div style="display:flex;gap:8px;justify-content:space-between;align-items:center"><button class="btn" onclick="state.page=\'teacherToday\';render()">← Сегодня</button><button class="btn" onclick="editLessonForm('+l.id+',\'teacher\')">Изменить / отменить</button></div>';
-    html+='<div style="margin:16px 0"><div class="muted">'+l.date+' · '+l.time+'</div><h1 style="margin:4px 0">'+g.direction+'</h1><div class="muted">'+g.project+' · '+g.name+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||'')+'</div>'+(l.moved?'<div style="margin-top:8px"><span class="badge amber">Перенесено</span> <span class="muted mini">с '+l.scheduledDate+' · '+l.scheduledTime+'</span></div>':'')+'</div>';
+    html+='<div style="margin:16px 0"><div class="muted">'+escapeHtml(l.date)+' · '+escapeHtml(l.time)+'</div><h1 style="margin:4px 0">'+escapeHtml(g.direction)+'</h1><div class="muted">'+escapeHtml(g.project)+' · '+escapeHtml(g.name)+' · '+escapeHtml(l.siteName||byId(state.sites,g.siteId)?.name||'')+'</div>'+(l.moved?'<div style="margin-top:8px"><span class="badge amber">Перенесено</span> <span class="muted mini">с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</span></div>':'')+'</div>';
     if(l.cancelled){
       html+='<div class="teacher-card" style="background:var(--redbg)"><b style="color:var(--red);font-size:18px">Занятие отменено</b><div class="muted" style="margin-top:6px">Отмена видна в календаре преподавателя и директора.</div></div>';
       return html;
@@ -1689,7 +1690,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }
     html+='<div class="teacher-card"><div class="section-title"><h2>Основная группа</h2><span class="badge blue">'+kids.length+' детей</span></div><div class="attendance">'+kids.map(function(c){return studentCheck(c,l,false);}).join('')+'</div></div>';
     html+='<div class="teacher-card"><div class="section-title"><h2>Добавлены на занятие</h2></div>'+(l.extras||[]).map(function(e){return studentCheck(byId(state.children,e.childId),l,true,e);}).join('')+'<div style="margin-top:12px"><input class="input" id="extraSearch" placeholder="Начните вводить фамилию…" oninput="showExtraResults(this.value)"><div id="extraResults"></div></div></div>';
-    html+='<div class="teacher-card"><label class="field"><label>Тема занятия</label><textarea class="textarea" oninput="byId(state.lessons,state.selectedLesson).topic=this.value">'+(l.topic||'')+'</textarea></label></div>';
+    html+='<div class="teacher-card"><label class="field"><label>Тема занятия</label><textarea class="textarea" oninput="byId(state.lessons,state.selectedLesson).topic=this.value">'+escapeHtml(l.topic||'')+'</textarea></label></div>';
     html+='<div class="teacher-sticky">'+(l.done?'<div class="teacher-card" style="background:var(--greenbg)"><b style="font-size:18px;color:var(--green)">Занятие завершено ✓</b></div>':'<button class="btn primary big-action" onclick="finishLesson()">Завершить занятие</button>')+'</div>';
     return html;
   };
@@ -3170,7 +3171,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const rows=c.enrollmentHistory.slice().reverse().map(function(e){
       const g=byId(state.groups,e.groupId);
       const rub=e.moneyBalance!=null?Number(e.moneyBalance):Number(e.balance||0)*Number(e.price||0);
-      return '<div class="kpi-line"><div><b>'+e.direction+' → '+e.changedTo+'</b><div class="muted mini">'+(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><span class="badge gray">История</span><div class="muted mini" style="margin-top:4px">перенесено '+money(rub)+'</div></div></div>';
+      return '<div class="kpi-line"><div><b>'+escapeHtml(e.direction)+' → '+escapeHtml(e.changedTo)+'</b><div class="muted mini">'+escapeHtml(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><span class="badge gray">История</span><div class="muted mini" style="margin-top:4px">перенесено '+money(rub)+'</div></div></div>';
     }).join('');
     return '<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>История переводов</h2><span class="muted mini">денежный остаток</span></div>'+rows+'</div>';
   }
@@ -3195,7 +3196,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':e.project==='Зебра'?'purple':'blue')+'" style="margin-left:7px">'+escapeHtml(e.project)+'</span>':'';
       const schedule=e.groupId==null?'Без группы':escapeHtml(e.siteName||byId(state.sites,g?.siteId)?.name||'Площадка не указана')+' · '+escapeHtml(dayShort[e.weekday]||dayShort[g?.day]||g?.day||'—')+' '+escapeHtml(e.startTime||g?.startTime||String(g?.time||'').split('–')[0]||'—');
       const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
-      const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+e.direction+'\')">Изменить направление / цену</button></div>';
+      const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">Изменить направление / цену</button></div>';
       return '<div style="border-top:1px solid var(--line);padding:14px 0">'+
         '<div style="display:flex;justify-content:space-between;gap:12px">'+
           '<div><b>'+escapeHtml(e.direction)+'</b>'+projectBadge+'<div class="muted">'+schedule+'</div></div>'+finance+
@@ -3217,7 +3218,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     const age=childAgeV118(c.birth);
     return '<div class="split">'+
-      '<div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge '+statusBadge(c.status)+'">'+c.status+'</span></div>'+directions+'</div>'+
+      '<div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge '+statusBadge(c.status)+'">'+escapeHtml(c.status)+'</span></div>'+directions+'</div>'+
       '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list">'+
         '<div class="info-line"><span>Дата рождения</span><b>'+escapeHtml(c.birth||'—')+'</b></div>'+
         '<div class="info-line"><span>Возраст</span><b>'+(age==null?'—':age+' лет')+'</b></div>'+
@@ -3237,7 +3238,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function childPaymentsV118(c){
     const rows=(state.payments||[]).filter(function(p){return Number(p.childId)===Number(c.id);}).slice().reverse();
     const paymentEnrollment=(c.enrollments||[]).find(function(e){return e.editable!==false;});
-    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div>'+(paymentEnrollment?'<button class="btn primary" onclick="paymentForm('+c.id+',\''+paymentEnrollment.direction+'\')">+ Оплата</button>':'')+'</div>';
+    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div>'+(paymentEnrollment?'<button class="btn primary" onclick="paymentForm('+c.id+',\''+escapeInlineJs(paymentEnrollment.direction)+'\')">+ Оплата</button>':'')+'</div>';
     if(!rows.length) return html+'<div class="empty">Оплат пока нет.</div></div>';
     html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr 1.2fr"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div><div></div></div>';
     html+=rows.map(function(p){
@@ -3257,8 +3258,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+=rows.map(function(x){
       const type=(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'');
       return '<div class="row" style="grid-template-columns:1fr 1fr 1.4fr auto auto auto">'+
-        '<div class="clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div>'+
-        '<div>'+x.group.direction+'</div><div>'+x.group.name+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
+        '<div class="clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><b>'+escapeHtml(x.lesson.date)+'</b><div class="muted mini">'+escapeHtml(x.lesson.time)+'</div></div>'+
+        '<div>'+escapeHtml(x.group.direction)+'</div><div>'+escapeHtml(x.group.name)+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
         '<div><button class="btn danger" onclick="deleteVisitPrompt('+c.id+','+x.lesson.id+')">Удалить</button></div>'+
       '</div>';
     }).join('');
@@ -3515,14 +3516,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const c=byId(state.children,state.selectedChild);
     if(!c) return html;
     (c.enrollments||[]).forEach(function(e){
-      const oldBtn='<button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button>';
-      const newBtn='<button class="btn soft" onclick="newChildPayment('+c.id+',\''+e.direction+'\')">+ Оплата</button>';
+      const direction=escapeInlineJs(e.direction);
+      const oldBtn='<button class="btn soft" onclick="paymentForm('+c.id+',\''+direction+'\')">+ Оплата</button>';
+      const newBtn='<button class="btn soft" onclick="newChildPayment('+c.id+',\''+direction+'\')">+ Оплата</button>';
       html=html.replaceAll(oldBtn,newBtn);
     });
 
     const mainDir=(c.enrollments||[])[0]?.direction||'Робототехника';
-    const oldTop='<button class="btn primary" onclick="paymentForm('+c.id+',\''+mainDir+'\')">+ Оплата</button>';
-    const newTop='<button class="btn primary" onclick="newChildPayment('+c.id+',\''+mainDir+'\')">+ Оплата</button>';
+    const safeMainDir=escapeInlineJs(mainDir);
+    const oldTop='<button class="btn primary" onclick="paymentForm('+c.id+',\''+safeMainDir+'\')">+ Оплата</button>';
+    const newTop='<button class="btn primary" onclick="newChildPayment('+c.id+',\''+safeMainDir+'\')">+ Оплата</button>';
     html=html.replace(oldTop,newTop);
     return html;
   };
@@ -6732,7 +6735,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         '</div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
-          '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0]||'—')+'–'+(g.endTime||String(g.time||'').split('–')[1]||'—')+'</b></div>'+
+          '<div class="info-line"><span>Время</span><b>'+escapeHtml(g.startTime||String(g.time||'').split('–')[0]||'—')+'–'+escapeHtml(g.endTime||String(g.time||'').split('–')[1]||'—')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+escapeHtml(site?.shortName||site?.name||'—')+'</b></div>'+
           '<div class="info-line"><span>Преподаватель</span><b>'+escapeHtml(teacher?.name||'—')+'</b></div>'+
           '<div class="info-line"><span>Детей</span><b>'+kids.length+'</b></div>'+
@@ -7460,7 +7463,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(!child) return html;
       const showDirectionStatuses=(child.enrollments||[]).length>1;
       (child.enrollments||[]).forEach(function(e){
-        const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+e.direction+'\')">Изменить направление / цену</button>';
+        const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+escapeInlineJs(e.direction)+'\')">Изменить направление / цену</button>';
         if(!html.includes(button) || !showDirectionStatuses) return;
         const badge='<span class="badge '+badgeClass(enrollmentStatus(e))+'" style="margin-right:8px">'+enrollmentStatus(e)+'</span>';
         html=html.replace(button,badge+button);
@@ -7684,9 +7687,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!child) return html;
     (child.enrollments||[]).forEach(function(e){
       if(!canTransfer(child,e)) return;
-      const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+e.direction+'\')">Изменить направление / цену</button>';
+      const direction=escapeInlineJs(e.direction);
+      const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+direction+'\')">Изменить направление / цену</button>';
       if(!html.includes(button)) return;
-      const transfer='<button class="btn soft" onclick="transferDirectionBalanceFormV142('+child.id+',\''+e.direction+'\')">Перенести остаток</button>';
+      const transfer='<button class="btn soft" onclick="transferDirectionBalanceFormV142('+child.id+',\''+direction+'\')">Перенести остаток</button>';
       html=html.replace(button,button+transfer);
     });
     return html;
@@ -8268,7 +8272,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       (lesson.extras||[]).filter(function(ex){return ex.present===false;}).forEach(function(ex){
         const child=byId(state.children,ex.childId);
         if(!child) return;
-        const needle='<b>'+child.name+'</b>';
+        const needle='<b>'+escapeHtml(child.name)+'</b>';
         const pos=html.indexOf(needle);
         if(pos<0) return;
         const end=Math.min(html.length,pos+900);

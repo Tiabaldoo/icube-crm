@@ -47,6 +47,7 @@ function mutablePool() {
   const row = baseLesson();
   const query = async (sql, params = {}) => {
     if (sql.startsWith('SELECT * FROM lessons WHERE id=')) return [[{ ...row }]];
+    if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [[{ teacher_id: 9 }]];
     if (sql.startsWith('SELECT id FROM sites WHERE id=')) return [[{ id: params.id }]];
     if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: params.id }]];
     if (sql.startsWith('UPDATE lessons SET starts_at=')) {

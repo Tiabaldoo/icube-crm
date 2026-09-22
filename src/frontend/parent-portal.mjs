@@ -53,9 +53,12 @@ export function parentBalancePresentation(value) {
   return { tone: units >= 200000000n ? 'success' : 'warning', text: `Осталось ${count} ${adjective} ${noun}` };
 }
 function parseIsoDate(value) {
-  const [year, month, day] = String(value ?? '').split('-').map(Number);
+  const fallback = businessDate();
+  const [year, month, day] = String(value || fallback).split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day || 1, 12));
-  return Number.isNaN(date.getTime()) ? new Date() : date;
+  if (!Number.isNaN(date.getTime())) return date;
+  const [fallbackYear, fallbackMonth, fallbackDay] = fallback.split('-').map(Number);
+  return new Date(Date.UTC(fallbackYear, fallbackMonth - 1, fallbackDay, 12));
 }
 function scheduleRange(cursor) {
   const date = parseIsoDate(cursor);
@@ -132,7 +135,7 @@ export function parentScheduleCalendar(rows, cursor) {
   }
   for (const lessons of byDate.values()) lessons.sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)) || String(a.id).localeCompare(String(b.id)));
   const cells = [];
-  const blanks = (range.start.getDay() + 6) % 7;
+  const blanks = (range.start.getUTCDay() + 6) % 7;
   for (let index = 0; index < blanks; index += 1) cells.push(null);
   for (let day = 1; day <= range.end.getUTCDate(); day += 1) cells.push(new Date(Date.UTC(range.start.getUTCFullYear(), range.start.getUTCMonth(), day, 12)));
   while (cells.length % 7) cells.push(null);
@@ -145,7 +148,7 @@ export function parentScheduleCalendar(rows, cursor) {
   const agendaDays = [];
   for (const [date, lessons] of byDate) agendaDays.push({ date: parseIsoDate(date), key: date, lessons });
   agendaDays.sort((a, b) => a.key.localeCompare(b.key));
-  const mobile = `<div class="calendar-mobile">${agendaDays.length ? agendaDays.map(({ date, key, lessons }) => `<section class="calendar-agenda-day${key === today ? ' calendar-today' : ''}"><div class="calendar-agenda-date"><b>${new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).format(date)}</b>${key === today ? '<span>Сегодня</span>' : ''}</div>${lessons.map(scheduleEventHtml).join('')}</section>`).join('') : '<div class="calendar-mobile-empty">В этом месяце занятий нет.</div>'}</div>`;
+  const mobile = `<div class="calendar-mobile">${agendaDays.length ? agendaDays.map(({ date, key, lessons }) => `<section class="calendar-agenda-day${key === today ? ' calendar-today' : ''}"><div class="calendar-agenda-date"><b>${new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(date)}</b>${key === today ? '<span>Сегодня</span>' : ''}</div>${lessons.map(scheduleEventHtml).join('')}</section>`).join('') : '<div class="calendar-mobile-empty">В этом месяце занятий нет.</div>'}</div>`;
   return `<div class="calendar-toolbar"><div class="calendar-toolbar-nav"><button class="btn calendar-arrow" data-action="schedule-prev" aria-label="Предыдущий месяц">←</button><button class="btn" data-action="schedule-today">Сегодня</button><button class="btn calendar-arrow" data-action="schedule-next" aria-label="Следующий месяц">→</button><div class="calendar-period-title">${escapeHtml(range.title)}</div></div></div>${desktop}${mobile}`;
 }
 
