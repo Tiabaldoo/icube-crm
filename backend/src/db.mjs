@@ -1,15 +1,18 @@
 import mysql from 'mysql2/promise';
 
 export function createPool(config) {
-  return mysql.createPool({
+  const pool = mysql.createPool({
     ...config,
     waitForConnections: true,
     namedPlaceholders: true,
     supportBigNumbers: true,
     bigNumberStrings: true,
-    timezone: 'Z',
+    timezone: '+11:00',
+    dateStrings: true,
     charset: 'utf8mb4',
   });
+  pool.pool.on('connection', (connection) => { connection.query("SET time_zone = '+11:00'"); });
+  return pool;
 }
 
 export async function inTransaction(pool, operation) {

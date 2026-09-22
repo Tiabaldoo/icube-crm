@@ -1,5 +1,5 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
-import { businessDate } from '../shared/business-time.mjs';
+import { businessDate, calendarMonthPeriod } from '../shared/business-time.mjs';
 
 const legacy = window.icubeLegacy;
 const api = new ApiClient();
@@ -17,32 +17,33 @@ let paymentSavePending = false;
 let paymentCreateKey = null;
 let refundSavePending = false;
 let refundCreateKey = null;
+let childSavePending = false;
+let childCreateKey = null;
 let authProfile = null;
 let resolveAuthReady = null;
 
-const localIsoDate = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const utcIsoDate = (date) => date.toISOString().slice(0, 10);
+const businessParts = (now = new Date()) => businessDate(now).split('-').map(Number);
 
 export function partnerDefaultPeriod(now = new Date()) {
-  return { from: localIsoDate(new Date(now.getFullYear(), now.getMonth() - 1, 26)), to: localIsoDate(new Date(now.getFullYear(), now.getMonth(), 25)) };
+  const [year, month] = businessParts(now);
+  return { from: utcIsoDate(new Date(Date.UTC(year, month - 2, 26))), to: utcIsoDate(new Date(Date.UTC(year, month - 1, 25))) };
 }
 export function salaryDefaultPeriod(projectName, now = new Date()) {
   const name = String(projectName ?? '');
   const startDay = name === 'Зебра' ? 26 : (name === 'iCubeRobots' || name === 'iCube') ? 11 : null;
   if (startDay == null) return null;
-  const currentOrPreviousMonth = now.getDate() >= startDay ? now.getMonth() : now.getMonth() - 1;
-  const start = new Date(now.getFullYear(), currentOrPreviousMonth, startDay);
-  const end = new Date(now.getFullYear(), currentOrPreviousMonth + 1, startDay - 1);
-  return { from: localIsoDate(start), to: localIsoDate(end) };
+  const [year, month, day] = businessParts(now); const monthIndex = month - 1;
+  const currentOrPreviousMonth = day >= startDay ? monthIndex : monthIndex - 1;
+  const start = new Date(Date.UTC(year, currentOrPreviousMonth, startDay));
+  const end = new Date(Date.UTC(year, currentOrPreviousMonth + 1, startDay - 1));
+  return { from: utcIsoDate(start), to: utcIsoDate(end) };
 }
 export function statisticsDefaultPeriod(now = new Date()) {
-  const localIso = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  return { from: localIso(new Date(now.getFullYear(), now.getMonth(), 1)), to: localIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
+  return calendarMonthPeriod(now);
 }
 export function rentDefaultPeriod(now = new Date()) {
-  return {
-    from: localIsoDate(new Date(now.getFullYear(), now.getMonth(), 1)),
-    to: localIsoDate(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
-  };
+  return calendarMonthPeriod(now);
 }
 const initialPartnerPeriod = partnerDefaultPeriod();
 legacy.state.partnerDateFrom ||= initialPartnerPeriod.from;
@@ -421,7 +422,10 @@ async function reload({ render = true } = {}) {
   legacy.state.projects = projects.map((project) => ({ ...project, id: Number(project.id) }));
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id), projectId: Number(site.projectId) }));
   legacy.state.lessonVenues = venues.map((site) => ({ ...site, id: Number(site.id), active: Boolean(site.active) }));
-  legacy.state.teachers = teachers.map((teacher) => ({ ...teacher, id: Number(teacher.id), projectIds: teacher.projectIds.map(Number), directions: teacher.directions.map((direction) => direction.name) }));
+  legacy.state.teachers = teachers.map((teacher) => ({ ...teacher, id: Number(teacher.id), projectIds: teacher.projectIds.map(Number),
+    directions: teacher.directions.map((direction) => direction.name), projectSettings: (teacher.projectSettings ?? []).map((setting) => ({
+      projectId: Number(setting.projectId), active: setting.active, directions: setting.directions.map((direction) => ({ ...direction, id: Number(direction.id) })),
+    })) }));
   legacy.state.groups = groups.map(mapGroup);
   legacy.state.children = children.map(mapChild);
   legacy.state.payments = payments.map((payment) => ({
@@ -501,8 +505,8 @@ async function saveSite(resourceId, returnToGroup) {
 async function saveTeacher(resourceId, returnToGroup) {
   try {
     const names = []; if (checked('#tf-robot')) names.push('Робототехника'); if (checked('#tf-code')) names.push('Программирование');
-    const projectIds = directories.projects.filter((project) => checked(`#tf-project-${project.id}`)).map((project) => project.id);
-    const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(), active: value('#tf-active') === 'true', directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean), projectIds };
+    const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(), projectId: value('#tf-project'),
+      active: value('#tf-active') === 'true', directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean) };
     if (!body.name) return window.alert('Укажите фамилию и имя преподавателя');
     if (body.directionIds.length !== names.length || !names.length) return window.alert('Выберите хотя бы одно доступное направление');
     const saved = resourceId ? await api.update('teachers', resourceId, body) : await api.create('teachers', body);
@@ -510,6 +514,16 @@ async function saveTeacher(resourceId, returnToGroup) {
     if (returnToGroup) { legacy.state.pendingGroupDraft = { ...(legacy.state.pendingGroupDraft ?? {}), teacherId: saved.id }; window.groupForm(legacy.state.pendingGroupDraft.id, legacy.state.pendingGroupDraft); }
     else { legacy.state.modal = null; legacy.state.page = 'teachers'; legacy.render(); }
   } catch (error) { fail(error); }
+}
+
+function teacherProjectChanged(resourceId) {
+  const teacher = legacy.state.teachers.find((item) => item.id === Number(resourceId));
+  const setting = teacher?.projectSettings?.find((item) => String(item.projectId) === value('#tf-project'));
+  const names = new Set((setting?.directions ?? []).map((item) => item.name));
+  const robot = element('#tf-robot'); const code = element('#tf-code'); const status = element('#tf-active');
+  if (robot) robot.checked = names.has('Робототехника');
+  if (code) code.checked = names.has('Программирование');
+  if (status) status.value = setting?.active === false ? 'false' : 'true';
 }
 
 async function saveGroup(resourceId) {
@@ -540,23 +554,33 @@ async function saveGroup(resourceId) {
 }
 
 async function saveChild(resourceId) {
+  if (childSavePending) return;
+  childSavePending = true;
   try {
-    const body = { name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null, school: value('#cf-school'), grade: value('#cf-grade'),
+    const child = { name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null, school: value('#cf-school'), grade: value('#cf-grade'),
       status: childStatusToApi[value('#cf-status')] ?? 'lead', note: value('#cf-note'), guardian: { name: value('#cf-parent'), phone: value('#cf-phone') } };
-    let saved;
+    const selectedGroupId = value('#cf-group') ? Number(value('#cf-group')) : null;
+    let saved; let enrollment;
     if (resourceId) {
-      saved = await api.update('children', resourceId, body);
-      const enrollment = saved.enrollments[0];
-      if (enrollment) await api.updateEnrollment(enrollment.id, { groupId: value('#cf-group') ? Number(value('#cf-group')) : null });
+      const existing = legacy.state.children.find((item) => item.id === Number(resourceId));
+      enrollment = existing?.enrollments.find((item) => item.editable !== false && item.groupId === selectedGroupId)
+        ?? existing?.enrollments.find((item) => item.editable !== false && item.direction === value('#cf-direction'));
+      if (!enrollment) throw new ApiError('Не найдено редактируемое направление текущего проекта');
+      saved = await api.request(`/children/${resourceId}/with-enrollment`, { method: 'PATCH', body: {
+        child, enrollmentId: enrollment.id, enrollment: { groupId: selectedGroupId },
+      } });
     } else {
-      saved = await api.create('children', body);
       const direction = byName(directories.directions, value('#cf-direction'));
       if (!direction) throw new ApiError('Направление отсутствует в серверном справочнике');
-      await api.createEnrollment(saved.id, { directionId: direction.id, projectId: value('#cf-project') || undefined,
-        groupId: value('#cf-group') ? Number(value('#cf-group')) : null, status: 'active' });
+      childCreateKey ||= operationKey();
+      saved = await api.request('/children-with-enrollment', { method: 'POST', idempotencyKey: childCreateKey, body: { child,
+        enrollment: { directionId: direction.id, projectId: value('#cf-project') || undefined, groupId: selectedGroupId, status: 'active' },
+      } });
+      childCreateKey = null;
     }
     legacy.state.selectedChild = saved.id; legacy.state.modal = null; legacy.state.page = 'child'; await reload();
   } catch (error) { fail(error); }
+  finally { childSavePending = false; }
 }
 
 async function saveEnrollment(childId, oldDirection) {
@@ -1212,12 +1236,16 @@ function installPersistentCalendarBridge() {
   if (typeof generatedEvents !== 'function') return;
   const parseRuDate = (value) => {
     const [day, month, year] = String(value ?? '').split('.').map(Number);
-    return new Date(year, (month || 1) - 1, day || 1);
+    return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12));
+  };
+  const parseIsoDate = (value) => {
+    const [year, month, day] = String(value ?? '').slice(0, 10).split('-').map(Number);
+    return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12));
   };
   const timeStart = (value) => String(value ?? '').split('–')[0];
   window.sharedCalendarEvents = function (startDate, endDate, teacherId) {
     const events = generatedEvents.apply(this, arguments);
-    const start = new Date(startDate); const end = new Date(endDate);
+    const start = parseIsoDate(startDate); const end = parseIsoDate(endDate);
     for (const lesson of legacy.state.lessons ?? []) {
       const actual = parseRuDate(lesson.date);
       if (actual < start || actual > end) continue;
@@ -1425,7 +1453,7 @@ async function bootstrapAuth() {
   }
 }
 
-window.icubeApi = { saveSite, saveTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
+window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   projectTransferForm, confirmProjectTransfer,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,

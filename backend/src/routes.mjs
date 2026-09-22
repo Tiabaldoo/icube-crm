@@ -151,6 +151,13 @@ export function createApiRouter(pool, {
   router.delete('/teachers/:id', requirePermission('teachers:write'), run(async (request) => { await assertOwned(pool, 'teachers', request.params.id, request.auth); if (partnerProjectId(request.auth)) throw new ApiProblem(403, 'FORBIDDEN', 'Партнёр может изменить доступность преподавателя, но не удалить глобальную запись'); return deletions.deleteTeacher(request.params.id); }, 204));
   router.delete('/groups/:id', requirePermission('groups:write'), run(async (request) => { await assertOwned(pool, 'groups', request.params.id, request.auth); return deletions.deleteGroup(request.params.id, request.auth); }, 204));
   router.delete('/children/:id', requirePermission('children:write'), run(async (request) => { await assertOwned(pool, 'children', request.params.id, request.auth, { exclusiveChild: true }); return catalog.deleteChild(request.params.id); }, 204));
+  router.post('/children-with-enrollment', requirePermission('children:write'), run((request) => catalog.saveChildWithEnrollment(null, request.body, {
+    ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+  }), 201));
+  router.patch('/children/:id/with-enrollment', requirePermission('children:write'), run(async (request) => {
+    await assertOwned(pool, 'children', request.params.id, request.auth);
+    return catalog.saveChildWithEnrollment(request.params.id, request.body, request.auth);
+  }));
   router.post('/children/:id/enrollments', requirePermission('enrollments:write'), run((request) => catalog.createEnrollment(request.params.id, request.body, request.auth), 201));
   router.patch('/enrollments/:id', requirePermission('enrollments:write'), run((request) => catalog.updateEnrollment(request.params.id, request.body, request.auth)));
   router.post('/enrollments/:id/project-transfer', requirePermission('enrollments:write'), run((request) => projectTransfers.create(request.params.id, request.body, request.auth), 201));

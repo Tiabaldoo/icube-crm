@@ -176,6 +176,13 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.selectedChild = 99; context.__crmProbe.state.childTab = 'overview'; context.__crmProbe.state.page = 'child';
   context.__crmProbe.render();
   assert.doesNotMatch(app.innerHTML, /<img src=x|<[^>]+\sonerror=/); assert.match(app.innerHTML, /5&amp;А/);
+  context.__crmProbe.state.teachers = [{ id: 7, name: payload, active: true, directions: [] }];
+  context.__crmProbe.state.salaryTeacher = 7;
+  context.__crmProbe.state.salaryReportRows = [{ lesson: { date: '22.09.2026', time: '10:00–11:00', groupName: payload, siteName: payload, projectName: payload },
+    group: null, calc: { type: 'Обычное занятие', children: 1, fixed: 600, childrenPay: 100, total: 700 } }];
+  context.__crmProbe.state.salaryReportTotal = 700; context.__crmProbe.state.page = 'salary';
+  context.__crmProbe.render();
+  assert.doesNotMatch(app.innerHTML, /<img src=x|<[^>]+\sonerror=/); assert.match(app.innerHTML, /&lt;img src=x onerror=alert\(1\)&gt;/);
   Object.assign(context.__crmProbe.state, savedChildState);
 });
 

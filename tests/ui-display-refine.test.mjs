@@ -41,7 +41,7 @@ test('both child group selectors and group cards use the shared display title', 
   const groupsEnd = ui.indexOf('\n\n  render();', groupsStart);
   const groupsPage = ui.slice(groupsStart, groupsEnd);
   assert.ok(groupsStart >= 0 && groupsEnd > groupsStart);
-  assert.match(groupsPage, /<h3[^>]*>'\+groupTitle\(g\)/);
+  assert.match(groupsPage, /<h3[^>]*>'\+escapeHtml\(groupTitle\(g\)\)/);
   assert.doesNotMatch(groupsPage, /<h3[^>]*>'\+g\.name/);
   assert.match(groupsPage, /g\.direction/);
   assert.match(groupsPage, /g\.project/);

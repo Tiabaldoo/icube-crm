@@ -48,7 +48,9 @@ export function ageOnDate(birthDate, onDate = businessDate()) {
     const [year, month, day] = current.split('-').map(Number);
     if (birth > current) return null;
     let age = year - birthYear;
-    if (month < birthMonth || (month === birthMonth && day < birthDay)) age -= 1;
+    const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+    const observedLeapBirthday = birthMonth === 2 && birthDay === 29 && !leap && month === 2 && day === 28;
+    if (!observedLeapBirthday && (month < birthMonth || (month === birthMonth && day < birthDay))) age -= 1;
     return age >= 0 && age <= 150 ? age : null;
   } catch { return null; }
 }

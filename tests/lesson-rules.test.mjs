@@ -359,7 +359,7 @@ test('перенос проведённого занятия сохраняет 
   }, { roles: ['director'] });
   assert.equal(result.id, '50');
   assert.equal(result.status, 'completed');
-  assert.equal(result.startsAt, '2026-09-18T18:00:00Z');
+  assert.equal(result.startsAt, '2026-09-18T18:00:00+11:00');
   assert.equal(result.attendances[0].id, '70');
   assert.equal(result.salary.id, '90');
   assert.doesNotMatch(updateSql, /status=/);

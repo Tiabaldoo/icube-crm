@@ -2,6 +2,7 @@ import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { assertProjectScope, partnerProjectId } from './project-scope.mjs';
 import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
+import { addCalendarDays, businessDate, parseCalendarDate, BUSINESS_UTC_OFFSET } from '../../src/shared/business-time.mjs';
 
 const DAY = 86400000;
 const identifier = (value, field = 'id') => {
@@ -10,9 +11,8 @@ const identifier = (value, field = 'id') => {
   return result;
 };
 const dateOnly = (value, field = 'date') => {
-  const result = String(value ?? '').slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(result) || Number.isNaN(Date.parse(`${result}T00:00:00Z`))) throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректное поле ${field}`);
-  return result;
+  try { return parseCalendarDate(String(value ?? '').slice(0, 10)); }
+  catch { throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректное поле ${field}`); }
 };
 const timeOnly = (value, field = 'time') => {
   const result = value instanceof Date ? value.toISOString().slice(11, 16) : String(value ?? '').includes(' ') ? String(value).slice(11, 16) : String(value ?? '').slice(0, 5);
@@ -22,8 +22,8 @@ const timeOnly = (value, field = 'time') => {
 const isoDate = (value) => typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
 const isoDateTime = (value) => {
   if (value == null) return null;
-  if (typeof value !== 'string') return value.toISOString();
-  return `${value.slice(0, 10)}T${value.slice(11, 19)}Z`;
+  if (typeof value !== 'string') return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Sakhalin', dateStyle: 'short', timeStyle: 'medium' }).format(value).replace(' ', 'T') + BUSINESS_UTC_OFFSET;
+  return `${value.slice(0, 10)}T${value.slice(11, 19)}${BUSINESS_UTC_OFFSET}`;
 };
 const mysqlDateTime = (value) => value instanceof Date
   ? value.toISOString().slice(0, 19).replace('T', ' ')
@@ -50,8 +50,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
   const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
     (SELECT JSON_ARRAYAGG(an.child_id) FROM lesson_child_absence_notices an
       WHERE an.lesson_id=l.id AND an.cancelled_at IS NULL) absence_notice_child_ids,
-    (SELECT JSON_ARRAYAGG(c.id) FROM children c WHERE c.deleted_at IS NULL
-      AND c.birth_date IS NOT NULL AND DATE_FORMAT(c.birth_date,'%m-%d')=DATE_FORMAT(l.starts_at,'%m-%d') AND (
+    (SELECT JSON_ARRAYAGG(c.id) FROM children c WHERE c.deleted_at IS NULL AND c.status<>'archived'
+      AND c.birth_date IS NOT NULL AND (DATE_FORMAT(c.birth_date,'%m-%d')=DATE_FORMAT(l.starts_at,'%m-%d')
+        OR (DATE_FORMAT(c.birth_date,'%m-%d')='02-29' AND DATE_FORMAT(l.starts_at,'%m-%d')='02-28' AND DAY(LAST_DAY(l.starts_at))=28)) AND (
         EXISTS (SELECT 1 FROM lesson_roster_members br WHERE br.lesson_id=l.id AND br.child_id=c.id) OR
         (NOT EXISTS (SELECT 1 FROM lesson_roster_members frozen WHERE frozen.lesson_id=l.id) AND EXISTS (
           SELECT 1 FROM child_enrollments be JOIN group_memberships bgm ON bgm.enrollment_id=be.id
@@ -153,7 +154,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           OR TIME(l.scheduled_ends_at)<>g.end_time OR l.direction_id_snapshot<>g.direction_id
           OR l.project_id_snapshot<>g.project_id OR l.site_id_snapshot<>g.site_id
           OR l.planned_teacher_id<>g.default_teacher_id)${cleanupGroupFilter}`, params);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = businessDate();
     const occurrenceFrom = from < today ? today : from;
     if (to < occurrenceFrom) return;
     params.from = occurrenceFrom;
@@ -174,9 +175,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
   }
 
   async function list(filters = {}, context = {}) {
-    const today = new Date();
-    const from = filters.from ? dateOnly(filters.from, 'from') : new Date(today.getTime() - 120 * DAY).toISOString().slice(0, 10);
-    const to = filters.to ? dateOnly(filters.to, 'to') : new Date(today.getTime() + 90 * DAY).toISOString().slice(0, 10);
+    const today = businessDate();
+    const from = filters.from ? dateOnly(filters.from, 'from') : addCalendarDays(today, -120);
+    const to = filters.to ? dateOnly(filters.to, 'to') : addCalendarDays(today, 90);
     await materialize(from, to);
     const conditions = [`((l.starts_at>=CONCAT(:from,' 00:00:00') AND l.starts_at<DATE_ADD(:to,INTERVAL 1 DAY))
       OR (l.scheduled_starts_at>=CONCAT(:from,' 00:00:00') AND l.scheduled_starts_at<DATE_ADD(:to,INTERVAL 1 DAY)))`]; const params = { from, to };
@@ -262,7 +263,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         const teacherId = actorTeacherId ?? (body.actualTeacherId === undefined ? lesson.actual_teacher_id : identifier(body.actualTeacherId, 'actualTeacherId'));
         if (teacherId != null) {
           const [teachers] = await connection.query(`SELECT t.id FROM teachers t JOIN teacher_projects tp ON tp.teacher_id=t.id
-            WHERE t.id=:id AND tp.project_id=:projectId AND t.deleted_at IS NULL`, { id: teacherId, projectId: lesson.project_id_snapshot });
+            JOIN teacher_project_directions tpd ON tpd.teacher_id=t.id AND tpd.project_id=tp.project_id
+            WHERE t.id=:id AND tp.project_id=:projectId AND tp.active=TRUE AND tpd.direction_id=:directionId AND t.deleted_at IS NULL`,
+          { id: teacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot });
           if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Преподаватель не найден');
         }
         if (lesson.status === 'completed' && String(teacherId ?? '') !== String(lesson.actual_teacher_id ?? '')) {
@@ -306,8 +309,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (lesson.status !== 'scheduled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя начать');
         const actualTeacherId = actorTeacherId ?? identifier(body.actualTeacherId ?? lesson.planned_teacher_id, 'actualTeacherId');
         const [teachers] = await connection.query(`SELECT t.id FROM teachers t JOIN teacher_projects tp ON tp.teacher_id=t.id
-          WHERE t.id=:id AND tp.project_id=:projectId AND t.deleted_at IS NULL AND t.active=TRUE`, {
-          id: actualTeacherId, projectId: lesson.project_id_snapshot,
+          JOIN teacher_project_directions tpd ON tpd.teacher_id=t.id AND tpd.project_id=tp.project_id
+          WHERE t.id=:id AND tp.project_id=:projectId AND tp.active=TRUE AND tpd.direction_id=:directionId AND t.deleted_at IS NULL`, {
+          id: actualTeacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot,
         });
         if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Фактический преподаватель не найден');
         const [members] = await connection.query(`SELECT gm.child_id,gm.enrollment_id FROM (

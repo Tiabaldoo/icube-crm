@@ -1,4 +1,5 @@
 import { ApiClient } from '../data/api-client.mjs';
+import { addCalendarDays, businessDate, BUSINESS_TIME_ZONE } from '../shared/business-time.mjs';
 
 const activeEnrollment = (enrollment) => enrollment?.status === 'Активный';
 const projectMatches = (projectId, allowedProjectIds) => !allowedProjectIds || allowedProjectIds.has(String(projectId));
@@ -21,7 +22,7 @@ export function countActiveGroups(groups, projectId = null) {
 }
 
 export function monthlyPaymentAmount(payments, now = new Date(), projectId = null) {
-  const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const month = businessDate(now).slice(0, 7);
   return (payments ?? []).filter((payment) => String(payment.paidOn ?? '').slice(0, 7) === month
     && (projectId == null || String(payment.projectId) === String(projectId)))
     .reduce((sum, payment) => sum + Number(payment.amount ?? 0), 0);
@@ -62,7 +63,7 @@ const safe = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
 })[char]);
 const money = (value) => `${new Intl.NumberFormat('ru-RU').format(Number(value ?? 0))} ₽`;
-const ruDate = (date) => `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}.${date.getFullYear()}`;
+const ruDate = (date) => String(date).split('-').reverse().join('.');
 const startTime = (lesson) => String(lesson?.time ?? '').split('–')[0] || '';
 
 export function dashboardLessonsForDate({ lessons = [], groups = [] } = {}, date, projectIds = null) {
@@ -72,11 +73,11 @@ export function dashboardLessonsForDate({ lessons = [], groups = [] } = {}, date
     .sort((left, right) => startTime(left).localeCompare(startTime(right)));
 }
 function longToday(now) {
-  const result = new Intl.DateTimeFormat('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' }).format(now);
+  const result = new Intl.DateTimeFormat('ru-RU', { timeZone: BUSINESS_TIME_ZONE, weekday: 'long', day: 'numeric', month: 'long' }).format(now);
   return result.charAt(0).toUpperCase() + result.slice(1);
 }
 function monthName(now) {
-  return new Intl.DateTimeFormat('ru-RU', { month: 'long' }).format(new Date(now.getFullYear(), now.getMonth(), 1));
+  return new Intl.DateTimeFormat('ru-RU', { timeZone: BUSINESS_TIME_ZONE, month: 'long' }).format(now);
 }
 function projectLabel(project) {
   return project?.name === 'iCubeRobots' ? 'iCube' : project?.name ?? 'Проект';
@@ -139,9 +140,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
   }
 
   function tomorrowBlock(now) {
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowDate = ruDate(tomorrow);
+    const tomorrowDate = ruDate(addCalendarDays(businessDate(now), 1));
     const rows = dashboardLessonsForDate(
       { lessons: state.lessons, groups: state.groups },
       tomorrowDate,
@@ -160,7 +159,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
   }
 
   function todayBlock(now) {
-    const today = ruDate(now);
+    const today = ruDate(businessDate(now));
     const lessons = dashboardLessonsForDate({ lessons: state.lessons, groups: state.groups }, today, allowedProjectIds());
     const cards = lessons.map((lesson) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);

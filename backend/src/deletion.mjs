@@ -59,6 +59,7 @@ export function createDeletionService(pool) {
     if (hasAny(dependencies)) throw new ApiProblem(409, 'TEACHER_HAS_DEPENDENCIES', 'Нельзя удалить преподавателя, потому что он назначен в группы, связан с аккаунтом или фигурирует в занятиях/истории.', dependencies);
     try {
       await inTransaction(pool, async (connection) => {
+        await connection.query('DELETE FROM teacher_project_directions WHERE teacher_id=:id', { id: teacherId });
         await connection.query('DELETE FROM teacher_directions WHERE teacher_id=:id', { id: teacherId });
         await connection.query('DELETE FROM teacher_projects WHERE teacher_id=:id', { id: teacherId });
         await connection.query('DELETE FROM teachers WHERE id=:id', { id: teacherId });

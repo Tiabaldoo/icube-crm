@@ -568,6 +568,22 @@ test('birthday daily generation addresses director and current teacher once per 
   assert.deepEqual([...notifications].sort(), ['1:child_birthday:2026-09-21:10', '2:child_birthday:2026-09-21:10']);
 });
 
+test('birthday age never becomes NaN and Feb 29 is delivered on Feb 28 in a non-leap year', async () => {
+  assert.equal(ageOnDate('bad-date', '2026-02-28'), null);
+  const bodies = [];
+  const pool = { query: async (sql, params = {}) => {
+    if (sql.includes('FROM children')) return [[
+      { id: 10, full_name: 'Високосный', birth_date: '2016-02-29' },
+      { id: 11, full_name: 'Без даты', birth_date: 'bad-date' },
+    ]];
+    if (sql.includes("'director' role_code")) return [[{ user_id: 1, role_code: 'director' }]];
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) { bodies.push(params.body); return [{ affectedRows: 1 }]; }
+    throw new Error(`Unexpected birthday SQL: ${sql}`);
+  } };
+  const result = await createBirthdayNotifications(pool).generate('2026-02-28');
+  assert.equal(result.created, 1); assert.match(bodies[0], /10 лет/); assert.doesNotMatch(bodies.join(' '), /NaN/);
+});
+
 test('teacher lesson payload exposes only child marker ids and teacher can read addressed notifications', async () => {
   const [lessons, ui] = await Promise.all([
     readFile(new URL('../backend/src/lessons.mjs', import.meta.url), 'utf8'),

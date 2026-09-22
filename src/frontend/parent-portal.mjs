@@ -1,4 +1,5 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
+import { ageOnDate, businessDate } from '../shared/business-time.mjs';
 
 const api = new ApiClient();
 const app = globalThis.document?.querySelector('#app') ?? null;
@@ -23,14 +24,8 @@ export function parentScheduleStatus(lesson) {
 }
 
 const pad = (value) => String(value).padStart(2, '0');
-const localIsoDate = (date = new Date()) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-export function ageFromBirthDate(birthDate, onDate = localIsoDate()) {
-  if (!birthDate) return null;
-  const [birthYear, birthMonth, birthDay] = String(birthDate).slice(0, 10).split('-').map(Number);
-  const [year, month, day] = String(onDate).slice(0, 10).split('-').map(Number);
-  if (![birthYear, birthMonth, birthDay, year, month, day].every(Number.isInteger)) return null;
-  return year - birthYear - (month < birthMonth || (month === birthMonth && day < birthDay) ? 1 : 0);
-}
+const localIsoDate = (date) => date instanceof Date ? date.toISOString().slice(0, 10) : businessDate();
+export function ageFromBirthDate(birthDate, onDate = businessDate()) { return ageOnDate(birthDate, onDate); }
 function decimalUnits(value) {
   const match = String(value ?? '0').trim().match(/^(-?)(\d+)(?:\.(\d{1,8}))?$/);
   if (!match) return 0n;
@@ -59,15 +54,15 @@ export function parentBalancePresentation(value) {
 }
 function parseIsoDate(value) {
   const [year, month, day] = String(value ?? '').split('-').map(Number);
-  const date = new Date(year, month - 1, day || 1);
+  const date = new Date(Date.UTC(year, month - 1, day || 1, 12));
   return Number.isNaN(date.getTime()) ? new Date() : date;
 }
 function scheduleRange(cursor) {
   const date = parseIsoDate(cursor);
-  const start = new Date(date.getFullYear(), date.getMonth(), 1);
-  const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  const start = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1, 12));
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0, 12));
   return { start, end, from: localIsoDate(start), to: localIsoDate(end),
-    title: new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(date) };
+    title: new Intl.DateTimeFormat('ru-RU', { timeZone: 'UTC', month: 'long', year: 'numeric' }).format(date) };
 }
 
 function errorMessage(error) {
@@ -139,13 +134,13 @@ export function parentScheduleCalendar(rows, cursor) {
   const cells = [];
   const blanks = (range.start.getDay() + 6) % 7;
   for (let index = 0; index < blanks; index += 1) cells.push(null);
-  for (let day = 1; day <= range.end.getDate(); day += 1) cells.push(new Date(range.start.getFullYear(), range.start.getMonth(), day));
+  for (let day = 1; day <= range.end.getUTCDate(); day += 1) cells.push(new Date(Date.UTC(range.start.getUTCFullYear(), range.start.getUTCMonth(), day, 12)));
   while (cells.length % 7) cells.push(null);
   const today = localIsoDate();
   const desktop = `<div class="calendar-desktop"><div class="calendar calendar-weekdays">${['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'].map((day) => `<div>${day}</div>`).join('')}</div><div class="calendar calendar-grid">${cells.map((date) => {
     if (!date) return '<div class="day calendar-empty"></div>';
     const key = localIsoDate(date); const lessons = byDate.get(key) ?? [];
-    return `<div class="day${key === today ? ' calendar-today' : ''}"><div class="date">${pad(date.getDate())}.${pad(date.getMonth() + 1)}${key === today ? '<span class="today-label">сегодня</span>' : ''}</div>${lessons.map(scheduleEventHtml).join('')}</div>`;
+    return `<div class="day${key === today ? ' calendar-today' : ''}"><div class="date">${pad(date.getUTCDate())}.${pad(date.getUTCMonth() + 1)}${key === today ? '<span class="today-label">сегодня</span>' : ''}</div>${lessons.map(scheduleEventHtml).join('')}</div>`;
   }).join('')}</div></div>`;
   const agendaDays = [];
   for (const [date, lessons] of byDate) agendaDays.push({ date: parseIsoDate(date), key: date, lessons });
@@ -323,7 +318,7 @@ app?.addEventListener('click', async (event) => {
   }
   else if (action === 'pay-close') { state.payment = null; render(); }
   else if (action === 'schedule-prev' || action === 'schedule-next') {
-    const cursor = parseIsoDate(state.scheduleCursor); cursor.setMonth(cursor.getMonth() + (action === 'schedule-prev' ? -1 : 1), 1);
+    const cursor = parseIsoDate(state.scheduleCursor); cursor.setUTCMonth(cursor.getUTCMonth() + (action === 'schedule-prev' ? -1 : 1), 1);
     state.scheduleCursor = localIsoDate(cursor); state.data = null; await loadTab();
   }
   else if (action === 'schedule-today') { state.scheduleCursor = localIsoDate(); state.data = null; await loadTab(); }

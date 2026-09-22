@@ -1,5 +1,12 @@
 /* iCube CRM: единый снимок рабочего интерфейса. Порядок секций сохраняет поведение прототипа. */
 
+function businessTodayIso(){
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Sakhalin',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());
+  const values={};parts.forEach(function(part){if(part.type!=='literal')values[part.type]=part.value;});
+  return values.year+'-'+values.month+'-'+values.day;
+}
+function businessTodayDate(){const p=businessTodayIso().split('-').map(Number);return new Date(p[0],p[1]-1,p[2],12);}
+
 /* ===== Стабилизированный раздел из app.js ===== */
 const state = {
  role:'director', page:'dashboard', selectedChild:1, selectedGroup:1, selectedLesson:1,
@@ -194,7 +201,7 @@ function updatePaymentPrice(){let e=currentEnrollment(),price=effectivePrice(e),
 function savePayment(){let childId=Number(document.querySelector('#pf-child').value),direction=document.querySelector('#pf-dir').value,e=byId(state.children,childId).enrollments.find(x=>x.direction===direction);if(!e){alert('Для теста выберите направление, на которое ребёнок уже записан.');return}let price=effectivePrice(e),amount=Number(document.querySelector('#pf-amount').value),lessons=amount/price;e.balance+=lessons;state.payments.push({id:Date.now(),date:document.querySelector('#pf-date').value.split('-').reverse().join('.'),childId,direction,amount,method:document.querySelector('#pf-method').value,price,lessons});state.modal=null;state.page='payments';render()}
 function toggleTrial(id,v){let l=byId(state.lessons,state.selectedLesson),e=l.extras.find(x=>x.childId===id);if(e)e.trial=v;render()}
 function refunds(){return pageHead('Возвраты','Отдельный тип финансовой операции — не отрицательная оплата','<button class="btn primary" onclick="refundForm()">+ Возврат</button>')+`<div class="card list"><div class="row header"><div>Ребёнок</div><div>Направление</div><div>Сумма</div><div>Дата</div><div>Баланс</div></div>${state.refunds.map(r=>`<div class="row"><div><b>${byId(state.children,r.childId)?.name||r.childName||'—'}</b></div><div>${r.direction}</div><div class="money negative">−${money(r.amount)}</div><div>${r.date}</div><div>−${r.lessons}</div></div>`).join('')}</div>`}
-function refundForm(){modal('<h3>Новый возврат</h3><div class="form-grid"><div class="field"><label>Дата</label><input class="input" id="rf-date" type="date" value="2026-09-09"></div><div class="field"><label>Ребёнок</label><select class="select" id="rf-child" onchange="refreshRefundDirections()">'+state.children.map(c=>'<option value="'+c.id+'">'+c.name+'</option>').join('')+'</select></div><div class="field"><label>Направление</label><select class="select" id="rf-dir"></select></div><div class="field"><label>Сумма, ₽</label><input class="input" id="rf-amount" type="number" step="0.01" value="1025"></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveRefund()">Сохранить</button></div>');setTimeout(refreshRefundDirections,0)}
+function refundForm(){modal('<h3>Новый возврат</h3><div class="form-grid"><div class="field"><label>Дата</label><input class="input" id="rf-date" type="date" value="2026-09-09"></div><div class="field"><label>Ребёнок</label><select class="select" id="rf-child" onchange="refreshRefundDirections()">'+state.children.map(c=>'<option value="'+c.id+'">'+escapeHtml(c.name)+'</option>').join('')+'</select></div><div class="field"><label>Направление</label><select class="select" id="rf-dir"></select></div><div class="field"><label>Сумма, ₽</label><input class="input" id="rf-amount" type="number" step="0.01" value="1025"></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveRefund()">Сохранить</button></div>');setTimeout(refreshRefundDirections,0)}
 function refreshRefundDirections(){let c=byId(state.children,Number(document.querySelector('#rf-child')?.value)),box=document.querySelector('#rf-dir');if(box)box.innerHTML=(c?.enrollments||[]).map(e=>'<option>'+e.direction+'</option>').join('')}
 function saveRefund(){let childId=Number(document.querySelector('#rf-child').value),direction=document.querySelector('#rf-dir').value,c=byId(state.children,childId),e=c.enrollments.find(x=>x.direction===direction),amount=Number(document.querySelector('#rf-amount').value);if(!e||!amount)return;let price=effectivePrice(e),lessons=amount/price;e.balance-=lessons;state.refunds.push({id:Date.now(),date:document.querySelector('#rf-date').value.split('-').reverse().join('.'),childId,direction,amount,price,lessons});state.modal=null;state.page='refunds';render()}
 function balances(){
@@ -700,7 +707,7 @@ render();
   // Create/edit child: first direction can explicitly be left without a group.
   window.childForm = function (id) {
     const c = id ? byId(state.children,id) : null;
-    const first = c?.enrollments?.[0] || null;
+    const first = c?.enrollments?.find(function(item){return item.editable!==false;}) || null;
     const direction = first?.direction || 'Робототехника';
 
     let html = '<h3>' + (c?'Редактировать ребёнка':'Новый ребёнок') + '</h3><div class="form-grid">';
@@ -1307,7 +1314,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html += '<div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo(\'calendar\')">Календарь</button></div><div class="list">';
     html += upcoming.map(function(item){
       const g=item.group, site=byId(state.sites,g.siteId);
-      return '<div class="kpi-line clickable" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')"><div><b>'+timeStart(item.time)+' · '+g.direction+'</b><div class="muted mini">'+g.name+' · '+site.name+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+g.project+'</span></div>';
+      return '<div class="kpi-line clickable" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')"><div><b>'+escapeHtml(timeStart(item.time))+' · '+escapeHtml(g.direction)+'</b><div class="muted mini">'+escapeHtml(g.name)+' · '+escapeHtml(site.name)+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div>';
     }).join('');
     html += '</div></div></div>';
 
@@ -1318,7 +1325,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html += '<div class="grid cols-2">';
       html += today.map(function(item){
         const g=item.group, site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
-        return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+item.time+'</div><b style="font-size:16px">'+g.name+'</b><div class="muted">'+site.name+' · '+teacher.name+'</div><button class="btn soft" style="margin-top:12px" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')">Открыть занятие</button></div>';
+        return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+escapeHtml(item.time)+'</div><b style="font-size:16px">'+escapeHtml(g.name)+'</b><div class="muted">'+escapeHtml(site.name)+' · '+escapeHtml(teacher.name)+'</div><button class="btn soft" style="margin-top:12px" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')">Открыть занятие</button></div>';
       }).join('');
       html += '</div>';
     }
@@ -1532,7 +1539,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<select class="select" style="max-width:240px" onchange="setCalendarTeacherV12(this.value)">';
       html+='<option value="all"'+(state.calendarTeacher==='all'?' selected':'')+'>Все преподаватели</option>';
       state.teachers.filter(function(t){return t.active!==false || Number(state.calendarTeacher)===t.id;}).forEach(function(t){
-        html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===t.id?' selected':'')+'>'+t.name+'</option>';
+        html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===t.id?' selected':'')+'>'+escapeHtml(t.name)+'</option>';
       });
       html+='</select>';
     }
@@ -1587,7 +1594,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field"><label>Окончание</label><input class="input" id="le-end" type="time" value="'+end+'"></div>';
     html+='<div class="field span-2"><label>Фактический преподаватель</label><select class="select" id="le-teacher">';
     state.teachers.filter(function(t){return t.id===l.teacherId || (t.active!==false && (!group?.projectId || !t.projectIds || t.projectIds.includes(group.projectId)));}).forEach(function(t){
-      html+='<option value="'+t.id+'"'+(t.id===l.teacherId?' selected':'')+'>'+t.name+'</option>';
+      html+='<option value="'+t.id+'"'+(t.id===l.teacherId?' selected':'')+'>'+escapeHtml(t.name)+'</option>';
     });
     html+='</select><div class="muted mini" style="margin-top:5px">Замена действует только для этого занятия и не меняет основного преподавателя группы.</div></div>';
     if(role!=='teacher'){
@@ -1596,7 +1603,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const venues=(state.lessonVenues||state.sites||[]).filter(function(site){return Number(site.id)!==Number(group?.siteId) && (site.active!==false || Number(site.id)===Number(l.siteOverrideId));});
       if(l.siteOverrideId && Number(l.siteOverrideId)!==Number(group?.siteId) && !venues.some(function(site){return Number(site.id)===Number(l.siteOverrideId);})) venues.push({id:l.siteOverrideId,name:l.siteName});
       venues.forEach(function(site){
-        html+='<option value="'+site.id+'"'+(Number(l.siteOverrideId)===Number(site.id)?' selected':'')+'>'+site.name+'</option>';
+        html+='<option value="'+site.id+'"'+(Number(l.siteOverrideId)===Number(site.id)?' selected':'')+'>'+escapeHtml(site.name)+'</option>';
       });
       html+='</select><div class="muted mini" style="margin-top:5px">Меняет только место проведения этого занятия.</div></div>';
     }
@@ -1822,13 +1829,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   window.teacherForm = function(id, returnToGroup) {
     const t=id?byId(state.teachers,id):null;
-    const dirs=t?.directions||['Робототехника'];
+    const draftProject=(state.projects||[]).find(function(p){return p.name===state.pendingGroupDraft?.project;});
+    const projectId=Number(draftProject?.id||t?.projectSettings?.[0]?.projectId||(state.projects||[])[0]?.id||0);
+    const projectSetting=t?.projectSettings?.find(function(item){return Number(item.projectId)===projectId;});
+    const dirs=(projectSetting?.directions||t?.directions||['Робототехника']).map(function(item){return item?.name||item;});
     let html='<h3>'+(t?'Редактировать преподавателя':'Новый преподаватель')+'</h3><div class="form-grid">';
     html+='<div class="field span-2"><label>Фамилия Имя</label><input class="input" id="tf-name" value="'+escapeAttr(t?.name||'')+'" placeholder="Иванов Сергей"></div>';
     html+='<div class="field span-2"><label>Телефон</label><input class="input" id="tf-phone" value="'+escapeAttr(t?.phone||'')+'" placeholder="+7 900 000-00-00"></div>';
     html+='<div class="field span-2"><label>Направления</label><div style="display:flex;gap:14px;flex-wrap:wrap;padding:10px 0"><label><input type="checkbox" id="tf-robot" '+(dirs.includes('Робототехника')?'checked':'')+'> Робототехника</label><label><input type="checkbox" id="tf-code" '+(dirs.includes('Программирование')?'checked':'')+'> Программирование</label></div></div>';
-    html+='<div class="field span-2"><label>Доступен для проектов</label><div style="display:flex;gap:14px;flex-wrap:wrap;padding:10px 0">'+(state.projects||[]).map(function(p){return '<label><input type="checkbox" id="tf-project-'+p.id+'" '+((!t||t.projectIds?.includes(p.id))?'checked':'')+'> '+escapeHtml(p.name)+'</label>';}).join('')+'</div></div>';
-    html+='<div class="field span-2"><label>Статус</label><select class="select" id="tf-active"><option value="true"'+(t?.active!==false?' selected':'')+'>Активен</option><option value="false"'+(t?.active===false?' selected':'')+'>Неактивен</option></select></div>';
+    html+='<div class="field span-2"><label>Проект</label><select class="select" id="tf-project" onchange="icubeApi.teacherProjectChanged('+(id||'null')+')">'+(state.projects||[]).map(function(p){return '<option value="'+p.id+'"'+(Number(p.id)===projectId?' selected':'')+'>'+escapeHtml(p.name)+'</option>';}).join('')+'</select></div>';
+    html+='<div class="field span-2"><label>Статус в выбранном проекте</label><select class="select" id="tf-active"><option value="true"'+(projectSetting?.active!==false?' selected':'')+'>Активен</option><option value="false"'+(projectSetting?.active===false?' selected':'')+'>Неактивен</option></select></div>';
     html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="icubeApi.saveTeacher('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
     modal(html);
   };
@@ -2038,7 +2048,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const visits=childVisitRows(c.id).slice(0,3);
 
     return '<div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge '+statusBadge(c.status)+'">'+c.status+'</span><button class="btn soft" onclick="enrollmentForm('+c.id+',null)">+ Добавить направление</button></div></div>'+directionsHtml+'</div>'+
-      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>'+c.birth+'</b></div><div class="info-line"><span>Родитель</span><b>'+c.parent+'</b></div><div class="info-line"><span>Телефон</span><b>'+c.phone+'</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">'+(c.note||'—')+'</span></div></div></div></div>'+
+      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>'+escapeHtml(c.birth)+'</b></div><div class="info-line"><span>Родитель</span><b>'+escapeHtml(c.parent)+'</b></div><div class="info-line"><span>Телефон</span><b>'+escapeHtml(c.phone)+'</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">'+escapeHtml(c.note||'—')+'</span></div></div></div></div>'+
       '<div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Последние оплаты</h2><button class="btn" onclick="setChildTab(\'payments\')">Все</button></div>'+(payments.length?payments.map(paymentRowMini).join(''):'<div class="empty">Оплат пока нет</div>')+'</div>'+
       '<div class="card pad"><div class="section-title"><h2>История посещений</h2><button class="btn" onclick="setChildTab(\'visits\')">Все</button></div>'+(visits.length?visits.map(visitRowMini).join(''):'<div class="empty">Посещений пока нет</div>')+'</div></div>';
   }
@@ -2419,7 +2429,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     let html='<h3>'+(existing?'Редактировать оплату':'Новая оплата')+'</h3><div class="form-grid">';
     html+='<div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="'+(existing?existing.date.split('.').reverse().join('-'):'2026-09-10')+'"></div>';
     html+='<div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="refreshPaymentDirections('+ (existing?.id||'null') +')">';
-    state.children.forEach(function(c){html+='<option value="'+c.id+'"'+(c.id===child.id?' selected':'')+'>'+c.name+'</option>';});
+    state.children.forEach(function(c){html+='<option value="'+c.id+'"'+(c.id===child.id?' selected':'')+'>'+escapeHtml(c.name)+'</option>';});
     html+='</select></div>';
     html+='<div class="field"><label>Направление</label><select class="select" id="pf-dir" onchange="updatePaymentCalc()"></select></div>';
     html+='<div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" step="0.01" value="'+(existing?.amount??4100)+'" oninput="updatePaymentCalc()"></div>';
@@ -2985,11 +2995,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(payments) reasons.push('оплаты: '+payments);
       if(refunds) reasons.push('возвраты: '+refunds);
       if(visits) reasons.push('посещения: '+visits);
-      modal('<h3>Нельзя удалить ребёнка</h3><div class="notice">У <b>'+child.name+'</b> уже есть история: '+reasons.join(', ')+'. Ребёнка с финансовыми операциями или посещениями удалять нельзя, чтобы не повредить историю CRM.</div><div class="modal-actions"><button class="btn primary" onclick="closeModal()">Понятно</button></div>');
+      modal('<h3>Нельзя удалить ребёнка</h3><div class="notice">У <b>'+escapeHtml(child.name)+'</b> уже есть история: '+reasons.join(', ')+'. Ребёнка с финансовыми операциями или посещениями удалять нельзя, чтобы не повредить историю CRM.</div><div class="modal-actions"><button class="btn primary" onclick="closeModal()">Понятно</button></div>');
       return;
     }
 
-    modal('<h3>Удалить ребёнка?</h3><div class="notice">У <b>'+child.name+'</b> нет оплат, возвратов и посещений. Карточка будет удалена без возможности восстановления в этом прототипе.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubeApi.deleteChild('+childId+')">Удалить ребёнка</button></div>');
+    modal('<h3>Удалить ребёнка?</h3><div class="notice">У <b>'+escapeHtml(child.name)+'</b> нет оплат, возвратов и посещений. Карточка будет удалена без возможности восстановления.</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubeApi.deleteChild('+childId+')">Удалить ребёнка</button></div>');
   };
 
   window.confirmDeleteChild=function(childId){
@@ -3173,8 +3183,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const year=Number(iso?match[1]:match[3]);
     const month=Number(match[2]);
     const day=Number(iso?match[3]:match[1]);
-    const now=new Date();
-    return now.getFullYear()-year-((now.getMonth()+1<month||(now.getMonth()+1===month&&now.getDate()<day))?1:0);
+    const now=businessTodayIso().split('-').map(Number);
+    return now[0]-year-((now[1]<month||(now[1]===month&&now[2]<day))?1:0);
   }
 
   function childOverviewV118(c){
@@ -3562,7 +3572,12 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     });
     if(state.role==='partner') draft.project='Зебра';
     const projectSites=sites.filter(function(s){return !s.projectId || (state.projects||[]).some(function(p){return p.id===s.projectId && p.name===draft.project;});});
-    const projectTeachers=teachers.filter(function(t){return !t.projectIds || (state.projects||[]).some(function(p){return t.projectIds.includes(p.id) && p.name===draft.project;});});
+    const selectedProject=(state.projects||[]).find(function(p){return p.name===draft.project;});
+    const projectTeachers=teachers.filter(function(t){
+      if(!selectedProject) return t.active!==false;
+      const setting=t.projectSettings?.find(function(item){return Number(item.projectId)===Number(selectedProject.id);});
+      return setting ? setting.active!==false && (setting.directions||[]).some(function(item){return (item.name||item)===draft.direction;}) : t.active!==false&&t.projectIds?.includes(selectedProject.id);
+    });
     if(!projectSites.some(function(s){return s.id===draft.siteId;})) draft.siteId=projectSites[0]?.id||null;
     if(!projectTeachers.some(function(t){return t.id===draft.teacherId;})) draft.teacherId=projectTeachers[0]?.id||null;
 
@@ -3612,7 +3627,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!project) return;
     const site=document.querySelector('#gf-site'),teacher=document.querySelector('#gf-teacher');
     if(site?.tagName==='SELECT') site.innerHTML=activeSites().filter(function(s){return !s.projectId||s.projectId===project.id;}).map(function(s){return '<option value="'+s.id+'">'+escapeHtml(s.name)+'</option>';}).join('')+'<option value="new">+ Создать площадку</option>';
-    if(teacher?.tagName==='SELECT') teacher.innerHTML=activeTeachers().filter(function(t){return !t.projectIds||t.projectIds.includes(project.id);}).map(function(t){return '<option value="'+t.id+'">'+escapeHtml(t.name)+'</option>';}).join('')+'<option value="new">+ Создать преподавателя</option>';
+    if(teacher?.tagName==='SELECT') teacher.innerHTML=(state.teachers||[]).filter(function(t){const setting=t.projectSettings?.find(function(item){return Number(item.projectId)===Number(project.id);});return setting?setting.active!==false:t.active!==false&&(!t.projectIds||t.projectIds.includes(project.id));}).map(function(t){return '<option value="'+t.id+'">'+escapeHtml(t.name)+'</option>';}).join('')+'<option value="new">+ Создать преподавателя</option>';
   };
 
   window.groups=function(){
@@ -3625,8 +3640,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
       const dirBadge=g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+g.direction+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+g.project+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
-        '<h3 style="margin:14px 0 5px">'+g.name+'</h3>'+
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
+        '<h3 style="margin:14px 0 5px">'+escapeHtml(g.name)+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]||'')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+(site?site.name:'Не выбрана')+'</b></div>'+
@@ -3927,7 +3942,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Фамилия Имя</label><input class="input" id="tqc-name" placeholder="Иванов Иван"></div>';
     html+='<div class="field span-2"><label>Телефон родителя <span class="muted" style="font-weight:400">(необязательно)</span></label><input class="input" id="tqc-phone" placeholder="+7 900 000-00-00"></div>';
     html+='</div>';
-    html+='<div class="muted mini" style="margin-top:10px">Направление будет указано автоматически: '+group.direction+'. В основную группу ребёнок пока не зачисляется.</div>';
+    html+='<div class="muted mini" style="margin-top:10px">Направление будет указано автоматически: '+escapeHtml(group.direction)+'. В основную группу ребёнок пока не зачисляется.</div>';
     html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveTeacherQuickChildV121()">Создать и отметить</button></div>';
     modal(html);
   };
@@ -4408,12 +4423,12 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<button class="btn primary" onclick="applySalaryFilters()"'+(state.salaryReportLoading?' disabled':'')+'>'+(state.salaryReportLoading?'Загрузка…':'Применить')+'</button>';
     if(state.role==='director') html+='<button class="btn" onclick="printSalaryAppliedV122()"'+(state.salaryReportLoading?' disabled':'')+'>Печать / PDF</button>';
     html+='</div>';
-    if(state.salaryReportError) html+='<div class="notice" style="margin-top:12px">'+state.salaryReportError+'</div>';
+    if(state.salaryReportError) html+='<div class="notice" style="margin-top:12px">'+escapeHtml(state.salaryReportError)+'</div>';
 
     html+='<div class="card child-ledger-card">';
     html+='<div class="child-ledger-head"><div><h2>Табель</h2><div class="muted mini child-ledger-count">'+rows.length+' начислений</div></div>';
     const teacher=byId(state.teachers,Number(state.salaryTeacher));
-    html+='<div style="text-align:right"><div class="muted mini">Преподаватель</div><b>'+(teacher?teacher.name:'—')+'</b></div></div>';
+    html+='<div style="text-align:right"><div class="muted mini">Преподаватель</div><b>'+escapeHtml(teacher?teacher.name:'—')+'</b></div></div>';
 
     if(!rows.length){
       html+='<div class="empty">За выбранный период начислений нет.</div>';
@@ -4427,7 +4442,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+' · '+salaryRowProjectLabelV122(l,g)+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+escapeHtml(l.date)+' · '+escapeHtml(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+escapeHtml(l.time)+(l.siteName?' · '+escapeHtml(l.siteName):'')+' · '+escapeHtml(salaryRowProjectLabelV122(l,g))+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
@@ -4593,8 +4608,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
       const dirBadge=g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+g.direction+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+g.project+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
-        '<h3 style="margin:14px 0 5px">'+g.name+'</h3>'+
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
+        '<h3 style="margin:14px 0 5px">'+escapeHtml(g.name)+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]||'')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+(site?site.name:'Не выбрана')+'</b></div>'+
@@ -4990,9 +5005,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return new Date(p[0]||0,(p[1]||1)-1,p[2]||1);
   }
   function isoToday(){
-    const d=new Date();
-    const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
-    return y+'-'+m+'-'+day;
+    return businessTodayIso();
   }
   function inRangeDate(d,from,to){
     const a=isoDate(from),b=isoDate(to); b.setHours(23,59,59,999);
@@ -5321,7 +5334,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }
     return 'Неделя '+pad(start.getDate())+' '+months[start.getMonth()]+' — '+pad(end.getDate())+' '+months[end.getMonth()]+' '+end.getFullYear();
   }
-  function todayDate(){return new Date(2026,8,10);}
+  function todayDate(){return businessTodayDate();}
   function ensureState(){
     if(!state.calendarMode) state.calendarMode='month';
     if(!state.calendarProject) state.calendarProject='all';
@@ -5429,7 +5442,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<select class="select" style="max-width:240px" onchange="setCalendarTeacherV12(this.value)">';
     html+='<option value="all"'+(state.calendarTeacher==='all'?' selected':'')+'>Все преподаватели</option>';
     (state.teachers||[]).filter(function(t){return t.active!==false||Number(state.calendarTeacher)===t.id;}).forEach(function(t){
-      html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===t.id?' selected':'')+'>'+t.name+'</option>';
+      html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===t.id?' selected':'')+'>'+escapeHtml(t.name)+'</option>';
     });
     html+='</select></div></div>';
 
@@ -5464,7 +5477,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const g=byId(state.groups,e.groupId); if(!g) return;
         html+='<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')">';
         html+='<div style="display:flex;justify-content:space-between;gap:6px"><b>'+timeStart(e.time)+'</b><span class="mini">'+(e.project==='Зебра'?'Зебра':'iCube')+'</span></div>';
-        html+='<div>'+g.name+'</div><div style="margin-top:5px">'+statusBadgeHtml(e)+'</div></div>';
+        html+='<div>'+escapeHtml(g.name)+'</div><div style="margin-top:5px">'+statusBadgeHtml(e)+'</div></div>';
       });
       html+='</div>';
     });
@@ -5498,8 +5511,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
   function toIso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
   function todayDate(){
-    const d=new Date();
-    return new Date(d.getFullYear(),d.getMonth(),d.getDate());
+    return businessTodayDate();
   }
   function monthTitle(d){
     const names=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -5801,7 +5813,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const g=byId(state.groups,e.groupId);if(!g)return;
         html+='<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'teacher\')">';
         html+='<div style="display:flex;justify-content:space-between;gap:6px"><b>'+timeStart(e.time)+'</b><span class="mini">'+(e.project==='Зебра'?'Зебра':'iCube')+'</span></div>';
-        html+='<div>'+g.name+'</div>';
+        html+='<div>'+escapeHtml(g.name)+'</div>';
         if(e.cancelled) html+='<div style="margin-top:5px"><span class="badge red">Отменено</span></div>';
         else if(e.moved) html+='<div style="margin-top:5px"><span class="badge amber">Перенесено</span></div>';
         else if(e.done) html+='<div style="margin-top:5px"><span class="badge green">Проведено</span></div>';
@@ -5826,7 +5838,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function parseIso(s){const p=String(s||'').split('-').map(Number);return new Date(p[0]||0,(p[1]||1)-1,p[2]||1);}
   function formatRu(d){return pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYear();}
   function timeStart(t){return String(t||'').split('–')[0]||'';}
-  function todayDate(){const d=new Date();return new Date(d.getFullYear(),d.getMonth(),d.getDate());}
+  function todayDate(){return businessTodayDate();}
   function monthTitle(d){
     const names=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
     return names[d.getMonth()]+' '+d.getFullYear();
@@ -5971,7 +5983,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!teacher){
       html+='<select class="select" onchange="setCalendarTeacherV12(this.value)"><option value="all"'+(state.calendarTeacher==='all'?' selected':'')+'>Все преподаватели</option>';
       (state.teachers||[]).filter(function(t){return t.active!==false||Number(state.calendarTeacher)===Number(t.id);}).forEach(function(t){
-        html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===Number(t.id)?' selected':'')+'>'+t.name+'</option>';
+        html+='<option value="'+t.id+'"'+(Number(state.calendarTeacher)===Number(t.id)?' selected':'')+'>'+escapeHtml(t.name)+'</option>';
       });
       html+='</select>';
     }
@@ -7308,8 +7320,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   const DIR_STATUSES=['Активный','Пауза','Закончил'];
 
   function isoToday(){
-    const d=new Date();
-    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    return businessTodayIso();
   }
   function badgeClass(status){
     return status==='Активный'?'green':status==='Пауза'?'amber':'gray';
@@ -7473,8 +7484,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   const DIR_STATUSES=['Активный','Пауза','Закончил'];
 
   function isoToday(){
-    const d=new Date();
-    return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    return businessTodayIso();
   }
   function fmt(n,d){return Number(Number(n||0).toFixed(d==null?4:d));}
   function currentEnrollment(child,direction){
@@ -7809,12 +7819,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 })();
 
 /* ===== Стабилизированный раздел из v145.js ===== */
-// iCube CRM v1.1.45 — all "today" behaviour uses the actual local browser date.
+// iCube CRM v1.1.45 — all business dates use Asia/Sakhalin regardless of the browser timezone.
 (function(){
   function pad(n){return String(n).padStart(2,'0');}
   function todayDate(){
-    const d=new Date();
-    return new Date(d.getFullYear(),d.getMonth(),d.getDate());
+    return businessTodayDate();
   }
   function toIso(d){return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());}
   function toRu(d){return pad(d.getDate())+'.'+pad(d.getMonth()+1)+'.'+d.getFullYear();}

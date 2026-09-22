@@ -118,3 +118,15 @@ test('photo storage migration добавляет retention metadata без destr
   assert.match(sql, /UNIQUE KEY uq_lesson_photos_client_upload \(client_upload_id\)/);
   assert.doesNotMatch(sql, /DROP DATABASE|DROP TABLE|TRUNCATE|DELETE FROM/i);
 });
+
+test('migration 018 scopes teacher settings and protects one current ledger/config row', async () => {
+  const sql = await readFile(new URL('../database/migrations/018_project_teacher_and_current_invariants.sql', import.meta.url), 'utf8');
+  assert.match(sql, /ADD COLUMN active BOOLEAN NOT NULL DEFAULT TRUE/);
+  assert.match(sql, /CREATE TABLE teacher_project_directions/);
+  assert.match(sql, /uq_group_memberships_one_current/);
+  assert.match(sql, /uq_price_versions_one_current/);
+  assert.match(sql, /uq_salary_rates_one_current/);
+  assert.match(sql, /uq_partner_agreements_one_current/);
+  assert.match(sql, /migration_018_invariant_check/);
+  assert.doesNotMatch(sql, /DROP DATABASE|DELETE FROM/i);
+});

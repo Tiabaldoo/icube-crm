@@ -107,8 +107,10 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${server.address().port}/api/v1`;
 });
 after(() => new Promise((resolve) => server.close(resolve)));
+let requestSequence = 0;
 async function request(path, method = 'GET', body) {
-  const response = await fetch(`${baseUrl}${path}`, { method, headers: body ? { 'content-type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  const headers = body ? { 'content-type': 'application/json', 'Idempotency-Key': `backend-catalog-${++requestSequence}` } : {};
+  const response = await fetch(`${baseUrl}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
   const payload = response.status === 204 ? null : await response.json(); return { response, payload };
 }
 

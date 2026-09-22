@@ -51,12 +51,12 @@ test('partner-created site and teacher receive Zebra ownership without iCube ava
     calls.push({ sql, params });
     if (sql.startsWith('INSERT INTO sites')) return [{ insertId: 31 }];
     if (sql.startsWith('SELECT id,project_id,name,short_name')) return [[site]];
-    if (sql.startsWith('SELECT id FROM directions')) return [[{ id: 3 }]];
+    if (sql.startsWith('SELECT id FROM directions') || sql.startsWith('SELECT id FROM projects')) return [[{ id: 3 }]];
     if (sql.startsWith('INSERT INTO teachers')) return [{ insertId: 41 }];
-    if (sql.startsWith('DELETE FROM teacher_directions') || sql.startsWith('INSERT INTO teacher_directions') || sql.startsWith('INSERT IGNORE INTO teacher_projects')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('DELETE FROM teacher_project_directions') || sql.startsWith('INSERT INTO teacher_project_directions') || sql.startsWith('INSERT INTO teacher_projects')) return [{ affectedRows: 1 }];
     if (sql.includes('FROM teachers t LEFT JOIN users u')) return [[teacher]];
-    if (sql.includes('FROM teacher_directions td')) return [[{ teacher_id: 41, id: 3, name: 'Робототехника' }]];
-    if (sql === 'SELECT teacher_id,project_id FROM teacher_projects ORDER BY project_id') return [[{ teacher_id: 41, project_id: 2 }]];
+    if (sql.includes('FROM teacher_project_directions tpd')) return [[{ teacher_id: 41, project_id: 2, id: 3, name: 'Робототехника' }]];
+    if (sql === 'SELECT teacher_id,project_id,active FROM teacher_projects ORDER BY project_id') return [[{ teacher_id: 41, project_id: 2, active: 1 }]];
     throw new Error(`Unexpected SQL: ${sql}`);
   });
   const catalog = createMysqlCatalog(db);
@@ -64,25 +64,25 @@ test('partner-created site and teacher receive Zebra ownership without iCube ava
   const created = await catalog.create('teachers', { name: 'Учитель', directionIds: ['3'] }, partner);
   assert.deepEqual(created.projectIds, ['2']);
   assert.ok(calls.some(({ sql, params }) => sql.startsWith('INSERT INTO sites') && params.projectId === '2'));
-  assert.ok(calls.some(({ sql, params }) => sql.startsWith('INSERT IGNORE INTO teacher_projects') && params.projectId === '2'));
+  assert.ok(calls.some(({ sql, params }) => sql.startsWith('INSERT INTO teacher_projects') && params.projectId === '2'));
   await assert.rejects(catalog.create('sites', { name: 'Не тот проект', projectId: '1' }, partner), { status: 403, code: 'FORBIDDEN' });
   await assert.rejects(catalog.create('teachers', { name: 'Не тот проект', directionIds: ['3'], projectIds: ['1'] }, partner), { status: 403, code: 'FORBIDDEN' });
 });
 
-test('teacher availability cannot be removed while a project group still uses that teacher', async () => {
+test('teacher project activity cannot be disabled while an active project group uses that teacher', async () => {
   let assigned = true;
   const db = pool(async (sql) => {
     if (sql.includes('FROM teachers t LEFT JOIN users u')) return [[{ id: 41, full_name: 'Учитель', phone: null, active: 1 }]];
-    if (sql.includes('FROM teacher_directions td')) return [[{ teacher_id: 41, id: 3, name: 'Робототехника' }]];
-    if (sql === 'SELECT teacher_id,project_id FROM teacher_projects ORDER BY project_id') return [[{ teacher_id: 41, project_id: 2 }]];
-    if (sql.startsWith('SELECT id FROM directions')) return [[{ id: 3 }]];
+    if (sql.includes('FROM teacher_project_directions tpd')) return [[{ teacher_id: 41, project_id: 2, id: 3, name: 'Робототехника' }]];
+    if (sql === 'SELECT teacher_id,project_id,active FROM teacher_projects ORDER BY project_id') return [[{ teacher_id: 41, project_id: 2, active: 1 }]];
+    if (sql.startsWith('SELECT id FROM directions') || sql.startsWith('SELECT id FROM projects')) return [[{ id: 3 }]];
     if (sql.startsWith('SELECT id FROM study_groups WHERE default_teacher_id=')) return [assigned ? [{ id: 51 }] : []];
     return [{ affectedRows: 1 }];
   });
   const catalog = createMysqlCatalog(db);
-  await assert.rejects(catalog.update('teachers', '41', { projectIds: [] }, partner), { status: 409, code: 'TEACHER_PROJECT_IN_USE' });
+  await assert.rejects(catalog.update('teachers', '41', { projectId: '2', active: false, directionIds: ['3'] }, partner), { status: 409, code: 'TEACHER_PROJECT_IN_USE' });
   assigned = false;
-  assert.equal((await catalog.update('teachers', '41', { projectIds: [] }, partner)).id, '41');
+  assert.equal((await catalog.update('teachers', '41', { projectId: '2', active: false, directionIds: ['3'] }, partner)).id, '41');
 });
 
 test('group assignment requires both site ownership and teacher project availability', async () => {
@@ -90,7 +90,7 @@ test('group assignment requires both site ownership and teacher project availabi
   const db = pool(async (sql) => {
     if (sql.startsWith('SELECT id FROM ')) return [[{ id: 1 }]];
     if (sql.startsWith('SELECT s.id FROM sites s JOIN teacher_projects')) return [available ? [{ id: 31 }] : []];
-    if (sql.startsWith('SELECT teacher_id FROM teacher_directions')) return [[{ teacher_id: 41 }]];
+    if (sql.startsWith('SELECT teacher_id FROM teacher_project_directions')) return [[{ teacher_id: 41 }]];
     if (sql.startsWith('INSERT INTO study_groups')) return [{ insertId: 51 }];
     if (sql.startsWith('SELECT id,price FROM price_versions')) return [[]];
     if (sql.includes('FROM study_groups g JOIN directions')) return [[{ id: 51, name: 'Зебра', direction_id: 3, direction_name: 'Робототехника',

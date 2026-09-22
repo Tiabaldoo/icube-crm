@@ -34,7 +34,7 @@ test('salary-accruals returns self-contained historical amounts, project and eff
   assert.deepEqual(rows[0], {
     id: '91', lessonId: '44', teacherId: '5', rateVersionId: '7',
     type: 'regular', presentChildren: 3, fixedAmount: '600.00', childrenAmount: '300.00', totalAmount: '900.00',
-    startsAt: '2025-01-15T10:00:00Z', endsAt: '2025-01-15T11:30:00Z', groupId: '12', groupName: 'Историческая группа',
+    startsAt: '2025-01-15T10:00:00+11:00', endsAt: '2025-01-15T11:30:00+11:00', groupId: '12', groupName: 'Историческая группа',
     projectId: '1', projectName: 'iCubeRobots', siteId: '8', siteName: 'ДК «Океан»',
   });
 });

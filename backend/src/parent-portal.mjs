@@ -3,6 +3,7 @@ import { hashPassword } from './auth-service.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { inTransaction } from './db.mjs';
 import { partnerProjectId } from './project-scope.mjs';
+import { addCalendarDays, businessDate, BUSINESS_UTC_OFFSET } from '../../src/shared/business-time.mjs';
 
 export const PARENT_NOTIFICATION_TYPES = Object.freeze([
   { type: 'reminder_day_before', label: 'Напомнить о занятии вечером накануне', defaultEnabled: true },
@@ -24,7 +25,7 @@ const nullable = (value, max = 255) => {
   return result ? result.slice(0, max) : null;
 };
 const isoDate = (value) => value == null ? null : (value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10));
-const isoDateTime = (value) => value == null ? null : (value instanceof Date ? value.toISOString() : `${String(value).slice(0, 10)}T${String(value).slice(11, 19)}Z`);
+const isoDateTime = (value) => value == null ? null : (value instanceof Date ? value.toISOString() : `${String(value).slice(0, 10)}T${String(value).slice(11, 19)}${BUSINESS_UTC_OFFSET}`);
 const bool = (value) => value === true || value === 1 || value === '1';
 const moneyCents = (value) => {
   const match = String(value ?? '').trim().match(/^(\d+)(?:\.(\d{1,2}))?$/);
@@ -59,12 +60,12 @@ export function createParentPortal(pool, {
   materializeLessons = async () => {},
 } = {}) {
   const timeZone = contact.timeZone ?? 'Asia/Sakhalin';
-  const localDate = (date = new Date()) => {
+  const localDate = (date = new Date()) => timeZone === 'Asia/Sakhalin' ? businessDate(date) : (() => {
     const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
       .formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
     return `${parts.year}-${parts.month}-${parts.day}`;
-  };
-  const addDays = (date, days) => new Date(Date.parse(`${date}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+  })();
+  const addDays = addCalendarDays;
   async function guardianForUser(userId, connection = pool) {
     const [rows] = await connection.query(`SELECT g.id,g.user_id,g.full_name,g.phone,g.email,u.email login,u.status
       FROM guardians g JOIN users u ON u.id=g.user_id WHERE g.user_id=:userId LIMIT 1`, { userId });
