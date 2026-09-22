@@ -231,10 +231,23 @@ export function createLessonPhotoService(pool, {
       throw error;
     }
   }
+  async function prepareLessonPurge(connection, lessonId) {
+    const [rows] = await connection.query('SELECT id,storage_key FROM lesson_photos WHERE lesson_id=:lessonId FOR UPDATE', { lessonId });
+    if (rows.length) await connection.query('UPDATE lesson_photos SET deleted_at=COALESCE(deleted_at,NOW(6)) WHERE lesson_id=:lessonId', { lessonId });
+    return rows.map((row) => ({ id: String(row.id), storageKey: row.storage_key }));
+  }
+  async function purgePrepared(items = []) {
+    const failed = [];
+    for (const item of items) {
+      try {
+        await rm(safePath(item.storageKey), { force: true });
+        await pool.query('UPDATE lesson_photos SET purged_at=COALESCE(purged_at,NOW(6)) WHERE id=:id', { id: item.id });
+      } catch (error) { failed.push({ id: String(item.id), message: error.message }); }
+    }
+    return { selected: items.length, purged: items.length - failed.length, failed };
+  }
   async function purgeLesson(connection, lessonId) {
-    const [rows] = await connection.query('SELECT storage_key FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId });
-    for (const row of rows) await rm(safePath(row.storage_key), { force: true });
-    await connection.query('DELETE FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId });
+    return prepareLessonPurge(connection, lessonId);
   }
   async function cleanupExpired({ limit = 500 } = {}) {
     const [rows] = await pool.query(`SELECT id,storage_key FROM lesson_photos
@@ -251,5 +264,5 @@ export function createLessonPhotoService(pool, {
     return { selected: rows.length, purged, failed };
   }
   async function storageHealth() { await mkdir(root, { recursive: true }); return stat(root); }
-  return { maxUploadBytes, list, upload, remove, file, fileForParent, purgeLesson, cleanupExpired, storageHealth };
+  return { maxUploadBytes, list, upload, remove, file, fileForParent, prepareLessonPurge, purgePrepared, purgeLesson, cleanupExpired, storageHealth };
 }

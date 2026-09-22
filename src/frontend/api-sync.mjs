@@ -1121,9 +1121,10 @@ async function saveLessonEditApi(lessonId, role) {
 async function lessonToggleApi(key, enabled) {
   const lesson = currentLesson(); if (!lesson) return;
   try {
-    if (key === 'emptyTrip' && enabled) await api.request(`/lessons/${lesson.id}/empty-trip`, { method: 'POST', body: {} });
-    else if (key === 'emptyTrip') return window.alert('Пустой выезд уже зафиксирован. Для исправления обратитесь к разработчику.');
-    else await api.update('lessons', lesson.id, { introGroup: Boolean(enabled) });
+    const body = key === 'emptyTrip'
+      ? { emptyTrip: Boolean(enabled), ...(enabled ? { introGroup: false } : {}) }
+      : { introGroup: Boolean(enabled), ...(enabled ? { emptyTrip: false } : {}) };
+    await api.update('lessons', lesson.id, body);
     await reloadLesson(lesson.id, 'lesson');
   } catch (error) { fail(error); }
 }

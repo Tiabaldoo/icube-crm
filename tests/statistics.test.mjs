@@ -17,6 +17,16 @@ test('completed lessons, ordinary visits/absences и ordinary extra считаю
     { lessons: 2, visits: 2, absences: 1, rate: '66.7' });
 });
 
+test('неотмеченный ребёнок frozen roster считается отсутствовавшим после completion', () => {
+  const result = calculateStatistics({ period, filters, attendanceRows: [
+    { lesson_id: 3, group_id: 7, group_name: 'Закрытая', project_id_snapshot: 2, project_name: 'Зебра',
+      direction_id_snapshot: 1, direction_name: 'Роботы', attendance_id: 20, attendance_type: 'main', present: 0, is_trial: 0, marked_at: null },
+  ] });
+  assert.equal(result.summary.absences, 1);
+  assert.deepEqual(result.groups.map(({ name, currentMembers, completedLessons, absences }) => ({ name, currentMembers, completedLessons, absences })),
+    [{ name: 'Закрытая', currentMembers: 0, completedLessons: 1, absences: 1 }]);
+});
+
 test('New считается по первым ordinary visits отдельно по context, но summary дедуплицирует ребёнка', () => {
   const result = calculateStatistics({ period, filters, firstVisitRows: [
     { child_id: 7, group_id: 5, project_id_snapshot: 1, direction_id_snapshot: 1 },
@@ -52,6 +62,7 @@ test('statistics SQL исключает cancelled/deleted, использует 
   const attendanceSql = calls[0].sql;
   assert.match(attendanceSql, /l\.status='completed'/); assert.match(attendanceSql, /l\.deleted_at IS NULL/);
   assert.match(attendanceSql, /l\.project_id_snapshot=:projectId/); assert.match(attendanceSql, /l\.direction_id_snapshot=:directionId/);
+  assert.match(attendanceSql, /LEFT JOIN lesson_roster_members/); assert.doesNotMatch(attendanceSql, /a\.marked_at IS NOT NULL/);
   const firstSql = calls[1].sql;
   assert.match(firstSql, /a\.present=TRUE AND a\.is_trial=FALSE/); assert.match(firstSql, /PARTITION BY a\.child_id,l\.project_id_snapshot,l\.direction_id_snapshot/);
   const leftSql = calls[2].sql;

@@ -42,9 +42,14 @@ function memoryPool({ lesson = {}, present = true, photos = [] } = {}) {
     }
     if (sql.includes('SELECT * FROM lesson_photos WHERE lesson_id=')) return [state.photos.filter((photo) => !photo.deleted_at)];
     if (sql.includes('SELECT * FROM lesson_photos WHERE id=')) return [state.photos.filter((photo) => String(photo.id) === String(params.photoId) && !photo.deleted_at)];
+    if (sql.startsWith('UPDATE lesson_photos SET deleted_at=COALESCE') && sql.includes('WHERE lesson_id=')) {
+      state.photos.filter((item) => String(item.lesson_id) === String(params.lessonId)).forEach((photo) => { photo.deleted_at ??= new Date(); });
+      return [{ affectedRows: state.photos.length }];
+    }
     if (sql.startsWith('UPDATE lesson_photos SET deleted_at=COALESCE')) { const photo = state.photos.find((item) => item.id === params.id); photo.deleted_at ??= new Date(); photo.purged_at = new Date(); return [{ affectedRows: 1 }]; }
     if (sql.startsWith('UPDATE lesson_photos SET deleted_at=')) { const photo = state.photos.find((item) => String(item.id) === String(params.id)); if (photo) photo.deleted_at = new Date(); return [{ affectedRows: photo ? 1 : 0 }]; }
     if (sql.startsWith('UPDATE lesson_photos SET purged_at=')) { const photo = state.photos.find((item) => String(item.id) === String(params.id)); if (photo) photo.purged_at = new Date(); return [{ affectedRows: photo ? 1 : 0 }]; }
+    if (sql.startsWith('SELECT id,storage_key FROM lesson_photos WHERE lesson_id=')) return [state.photos.map(({ id, storage_key }) => ({ id, storage_key }))];
     if (sql.startsWith('SELECT id,storage_key FROM lesson_photos')) {
       const limit = Number(sql.match(/LIMIT\s+(\d+)/i)?.[1] ?? state.photos.length);
       return [state.photos
@@ -241,11 +246,14 @@ test('expired metadata does not consume one of five active photo slots', async (
   assert.ok(photo.id); assert.equal(f.pool.state.photos.length, 6);
 });
 
-test('deleting a lesson purges physical files and photo rows', async (t) => {
+test('lesson photo purge marks metadata in transaction and removes files only after commit step', async (t) => {
   const f = await fixture({ photos: [{}, {}] }); t.after(f.close);
   for (const photo of f.pool.state.photos) { await mkdir(path.dirname(path.join(f.storageDir, photo.storage_key)), { recursive: true }); await writeFile(path.join(f.storageDir, photo.storage_key), jpeg); }
-  await f.service.purgeLesson(f.pool.connection, 10);
-  assert.equal(f.pool.state.photos.length, 0);
+  const prepared = await f.service.prepareLessonPurge(f.pool.connection, 10);
+  assert.equal(f.pool.state.photos.every((photo) => photo.deleted_at && !photo.purged_at), true);
+  assert.deepEqual(await readFile(path.join(f.storageDir, '2026/09/1.jpg')), jpeg, 'файл ещё цел до post-commit purge');
+  const result = await f.service.purgePrepared(prepared); assert.equal(result.purged, 2);
+  assert.equal(f.pool.state.photos.every((photo) => photo.purged_at), true);
   for (const key of ['2026/09/1.jpg', '2026/09/2.jpg']) await assert.rejects(readFile(path.join(f.storageDir, key)), { code: 'ENOENT' });
 });
 

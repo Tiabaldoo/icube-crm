@@ -268,15 +268,21 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (lesson.status === 'completed' && String(teacherId ?? '') !== String(lesson.actual_teacher_id ?? '')) {
           throw new ApiProblem(409, 'COMPLETED_TEACHER_LOCKED', 'При переносе проведённого занятия нельзя менять фактического преподавателя');
         }
+        const introGroup = body.introGroup === undefined ? bool(lesson.is_intro_group) : bool(body.introGroup);
+        const emptyTrip = body.emptyTrip === undefined ? bool(lesson.is_empty_trip) : bool(body.emptyTrip);
+        if (introGroup && emptyTrip) throw new ApiProblem(400, 'LESSON_TYPE_CONFLICT', 'Занятие не может одновременно быть ознакомительным и пустым выездом');
         await connection.query(`UPDATE lessons SET starts_at=CONCAT(:date,' ',:start,':00'),ends_at=CONCAT(:date,' ',:end,':00'),
           actual_teacher_id=:teacherId,site_override_id=:siteOverrideId,topic=:topic,is_intro_group=:introGroup,is_empty_trip=:emptyTrip,lock_version=lock_version+1 WHERE id=:id`, {
           id: lesson.id, date, start, end, teacherId, siteOverrideId, topic: body.topic === undefined ? lesson.topic : nullableText(body.topic),
-          introGroup: body.introGroup === undefined ? bool(lesson.is_intro_group) : bool(body.introGroup),
-          emptyTrip: body.emptyTrip === undefined ? bool(lesson.is_empty_trip) : bool(body.emptyTrip),
+          introGroup, emptyTrip,
         });
         const updatedStartsAt = `${date} ${start}:00`;
         if (parentNotifications && lesson.status !== 'completed' && mysqlDateTime(lesson.starts_at) !== updatedStartsAt) {
           await parentNotifications.lessonMoved(connection, { ...lesson, starts_at: updatedStartsAt }, lesson.starts_at);
+        }
+        if (lesson.status === 'completed' && (introGroup !== bool(lesson.is_intro_group) || emptyTrip !== bool(lesson.is_empty_trip))) {
+          lesson.is_intro_group = introGroup; lesson.is_empty_trip = emptyTrip; lesson.starts_at = updatedStartsAt;
+          await recalculateSalary(connection, lesson);
         }
       });
       return get(lessonId, context);
@@ -429,7 +435,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     }
     if (lesson.status !== 'completed') return;
     const [countRows] = await connection.query('SELECT COUNT(*) present_count FROM attendances WHERE lesson_id=:lessonId AND present=TRUE', { lessonId: lesson.id });
-    if (!bool(lesson.is_empty_trip) && Number(countRows[0].present_count) === 0) {
+    if (lessonKind(lesson) === 'regular' && Number(countRows[0].present_count) === 0) {
       if (old) await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE id=:id', { id: old.id });
       return;
     }
@@ -564,6 +570,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
   async function remove(lessonId, context = {}) {
     if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить занятие может только администратор проекта');
     try {
+      let pendingPhotos = [];
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId);
         await assertAccess(connection, lesson, context);
@@ -574,12 +581,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         }
         await connection.query('UPDATE salary_accruals SET supersedes_accrual_id=NULL WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query('DELETE FROM salary_accruals WHERE lesson_id=:lessonId', { lessonId: lesson.id });
-        if (lessonPhotos) await lessonPhotos.purgeLesson(connection, lesson.id);
+        if (lessonPhotos) pendingPhotos = await lessonPhotos.prepareLessonPurge(connection, lesson.id);
         else await connection.query('DELETE FROM lesson_photos WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query('DELETE FROM attendances WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId', { lessonId: lesson.id });
         await connection.query(`UPDATE lessons SET deleted_at=NOW(6),lock_version=lock_version+1 WHERE id=:id`, { id: lesson.id });
       });
+      if (lessonPhotos && pendingPhotos.length) await lessonPhotos.purgePrepared(pendingPhotos);
       return null;
     } catch (error) { throw mysqlError(error); }
   }
