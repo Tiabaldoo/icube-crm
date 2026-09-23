@@ -612,19 +612,20 @@ async function saveChild(resourceId) {
 async function saveEnrollment(childId, oldDirection) {
   try {
     const child = legacy.state.children.find((item) => item.id === Number(childId));
-    const enrollment = child?.enrollments.find((item) => item.direction === oldDirection);
+    const enrollment = child?.enrollments.find((item) => item.editable !== false && item.direction === oldDirection);
     const direction = byName(directories.directions, value('#md-dir') || oldDirection);
     if (!enrollment || !direction) return;
     const individual = value('#md-price-mode') === 'individual'; const packagePrice = Number(value('#md-individual-package') || 0);
     if (individual && !(packagePrice > 0)) return window.alert('Укажите индивидуальную цену абонемента за 4 занятия.');
     const targetValues = { groupId: value('#md-group') ? Number(value('#md-group')) : null,
       status: enrollmentStatusToApi[value('#md-enrollment-status')] ?? enrollmentStatusToApi[enrollment.status] ?? 'active', individualPrice: individual ? packagePrice / 4 : null };
-    if (String(direction.id) !== String(enrollment.directionId)) {
-      const existingTarget = child.enrollments.find((item) => item.directionId === Number(direction.id));
-      const newTargetValues = { ...targetValues, status: targetValues.status === 'finished' ? 'active' : targetValues.status };
-      if (existingTarget) await api.updateEnrollment(existingTarget.id, newTargetValues);
-      else await api.createEnrollment(child.id, { directionId: direction.id, ...newTargetValues });
-      await api.updateEnrollment(enrollment.id, { groupId: null, status: 'finished' });
+    const directionChanged = String(direction.id) !== String(enrollment.directionId);
+    const currentIndividual = enrollment.individualPrice == null ? null : Number(enrollment.individualPrice);
+    const priceChanged = currentIndividual !== targetValues.individualPrice;
+    if (directionChanged || priceChanged) {
+      await api.request(`/enrollments/${enrollment.id}/change-direction`, { method: 'POST', idempotencyKey: operationKey(), body: {
+        directionId: direction.id, ...targetValues, status: targetValues.status === 'finished' ? 'active' : targetValues.status,
+      } });
     } else {
       await api.updateEnrollment(enrollment.id, { directionId: direction.id, ...targetValues });
     }

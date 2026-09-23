@@ -14,6 +14,7 @@ import { createPartnerSettlements } from './partner-settlements.mjs';
 import { createStatistics } from './statistics.mjs';
 import { assertOwned, partnerProjectId } from './project-scope.mjs';
 import { createProjectTransfers } from './project-transfers.mjs';
+import { createEnrollmentChanges } from './enrollment-changes.mjs';
 import { createDailyDashboard } from './daily-dashboard.mjs';
 import { createNotifications } from './notifications.mjs';
 import { createSiteRentService } from './site-rent.mjs';
@@ -45,6 +46,7 @@ export function createApiRouter(pool, {
   lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications }),
   parentPortal = createParentPortal(pool, { materializeLessons: lessons.materialize }),
   balanceTransfers = createBalanceTransfers(pool),
+  enrollmentChanges = createEnrollmentChanges(pool, balanceTransfers),
   projectTransfers = createProjectTransfers(pool, balanceTransfers),
   dailyDashboard = createDailyDashboard(pool),
   notifications = createNotifications(pool),
@@ -163,6 +165,12 @@ export function createApiRouter(pool, {
   }));
   router.post('/children/:id/enrollments', requirePermission('enrollments:write'), run((request) => catalog.createEnrollment(request.params.id, request.body, request.auth), 201));
   router.patch('/enrollments/:id', requirePermission('enrollments:write'), run((request) => catalog.updateEnrollment(request.params.id, request.body, request.auth)));
+  router.post('/enrollments/:id/change-direction', requirePermission('enrollments:write'), run(async (request) => {
+    await assertOwned(pool, 'enrollments', request.params.id, request.auth);
+    return enrollmentChanges.changeDirection(request.params.id, request.body, {
+      ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+    });
+  }));
   router.post('/enrollments/:id/project-transfer', requirePermission('enrollments:write'), run((request) => projectTransfers.create(request.params.id, request.body, request.auth), 201));
   router.delete('/enrollments/:id', requirePermission('enrollments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.params.id, request.auth); return deletions.deleteEnrollment(request.params.id); }, 204));
   router.get('/teachers/:id/access', requirePermission('teachers:read'), run(async (request) => {

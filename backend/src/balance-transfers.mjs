@@ -69,14 +69,14 @@ export function createBalanceTransfers(pool) {
     LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=CURDATE() AND (gm2.ended_on IS NULL OR gm2.ended_on>=CURDATE()) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
     WHERE e.id IN (:sourceId,:targetId) ORDER BY e.id FOR UPDATE`;
 
-  async function loadPlan(connection, sourceId, targetId) {
+  async function loadPlan(connection, sourceId, targetId, { allowSameDirection = false } = {}) {
     sourceId = identifier(sourceId, 'sourceEnrollmentId'); targetId = identifier(targetId, 'targetEnrollmentId');
     if (sourceId === targetId) throw new ApiProblem(400, 'SAME_ENROLLMENT', 'Направления переноса должны отличаться');
     const [rows] = await connection.query(enrollmentSql, { sourceId, targetId });
     const source = rows.find((row) => String(row.id) === sourceId); const target = rows.find((row) => String(row.id) === targetId);
     if (!source || !target) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
     if (String(source.child_id) !== String(target.child_id)) throw new ApiProblem(409, 'DIFFERENT_CHILDREN', 'Перенос возможен только между направлениями одного ребёнка');
-    if (String(source.direction_id) === String(target.direction_id) && String(source.project_id) === String(target.project_id)) {
+    if (!allowSameDirection && String(source.direction_id) === String(target.direction_id) && String(source.project_id) === String(target.project_id)) {
       throw new ApiProblem(409, 'SAME_DIRECTION', 'Перенос между одинаковыми направлениями одного проекта невозможен');
     }
     if (source.status !== 'finished') throw new ApiProblem(409, 'SOURCE_NOT_FINISHED', 'Старое направление должно иметь статус «Закончил»');
@@ -109,9 +109,9 @@ export function createBalanceTransfers(pool) {
     return rows.map(mapTransfer);
   }
 
-  async function getByIdempotencyKey(key) {
+  async function getByIdempotencyKey(key, executor = pool) {
     if (!key) return null;
-    const [rows] = await pool.query(`SELECT bt.* FROM balance_entries be JOIN balance_transfers bt ON bt.id=be.transfer_id
+    const [rows] = await executor.query(`SELECT bt.* FROM balance_entries be JOIN balance_transfers bt ON bt.id=be.transfer_id
       WHERE be.idempotency_key=:key AND be.entry_type='transfer_out' LIMIT 1`, { key });
     return rows[0] ? mapTransfer(rows[0]) : null;
   }
@@ -132,10 +132,10 @@ export function createBalanceTransfers(pool) {
 
   async function create(body, context = {}) {
     const idempotencyKey = await operationIdempotencyKey(body, context);
-    const existing = await getByIdempotencyKey(idempotencyKey); if (existing) return existing;
+    const existing = await getByIdempotencyKey(idempotencyKey, context.connection ?? pool); if (existing) return existing;
     try {
       const transferId = await (context.connection ? async (fn) => fn(context.connection) : (fn) => inTransaction(pool, fn))(async (connection) => {
-        const plan = await loadPlan(connection, body.sourceEnrollmentId, body.targetEnrollmentId);
+        const plan = await loadPlan(connection, body.sourceEnrollmentId, body.targetEnrollmentId, context);
         const [transfer] = await connection.query(`INSERT INTO balance_transfers
           (child_id,source_enrollment_id,target_enrollment_id,transferred_amount,target_price_snapshot,target_lessons_credit,created_by_user_id)
           VALUES (:childId,:sourceId,:targetId,:amount,:targetPrice,:targetCredit,:actorId)`, {
@@ -194,7 +194,7 @@ export function createBalanceTransfers(pool) {
       return mapTransfer(rows[0]);
     } catch (error) {
       if (error?.code === 'ER_DUP_ENTRY' && idempotencyKey) {
-        const repeated = await getByIdempotencyKey(idempotencyKey);
+        const repeated = await getByIdempotencyKey(idempotencyKey, context.connection ?? pool);
         if (repeated) return repeated;
       }
       throw mysqlError(error);
