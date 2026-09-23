@@ -13,6 +13,7 @@ Frontend должен обслуживаться по HTTPS на том же ori
 - `src/domain/business-rules.cjs` и `backend/src/lesson-rules.mjs` — проверяемые финансовые и расчётные правила;
 - `src/data/api-client.mjs` — граница frontend → `/api/v1`.
 - `src/frontend/lesson-photos.mjs` — оптимизация фото, защищённая загрузка и offline-очередь IndexedDB.
+- `src/data/lesson-action-queue.mjs` — постоянная IndexedDB-очередь действий внутри открытого занятия, порядок зависимостей и повторная синхронизация.
 - `src/frontend/parent-portal.mjs` — отдельный mobile-first кабинет родителя без административных функций.
 
 ## Проверки

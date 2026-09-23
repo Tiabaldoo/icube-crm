@@ -1340,6 +1340,23 @@ body.context-help-open{overflow:hidden}
   left:5px;
   top:5px;
 }
+.lesson-sync-status{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  margin:0 0 12px;
+  padding:9px 12px;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:#f8fafc;
+  color:#475467;
+  font-size:13px;
+  font-weight:700;
+}
+.lesson-sync-status.is-saved{border-color:#abefc6;background:#ecfdf3;color:#067647}
+.lesson-sync-status.is-pending{border-color:#fedf89;background:#fffaeb;color:#b54708}
+.lesson-sync-status.is-error{border-color:#fecdca;background:#fef3f2;color:#b42318}
 
 @media(max-width:760px){
   .student-check.lesson-student-card,

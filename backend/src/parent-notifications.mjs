@@ -33,8 +33,8 @@ export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
     destination: 'payments',
   }),
   lesson_finished: () => ({
-    title: 'Занятие завершено',
-    body: 'Сегодняшнее занятие завершено. Посмотрите информацию в кабинете.',
+    title: 'Как прошло занятие',
+    body: 'В личном кабинете доступна информация о занятии и новые фотографии.',
     destination: 'home',
   }),
 });

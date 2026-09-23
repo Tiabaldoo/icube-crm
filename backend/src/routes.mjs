@@ -214,7 +214,9 @@ export function createApiRouter(pool, {
   router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));
   router.post('/lessons/:id/cancel', requirePermission('lessons:cancel'), run((request) => lessons.cancel(request.params.id, lessonContext(request))));
   router.post('/lessons/:id/empty-trip', requirePermission('lessons:empty-trip'), run((request) => lessons.emptyTrip(request.params.id, lessonContext(request))));
-  router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), run((request) => lessons.quickChild(request.params.id, request.body, lessonContext(request)), 201));
+  router.post('/lessons/:id/quick-child', requirePermission('lessons:quick-child'), run((request) => lessons.quickChild(request.params.id, request.body, {
+    ...lessonContext(request), idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+  }), 201));
   router.post('/lessons/:id/extras', requirePermission('lessons:extras'), run((request) => lessons.addExtra(request.params.id, request.body, lessonContext(request)), 201));
   router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), run((request) => lessons.removeExtra(request.params.id, request.params.childId, lessonContext(request)), 200));
   router.get('/lessons/:id/photos', requirePermission('lessons:read'), run((request) => lessonPhotos.list(request.params.id, lessonContext(request))));

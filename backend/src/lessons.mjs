@@ -3,6 +3,7 @@ import { ApiProblem } from './catalog.mjs';
 import { assertProjectScope, partnerProjectId } from './project-scope.mjs';
 import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
 import { addCalendarDays, businessDate, parseCalendarDate, BUSINESS_UTC_OFFSET } from '../../src/shared/business-time.mjs';
+import { scopedIdempotencyKey } from './idempotency.mjs';
 
 const DAY = 86400000;
 const identifier = (value, field = 'id') => {
@@ -705,9 +706,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
         if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
+        const commandKey = scopedIdempotencyKey({ key: context.idempotencyKey, actorUserId: context.userId,
+          operation: 'lesson.quick-child', projectId: lesson.project_id_snapshot, entity: lesson.id });
+        const [existing] = await connection.query('SELECT id FROM children WHERE create_idempotency_key=:key FOR UPDATE', { key: commandKey });
+        if (existing.length) { childId = existing[0].id; return; }
         const [childResult] = await connection.query(`INSERT INTO children
-          (full_name,status,needs_director_review,created_from_lesson_id,created_by_user_id)
-          VALUES (:name,'lead',TRUE,:lessonId,:actorId)`, { name, lessonId: lesson.id, actorId: context.userId ?? null });
+          (full_name,status,needs_director_review,created_from_lesson_id,created_by_user_id,create_idempotency_key)
+          VALUES (:name,'lead',TRUE,:lessonId,:actorId,:commandKey)`, { name, lessonId: lesson.id, actorId: context.userId ?? null, commandKey });
         childId = childResult.insertId;
         if (phone) {
           const [guardian] = await connection.query('INSERT INTO guardians (phone) VALUES (:phone)', { phone });

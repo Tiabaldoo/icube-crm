@@ -105,6 +105,26 @@ async function pendingForLesson(lessonId) {
   return (await queue.all()).filter((record) => String(record.lessonId) === String(lessonId));
 }
 
+async function remapChildId(localChildId, serverChildId) {
+  for (const record of await queue.all()) {
+    if (String(record.childId) === String(localChildId)) await queue.put({ ...record, childId: String(serverChildId), updatedAt: new Date().toISOString() });
+  }
+  for (const value of staged.values()) if (String(value.childId) === String(localChildId)) value.childId = Number(serverChildId);
+  for (const lesson of legacy.state.lessons ?? []) {
+    const local = lesson.photos?.[localChildId];
+    if (!local) continue;
+    lesson.photos[serverChildId] = [...(lesson.photos[serverChildId] ?? []), ...local]; delete lesson.photos[localChildId];
+  }
+}
+
+async function applyChildMappings() {
+  const offline = window.icubeLessonOffline; if (!offline?.mappings) return;
+  for (const mapping of await offline.mappings()) {
+    await remapChildId(mapping.localChildId, mapping.serverChildId);
+    await offline.acknowledgeMapping(mapping.localChildId);
+  }
+}
+
 async function hydratePending(lesson) {
   const records = await pendingForLesson(lesson.id);
   for (const childId of Object.keys(lesson.photos ?? {})) lesson.photos[childId] = photoItems(lesson, childId).filter((photo) => !photo.localId);
@@ -138,6 +158,14 @@ export async function loadLessonPhotos(lessonId, { render = true, retry = true }
 export function photoUploadRetryable(error) { return !(error instanceof ApiError) || error.status >= 500 || error.status === 429; }
 
 async function sendRecord(record) {
+  const offline = window.icubeLessonOffline;
+  if (Number(record.childId) < 0 || (offline?.readyForPhoto && !(await offline.readyForPhoto(record.lessonId, record.childId)))) {
+    if (navigator.onLine && Number(record.childId) >= 0) await offline?.sync?.();
+    if (Number(record.childId) < 0 || (offline?.readyForPhoto && !(await offline.readyForPhoto(record.lessonId, record.childId)))) {
+      const waiting = { ...record, state: 'waiting', updatedAt: new Date().toISOString() };
+      await queue.put(waiting); return { deferred: true, record: waiting };
+    }
+  }
   try {
     const photo = await api.requestRaw(`/lessons/${record.lessonId}/photos`, {
       body: record.blob,
@@ -236,6 +264,8 @@ async function retry(localId) {
 
 async function retryAll() {
   if (!navigator.onLine) return;
+  await window.icubeLessonOffline?.sync?.();
+  await applyChildMappings();
   const records = (await queue.all()).filter((record) => record.state !== 'error');
   for (const record of records) await sendRecord({ ...record, state: 'uploading' });
   const lesson = currentLesson(); if (lesson) await loadLessonPhotos(lesson.id);
@@ -335,6 +365,6 @@ if (typeof originalOpenLesson === 'function') window.openLesson = function (less
 
 window.togglePhoto = (childId) => openFilePicker(childId);
 window.icubePhotos = { capture: openFilePicker, confirm, retake, open: openPhoto, gallery: openGallery, remove: removePhoto, confirmRemove, retry, retryAll, download,
-  loadLessonPhotos, hasPhoto, pendingCount, control };
+  loadLessonPhotos, hasPhoto, pendingCount, control, remapChildId };
 window.addEventListener('online', () => retryAll().catch(console.error));
 window.icubeAuthReady?.then((profile) => { if (profile) retryAll().catch(console.error); });

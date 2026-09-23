@@ -1,4 +1,5 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
+import { createLessonActionQueue, createMemoryLessonActionStore } from '../data/lesson-action-queue.mjs';
 import { businessDate, calendarMonthPeriod } from '../shared/business-time.mjs';
 
 const legacy = window.icubeLegacy;
@@ -21,6 +22,7 @@ let childSavePending = false;
 let childCreateKey = null;
 let authProfile = null;
 let resolveAuthReady = null;
+let localChildSequence = 0;
 
 const utcIsoDate = (date) => date.toISOString().slice(0, 10);
 const businessParts = (now = new Date()) => businessDate(now).split('-').map(Number);
@@ -448,6 +450,7 @@ async function reload({ render = true } = {}) {
   legacy.state.dailySummary = dailySummary;
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
+  await reapplyQueuedLessonState();
   legacy.state.calendarForeignGroups = legacy.state.lessons.filter((lesson) => lesson.readOnly).map((lesson) => ({
     id: lesson.groupId, name: lesson.groupName, project: lesson.project,
   }));
@@ -478,6 +481,7 @@ async function reloadTeacher({ render = true } = {}) {
   legacy.state.balanceTransfers = [];
   legacy.state.statistics = null;
   legacy.state.lessons = lessons.map(mapLesson);
+  await reapplyQueuedLessonState();
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
   legacy.state.notifications = [];
   legacy.state.prototypeTeacherId = Number(authProfile.teacherId);
@@ -971,12 +975,112 @@ async function deleteRefund(refundId) {
 
 const ruToIso = (date) => String(date ?? '').split('.').reverse().join('-');
 function currentLesson() { return legacy.state.lessons.find((lesson) => lesson.id === Number(legacy.state.selectedLesson)); }
+function localChildId() { return -(Date.now() * 1000 + localChildSequence++ % 1000); }
+
+function applyLessonAction(action) {
+  const lesson = legacy.state.lessons.find((item) => String(item.id) === String(action.lessonId));
+  if (!lesson) return;
+  const childId = action.childId == null ? null : Number(action.childId);
+  if (action.type === 'start') {
+    lesson.started = true; lesson.status = 'Идёт'; lesson.groupRosterFrozenV146 = true;
+    if (!(lesson.groupChildIdsV146 ?? []).length) {
+      lesson.groupChildIdsV146 = legacy.state.children.filter((child) => (child.enrollments ?? []).some((enrollment) =>
+        Number(enrollment.groupId) === Number(lesson.groupId) && ['Активный', 'active'].includes(enrollment.status))).map((child) => Number(child.id));
+    }
+    for (const id of lesson.groupChildIdsV146) {
+      if (!Object.prototype.hasOwnProperty.call(lesson.attendance ?? {}, id)) lesson.attendance[id] = false;
+      if (!Object.prototype.hasOwnProperty.call(lesson.trialChildren ?? {}, id)) lesson.trialChildren[id] = false;
+    }
+  } else if (action.type === 'attendance') {
+    const extra = (lesson.extras ?? []).find((item) => Number(item.childId) === childId);
+    if (extra) { extra.present = Boolean(action.body.present); extra.trial = Boolean(action.body.trial); }
+    else { lesson.attendance[childId] = Boolean(action.body.present); lesson.trialChildren[childId] = Boolean(action.body.trial); }
+  } else if (action.type === 'add-extra') {
+    if (!(lesson.extras ?? []).some((item) => Number(item.childId) === childId)) lesson.extras.push({ childId, present: true, trial: true });
+  } else if (action.type === 'remove-extra') {
+    lesson.extras = (lesson.extras ?? []).filter((item) => Number(item.childId) !== childId);
+  } else if (action.type === 'quick-child') {
+    const tempId = Number(action.tempChildId);
+    if (!legacy.state.children.some((child) => Number(child.id) === tempId)) legacy.state.children.push({
+      id: tempId, name: action.body.name, birth: '', school: '', grade: '', parent: '', phone: action.body.phone ?? '', status: 'Лид', note: '',
+      needsDirectorReview: true, createdByTeacher: true, enrollments: [],
+    });
+    if (!(lesson.extras ?? []).some((item) => Number(item.childId) === tempId)) lesson.extras.push({ childId: tempId, present: true, trial: true, createdByTeacher: true });
+  } else if (action.type === 'finish') {
+    lesson.done = true; lesson.started = true; lesson.status = 'Проведено'; lesson.attendanceApplied = true;
+  }
+}
+
+async function reapplyQueuedLessonState(lessonId = null) {
+  if (!lessonActions) return;
+  const actions = lessonId == null ? await lessonActions.records() : await lessonActions.pendingForLesson(lessonId);
+  for (const action of actions) applyLessonAction(action);
+}
+
+async function resolveLocalChild(_lessonId, localId, serverId) {
+  const localNumber = Number(localId); const serverNumber = Number(serverId);
+  const local = legacy.state.children.find((child) => Number(child.id) === localNumber);
+  const existing = legacy.state.children.find((child) => Number(child.id) === serverNumber);
+  if (local && existing) legacy.state.children = legacy.state.children.filter((child) => child !== local);
+  else if (local) local.id = serverNumber;
+  for (const lesson of legacy.state.lessons) {
+    for (const extra of lesson.extras ?? []) if (Number(extra.childId) === localNumber) extra.childId = serverNumber;
+    if (Object.prototype.hasOwnProperty.call(lesson.attendance ?? {}, localNumber)) {
+      lesson.attendance[serverNumber] = lesson.attendance[localNumber]; delete lesson.attendance[localNumber];
+    }
+    if (Object.prototype.hasOwnProperty.call(lesson.trialChildren ?? {}, localNumber)) {
+      lesson.trialChildren[serverNumber] = lesson.trialChildren[localNumber]; delete lesson.trialChildren[localNumber];
+    }
+  }
+  if (window.icubePhotos?.remapChildId) {
+    await window.icubePhotos.remapChildId(localId, serverId);
+    await lessonActions.acknowledgeMapping(localId);
+  }
+}
+
+async function sendLessonAction(action) {
+  const lessonId = encodeURIComponent(action.lessonId); const childId = action.childId == null ? null : encodeURIComponent(action.childId);
+  if (action.type === 'start') return api.request(`/lessons/${lessonId}/start`, { method: 'POST', body: action.body });
+  if (action.type === 'attendance') return api.request(`/lessons/${lessonId}/attendance/${childId}`, { method: 'PUT', body: action.body });
+  if (action.type === 'add-extra') return api.request(`/lessons/${lessonId}/extras`, { method: 'POST', body: { childId: Number(action.childId) } });
+  if (action.type === 'remove-extra') return api.request(`/lessons/${lessonId}/extras/${childId}`, { method: 'DELETE' });
+  if (action.type === 'quick-child') return api.request(`/lessons/${lessonId}/quick-child`, { method: 'POST', body: action.body, idempotencyKey: action.id });
+  if (action.type === 'finish') {
+    if (action.body.topic) await api.update('lessons', action.lessonId, { topic: action.body.topic });
+    return api.request(`/lessons/${lessonId}/finish`, { method: 'POST', body: {} });
+  }
+  throw new Error('Неизвестная команда занятия');
+}
+
+async function refreshAfterLessonSync(lessonIds) {
+  const selected = currentLesson()?.id;
+  if (selected && lessonIds.some((id) => String(id) === String(selected))) await reloadLesson(selected, legacy.state.page);
+}
+
+function setLessonSyncStatus(status) {
+  legacy.state.lessonSyncStatus = status;
+  if (legacy.state.page === 'teacherLesson' && globalThis.window && typeof globalThis.window.teacherShell === 'function'
+    && globalThis.document?.querySelector?.('#app')) legacy.render();
+}
+
+const lessonActions = createLessonActionQueue({ store: globalThis.indexedDB ? undefined : createMemoryLessonActionStore(), send: sendLessonAction, onStatus: setLessonSyncStatus,
+  onChildResolved: resolveLocalChild, onSynced: refreshAfterLessonSync });
+
+async function queueLessonAction(action, { closeModal = false } = {}) {
+  try {
+    const record = await lessonActions.enqueue(action); applyLessonAction(record);
+    if (closeModal) legacy.state.modal = null;
+    legacy.render(); await lessonActions.sync();
+  } catch (error) { fail(error); }
+}
+
 async function reloadLesson(lessonId, page = legacy.state.page) {
   await reload({ render: false });
   if (!legacy.state.lessons.some((lesson) => lesson.id === Number(lessonId))) {
     const lesson = await api.get('lessons', lessonId);
     legacy.state.lessons.push(mapLesson(lesson));
   }
+  await reapplyQueuedLessonState(lessonId);
   legacy.state.selectedLesson = Number(lessonId); legacy.state.page = page; legacy.state.modal = null;
   await window.icubePhotos?.loadLessonPhotos(lessonId, { render: false }); legacy.render();
 }
@@ -1026,15 +1130,12 @@ async function startLessonApi() {
   const lesson = currentLesson(); if (!lesson) return;
   const teacherId = legacy.state.role === 'teacher' && typeof window.currentPrototypeTeacherId === 'function'
     ? Number(window.currentPrototypeTeacherId() || lesson.teacherId) : lesson.teacherId;
-  await lessonCommand('start', { actualTeacherId: teacherId }, 'teacherLesson');
+  await queueLessonAction({ type: 'start', lessonId: lesson.id, body: { actualTeacherId: teacherId } });
 }
 
 async function putAttendance(childId, present, trial) {
   const lesson = currentLesson(); if (!lesson) return;
-  try {
-    await api.request(`/lessons/${lesson.id}/attendance/${Number(childId)}`, { method: 'PUT', body: { present: Boolean(present), trial: Boolean(trial) } });
-    await reloadLesson(lesson.id);
-  } catch (error) { fail(error); }
+  await queueLessonAction({ type: 'attendance', lessonId: lesson.id, childId: Number(childId), body: { present: Boolean(present), trial: Boolean(trial) } });
 }
 
 async function attendApi(childId, present) {
@@ -1053,21 +1154,19 @@ async function toggleTrialApi(childId, trial, isExtra) {
 
 async function addExtraApi(childId) {
   const lesson = currentLesson(); if (!lesson) return;
-  try { await api.request(`/lessons/${lesson.id}/extras`, { method: 'POST', body: { childId: Number(childId) } }); await reloadLesson(lesson.id, 'teacherLesson'); }
-  catch (error) { fail(error); }
+  await queueLessonAction({ type: 'add-extra', lessonId: lesson.id, childId: Number(childId), body: { childId: Number(childId) } }, { closeModal: true });
 }
 async function removeExtraApi(childId) {
   const lesson = currentLesson(); if (!lesson) return;
-  try { await api.request(`/lessons/${lesson.id}/extras/${Number(childId)}`, { method: 'DELETE' }); await reloadLesson(lesson.id, 'teacherLesson'); }
-  catch (error) { fail(error); }
+  await queueLessonAction({ type: 'remove-extra', lessonId: lesson.id, childId: Number(childId), body: { childId: Number(childId) } });
 }
 
 async function saveQuickChildApi() {
   const lesson = currentLesson(); if (!lesson) return;
   const name = value('#tqc-name').trim(); const phone = value('#tqc-phone').trim();
   if (!name) return window.alert('Укажите фамилию и имя ребёнка.');
-  try { await api.request(`/lessons/${lesson.id}/quick-child`, { method: 'POST', body: { name, phone: phone || null } }); await reloadLesson(lesson.id, 'teacherLesson'); }
-  catch (error) { fail(error); }
+  const tempChildId = localChildId();
+  await queueLessonAction({ type: 'quick-child', lessonId: lesson.id, tempChildId: String(tempChildId), body: { name, phone: phone || null } }, { closeModal: true });
 }
 
 async function confirmTeacherCreatedChildApi(childId) {
@@ -1122,11 +1221,7 @@ async function deleteLessonApi(lessonId) {
 async function confirmFinishLessonApi() {
   const lesson = currentLesson(); if (!lesson) return;
   const topic = lesson.topic ?? '';
-  try {
-    if (topic) await api.update('lessons', lesson.id, { topic });
-    await api.request(`/lessons/${lesson.id}/finish`, { method: 'POST', body: {} });
-    await reloadLesson(lesson.id, 'teacherLesson');
-  } catch (error) { fail(error); }
+  await queueLessonAction({ type: 'finish', lessonId: lesson.id, body: { topic } }, { closeModal: true });
 }
 
 async function saveLessonEditApi(lessonId, role) {
@@ -1468,7 +1563,8 @@ window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, saveGroup, sav
   cancelBalanceTransferPrompt, cancelBalanceTransfer, loadStatistics,
   calculatePartnerSettlement, applySalaryFilters: applySalaryFiltersApi, refreshSalaryReport: refreshAppliedSalaryReport,
   calculateSiteRentReport, toggleSiteRentDetails, refreshSiteRentReport: refreshAppliedRentReport,
-  lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi };
+  lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi,
+  retryLessonSync: () => lessonActions.retry() };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
 window.saveGroupV111 = window.icubeApi.saveGroup;
@@ -1533,6 +1629,27 @@ window.icubeCreateTeacherAccess = createTeacherAccess;
 window.icubeResetTeacherPassword = resetTeacherPassword;
 window.icubeDisableTeacherAccess = disableTeacherAccess;
 
+const teacherLessonBeforeOffline = window.teacherLesson;
+if (typeof teacherLessonBeforeOffline === 'function') window.teacherLesson = function (...args) {
+  const output = teacherLessonBeforeOffline.apply(this, args); const status = legacy.state.lessonSyncStatus ?? { pending: 0, failed: 0 };
+  const lesson = currentLesson(); const localPhotos = Object.values(lesson?.photos ?? {}).flat().filter((photo) => photo?.localId);
+  const failed = status.failed + localPhotos.filter((photo) => photo.status === 'error').length;
+  const pending = status.pending + localPhotos.filter((photo) => photo.status !== 'error').length;
+  const message = failed ? `Не удалось отправить ${failed} изменений`
+    : pending ? `${pending} изменений ожидают отправки` : 'Все изменения сохранены';
+  const tone = failed ? 'error' : pending ? 'pending' : 'saved';
+  const retry = failed ? '<button class="btn small" onclick="icubeApi.retryLessonSync();window.icubePhotos?.retryAll()">Повторить синхронизацию</button>' : '';
+  return `<div class="lesson-sync-status is-${tone}"><span>${message}</span>${retry}</div>${output}`;
+};
+
+window.icubeLessonOffline = {
+  sync: () => lessonActions.sync(), retry: () => lessonActions.retry(),
+  pendingForLesson: (lessonId) => lessonActions.pendingForLesson(lessonId),
+  readyForPhoto: (lessonId, childId) => lessonActions.readyForPhoto(lessonId, childId),
+  mappings: () => lessonActions.mappings(), acknowledgeMapping: (localId) => lessonActions.acknowledgeMapping(localId),
+};
+window.addEventListener?.('online', () => lessonActions.sync().catch(console.error));
+
 installDeletionUi();
 installPersistentCalendarBridge();
 installPersistentNotificationUi();
@@ -1542,3 +1659,5 @@ if (element('#app')) {
   window.icubeAuthReady = new Promise((resolve) => { resolveAuthReady = resolve; });
   bootstrapAuth();
 } else window.icubeAuthReady = Promise.resolve(null);
+lessonActions.publish().catch(console.error);
+window.icubeAuthReady?.then((profile) => { if (profile) lessonActions.sync().catch(console.error); });

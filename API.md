@@ -36,7 +36,7 @@ Permission преподавателя не даёт доступ к любому
 | Занятие | `GET /lessons/:id`, директорские `PATCH/DELETE /lessons/:id`, teacher `PATCH /lessons/:id/teacher-details`, `POST /lessons/:id/start`, `POST /lessons/:id/cancel`, директорский `POST /lessons/:id/empty-trip` |
 | Посещение | `PUT /lessons/:id/attendance/:childId`, директорский `DELETE /lessons/:id/attendance/:childId` для ошибочной записи |
 | Завершение | `POST /lessons/:id/finish` |
-| Quick child | `POST /lessons/:id/quick-child` — ФИО обязательно, контакт родителя необязателен |
+| Quick child | `POST /lessons/:id/quick-child` — ФИО обязательно, контакт родителя необязателен; требуется `Idempotency-Key` |
 | Дополнительный ребёнок | `POST /lessons/:id/extras` с `childId`, `DELETE /lessons/:id/extras/:childId` |
 | Фотографии | `GET/POST /lessons/:id/photos`, `GET /lessons/:id/photos/:photoId/file`, `DELETE /lessons/:id/photos/:photoId` |
 | Оплаты | `GET/POST/PATCH/DELETE /payments`, `GET /payments/:id` |
@@ -76,7 +76,7 @@ Permission преподавателя не даёт доступ к любому
 
 ## Командные операции
 
-Start, finish и повторная одинаковая отметка attendance идемпотентны по текущему состоянию строки, которое проверяется под `SELECT ... FOR UPDATE`. Уникальные связи ledger/reversal дополнительно защищают финансовый эффект. Создание payment, refund и balance transfer требует `Idempotency-Key`; серверный scoped key включает actor, тип операции, проект и целевую сущность, поэтому повтор возвращает исходный результат и совпавший сырой ключ другого пользователя или enrollment не склеивает операции.
+Start, finish и повторная одинаковая отметка attendance идемпотентны по текущему состоянию строки, которое проверяется под `SELECT ... FOR UPDATE`. Уникальные связи ledger/reversal дополнительно защищают финансовый эффект. Создание payment, refund, balance transfer и quick child требует `Idempotency-Key`; серверный scoped key включает actor, тип операции, проект и целевую сущность, поэтому повтор возвращает исходный результат и совпавший сырой ключ другой операции не склеивает записи.
 
 Пример завершения:
 
