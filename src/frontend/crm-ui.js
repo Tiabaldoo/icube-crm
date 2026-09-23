@@ -150,7 +150,11 @@ function calendar(){
 }
 function lessonAttendanceBadge(l,childId,present){
  const hasNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(childId);});
- if(l.done&&!l.cancelled) return present?'<span class="badge green">Был</span>':'<span class="badge red">Отсутствовал</span>';
+ if(l.done&&!l.cancelled){
+   if(!present) return '<span class="badge red">Отсутствовал</span>';
+   const trial=!!l.trialChildren?.[childId]||(l.extras||[]).some(function(e){return Number(e.childId)===Number(childId)&&e.present!==false&&e.trial;});
+   return trial?'<span class="badge amber">Ознакомительное</span>':'<span class="badge green">Был</span>';
+ }
  if(!l.cancelled&&hasNotice) return '<span class="badge amber">Не будет</span>';
  return '<span class="badge gray">Не отмечен</span>';
 }

@@ -16,6 +16,7 @@ const mapTransfer = (row) => ({
   targetPriceSnapshot: String(row.target_price_snapshot), targetLessonsCredit: String(row.target_lessons_credit),
   transferredAt: typeof row.transferred_at === 'string' ? row.transferred_at : row.transferred_at.toISOString(),
   sourceDirectionName: row.source_direction_name ?? null, targetDirectionName: row.target_direction_name ?? null,
+  automaticChangeDirection: Boolean(row.automatic_change_direction),
 });
 
 function mysqlError(error) {
@@ -101,7 +102,14 @@ export function createBalanceTransfers(pool) {
     const conditions = []; const params = {};
     if (filters.childId != null && filters.childId !== '') { conditions.push('bt.child_id=:childId'); params.childId = identifier(filters.childId, 'childId'); }
     if (filters.projectId != null && filters.projectId !== '') { conditions.push('se.project_id=:projectId AND te.project_id=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
-    const [rows] = await pool.query(`SELECT bt.*,sd.name source_direction_name,td.name target_direction_name
+    const [rows] = await pool.query(`SELECT bt.*,sd.name source_direction_name,td.name target_direction_name,
+      EXISTS (
+        SELECT 1 FROM enrollment_status_history esh
+        WHERE esh.enrollment_id=bt.source_enrollment_id
+          AND esh.old_status IN ('active','paused') AND esh.new_status='finished'
+          AND esh.changed_by_user_id <=> bt.created_by_user_id
+          AND esh.changed_at BETWEEN bt.transferred_at - INTERVAL 5 SECOND AND bt.transferred_at
+      ) automatic_change_direction
       FROM balance_transfers bt
       JOIN child_enrollments se ON se.id=bt.source_enrollment_id JOIN directions sd ON sd.id=se.direction_id
       JOIN child_enrollments te ON te.id=bt.target_enrollment_id JOIN directions td ON td.id=te.direction_id

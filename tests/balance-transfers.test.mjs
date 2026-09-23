@@ -238,3 +238,25 @@ test('повторная отмена не меняет ledger', async () => {
   await assert.rejects(completed.service.remove(70), (error) => error.code === 'NOT_FOUND');
   assert.equal(completed.state.balances[9], '3.00000000');
 });
+
+
+test('список переносов отличает automatic change-direction по существующей истории статуса', async () => {
+  let queryText = '';
+  const service = createBalanceTransfers({ query: async (sql) => {
+    queryText = sql;
+    return [[
+      { id: 70, child_id: 8, source_enrollment_id: 9, target_enrollment_id: 10, transferred_amount: '3075.00',
+        target_price_snapshot: '1125.00', target_lessons_credit: '2.73333333', transferred_at: '2026-09-23 12:00:00.000000',
+        source_direction_name: 'Робототехника', target_direction_name: 'Программирование', automatic_change_direction: 1 },
+      { id: 71, child_id: 8, source_enrollment_id: 11, target_enrollment_id: 10, transferred_amount: '1025.00',
+        target_price_snapshot: '1125.00', target_lessons_credit: '0.91111111', transferred_at: '2026-09-23 13:00:00.000000',
+        source_direction_name: 'Робототехника', target_direction_name: 'Программирование', automatic_change_direction: 0 },
+    ]];
+  } });
+  const rows = await service.list();
+  assert.equal(rows[0].automaticChangeDirection, true);
+  assert.equal(rows[1].automaticChangeDirection, false);
+  assert.match(queryText, /enrollment_status_history/);
+  assert.match(queryText, /old_status IN \('active','paused'\) AND esh\.new_status='finished'/);
+  assert.match(queryText, /changed_by_user_id <=> bt\.created_by_user_id/);
+});

@@ -115,9 +115,10 @@ test('единый frontend загружается и рендерит все т
   assert.equal(context.__crmProbe.groupChildren(999).length, 1);
   context.__crmProbe.state.children = savedChildren;
 
-  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false }, 8, true), />Был</);
-  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false }, 8, false), /Отсутствовал/);
-  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false }, 8, undefined), /Отсутствовал/);
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false, trialChildren: {8:true}, extras: [] }, 8, true), /Ознакомительное/);
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false, trialChildren: {}, extras: [] }, 8, true), />Был</);
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false, trialChildren: {8:true}, extras: [] }, 8, false), /Отсутствовал/);
+  assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false, trialChildren: {}, extras: [] }, 8, undefined), /Отсутствовал/);
   assert.match(context.lessonAttendanceBadge({ done: false, cancelled: false, absenceNoticeChildIds: [8] }, 8, false), /Не будет/);
   assert.match(context.lessonAttendanceBadge({ done: false, cancelled: false, absenceNoticeChildIds: [] }, 8, false), /Не отмечен/);
   assert.doesNotMatch(context.lessonAttendanceBadge({ done: false, cancelled: true, absenceNoticeChildIds: [8] }, 8, false), /Отсутствовал|Не будет/);
@@ -565,4 +566,42 @@ test('родительский доступ рендерится только н
   const source = await readFile(new URL('../src/frontend/parent-access.mjs', import.meta.url), 'utf8');
   assert.match(source, /legacy\.state\.childTab !== 'overview'/);
   assert.match(source, /return `\$\{base\}\$\{accessBlock\(legacy\.state\.selectedChild\)\}`/);
+});
+
+
+test('автоматический перенос скрывает отмену, ручной сохраняет её и строки имеют внутренние отступы', async () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const state = {
+    role: 'director', page: 'child', childTab: 'overview', selectedChild: 8,
+    projects: [], sites: [], teachers: [], groups: [], payments: [], refunds: [], lessons: [], notifications: [],
+    children: [{ id: 8 }],
+    balanceTransfers: [
+      { id: 70, childId: 8, sourceDirectionName: 'Робототехника', targetDirectionName: 'Программирование',
+        transferredAt: '2026-09-23T12:00:00.000Z', transferredAmount: '3075.00', targetLessonsCredit: '2.73333333', automaticChangeDirection: true },
+      { id: 71, childId: 8, sourceDirectionName: 'Робототехника', targetDirectionName: 'Программирование',
+        transferredAt: '2026-09-23T13:00:00.000Z', transferredAmount: '1025.00', targetLessonsCredit: '0.91111111', automaticChangeDirection: false },
+    ],
+  };
+  globalThis.window = {
+    icubeLegacy: { state, pageHead: () => '', render() {} },
+    child: () => '<div>Карточка ребёнка</div>',
+    alert() {},
+  };
+  globalThis.document = { querySelector() { return null; }, querySelectorAll() { return []; } };
+  globalThis.fetch = async () => ({ ok: true, status: 200, async json() { return { data: [] }; } });
+  try {
+    await import(`../src/frontend/api-sync.mjs?transfer-history=${Date.now()}-${Math.random()}`);
+    const rendered = globalThis.window.child();
+    assert.match(rendered, /Переносы остатка/);
+    assert.doesNotMatch(rendered, /cancelBalanceTransferPrompt\(70\)/);
+    assert.match(rendered, /cancelBalanceTransferPrompt\(71\)/);
+    assert.equal((rendered.match(/>Отменить перенос<\/button>/g) ?? []).length, 1);
+    assert.equal((rendered.match(/class="kpi-line" style="padding:12px 16px"/g) ?? []).length, 2);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+  }
 });
