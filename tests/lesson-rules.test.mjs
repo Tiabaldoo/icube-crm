@@ -152,6 +152,95 @@ function transactionPool(handler) {
   return { query: handler, getConnection: async () => connection };
 }
 
+test('потерянный ответ start/finish и повтор команды не дублируют roster, списание, зарплату и уведомление', async () => {
+  const lesson = {
+    id: 77, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    planned_teacher_id: 6, actual_teacher_id: null, status: 'scheduled', deleted_at: null,
+    starts_at: '2026-09-14 10:00:00.000000', ends_at: '2026-09-14 11:00:00.000000',
+    scheduled_starts_at: '2026-09-14 10:00:00.000000', scheduled_ends_at: '2026-09-14 11:00:00.000000',
+    actual_starts_at: null, actual_ends_at: null, topic: null, is_intro_group: 0, is_empty_trip: 0,
+    roster_frozen_at: null, attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 1,
+  };
+  const attendance = { id: 70, lesson_id: 77, child_id: 8, enrollment_id: 9, attendance_type: 'main',
+    present: 0, is_trial: 0, marked_at: null, price_snapshot: null, charged_lessons: '0.00000000' };
+  const lot = { id: 30, remaining_lessons: '4.00000000', unit_price: '1025.00', created_at: '2026-09-01 10:00:00' };
+  const counters = { rosterInserts: 0, attendanceInserts: 0, startUpdates: 0, debitEntries: 0,
+    lotUpdates: 0, lotConsumptions: 0, enrollmentDebits: 0, attendanceCharges: 0,
+    finishUpdates: 0, salaryInserts: 0, salaryReversals: 0, notificationCalls: 0 };
+  let debit = null; let salary = null;
+
+  const handler = async (sql, params = {}) => {
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.includes('FROM teachers t JOIN teacher_projects tp')) return [[{ id: 6 }]];
+    if (sql.includes('FROM group_memberships gm')) return [[{ child_id: 8, enrollment_id: 9 }]];
+    if (sql.startsWith('INSERT IGNORE INTO lesson_roster_members')) { counters.rosterInserts += 1; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('SELECT a.id FROM attendances a JOIN lessons')) return [[]];
+    if (sql.startsWith('INSERT IGNORE INTO attendances')) { counters.attendanceInserts += 1; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith("UPDATE lessons SET status='in_progress'")) {
+      counters.startUpdates += 1; lesson.status = 'in_progress'; lesson.actual_teacher_id = params.teacherId;
+      lesson.actual_starts_at = lesson.starts_at; lesson.roster_frozen_at = lesson.starts_at; lesson.lock_version += 1;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql === 'SELECT * FROM attendances WHERE lesson_id=:lessonId FOR UPDATE') return [[attendance]];
+    if (sql.includes('FROM child_enrollments e WHERE')) return [[{ id: 9, child_id: 8, direction_id: 1, current_price: '1025.00' }]];
+    if (sql.includes("be.entry_type='attendance'")) return [debit ? [debit] : []];
+    if (sql.includes('FROM balance_lots')) return [[lot]];
+    if (sql.startsWith('INSERT INTO balance_entries')) {
+      counters.debitEntries += 1; debit = { id: 80, enrollment_id: 9, attendance_id: 70, entry_type: 'attendance',
+        lessons_delta: '-1.00000000', amount_delta: params.amount, unit_price_snapshot: params.price };
+      return [{ insertId: 80 }];
+    }
+    if (sql.startsWith('UPDATE balance_lots SET remaining_lessons=remaining_lessons-')) {
+      counters.lotUpdates += 1; lot.remaining_lessons = '3.00000000'; return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('INSERT INTO balance_lot_consumptions')) { counters.lotConsumptions += 1; return [{ insertId: 81 }]; }
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons-')) { counters.enrollmentDebits += 1; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('UPDATE attendances SET enrollment_id=:enrollmentId,price_snapshot=')) {
+      counters.attendanceCharges += 1; attendance.price_snapshot = params.price; attendance.charged_lessons = '1.00000000'; return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith("UPDATE lessons SET status='completed'")) {
+      counters.finishUpdates += 1; lesson.status = 'completed'; lesson.completed_at = lesson.ends_at;
+      lesson.actual_ends_at = lesson.ends_at; lesson.attendance_applied_at = lesson.ends_at; lesson.lock_version += 1;
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('SELECT * FROM salary_accruals WHERE')) return [salary ? [salary] : []];
+    if (sql.startsWith('SELECT COUNT(*) present_count')) return [[{ present_count: attendance.present ? 1 : 0 }]];
+    if (sql.startsWith('SELECT * FROM salary_rate_versions WHERE')) return [[{ id: 12, regular_fixed: '600.00',
+      per_present_child: '100.00', intro_fixed: '600.00', empty_trip_fixed: '300.00' }]];
+    if (sql.startsWith('INSERT INTO salary_accruals')) {
+      counters.salaryInserts += 1; salary = { id: 90, lesson_id: 77, teacher_id: 6, rate_version_id: 12,
+        accrual_type: 'regular', present_children: 1, fixed_amount: '600.00', children_amount: '100.00', total_amount: '700.00', reversed_at: null };
+      return [{ insertId: 90 }];
+    }
+    if (sql.startsWith('UPDATE salary_accruals SET reversed_at=')) { counters.salaryReversals += 1; return [{ affectedRows: 1 }]; }
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника',
+      project_name: 'iCubeRobots', site_name: 'Площадка', planned_teacher_name: 'Преподаватель', actual_teacher_name: 'Преподаватель' }]];
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [[{ lesson_id: 77, child_id: 8, roster_type: 'main' }]];
+    if (sql.includes('FROM attendances WHERE lesson_id IN')) return [[attendance]];
+    if (sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [salary ? [salary] : []];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const parentNotifications = { async lessonFinished() { counters.notificationCalls += 1; return 1; } };
+  const service = createMysqlLessons(transactionPool(handler), { parentNotifications });
+  const context = { roles: ['director'], userId: '1' }; const startBody = { actualTeacherId: 6 };
+
+  await service.start(77, startBody, context); // Сервер применил команду, но клиент не получил ответ.
+  await service.start(77, startBody, context); // Клиент повторил ту же команду.
+  assert.deepEqual({ rosterInserts: counters.rosterInserts, attendanceInserts: counters.attendanceInserts, startUpdates: counters.startUpdates },
+    { rosterInserts: 1, attendanceInserts: 1, startUpdates: 1 });
+
+  attendance.present = 1; attendance.marked_at = '2026-09-14 10:05:00.000000';
+  await service.finish(77, {}, context); // Finish зафиксирован, его HTTP-ответ потерян.
+  await service.finish(77, {}, context); // Повтор той же команды после восстановления сети.
+
+  assert.equal(lesson.status, 'completed'); assert.equal(lot.remaining_lessons, '3.00000000');
+  assert.deepEqual(counters, {
+    rosterInserts: 1, attendanceInserts: 1, startUpdates: 1,
+    debitEntries: 1, lotUpdates: 1, lotConsumptions: 1, enrollmentDebits: 1, attendanceCharges: 1,
+    finishUpdates: 1, salaryInserts: 1, salaryReversals: 0, notificationCalls: 1,
+  });
+});
+
 function historicalFinishFixture({ present = 1, markedAt = '2026-09-14 10:05:00.000000' } = {}) {
   const lesson = {
     id: 50, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
