@@ -52,15 +52,16 @@ test('partner can read/create/reset/disable/re-enable access only for teacher in
   assert.deepEqual(calls.map((item) => item[0]), ['get', 'create', 'reset', 'disable', 'create']);
 }));
 
-test('partner cannot read or mutate foreign teacher access and cannot delete global teacher card', () => withServer(async (base, calls) => {
+test('partner cannot manage a foreign teacher, but can request deletion inside its own project scope', () => withServer(async (base, calls) => {
   for (const request of [
     ['/teachers/8/access', {}],
     ['/teachers/8/access', { method: 'POST', body: { login: 'x@example.com', password: 'password1' } }],
     ['/teachers/8/access/reset-password', { method: 'POST', body: { password: 'password2' } }],
     ['/teachers/8/access', { method: 'DELETE' }],
   ]) assert.equal((await api(base, request[0], request[1])).status, 403);
-  assert.equal((await api(base, '/teachers/7', { method: 'DELETE' })).status, 403);
-  assert.equal(calls.some((item) => item[0] === 'delete-teacher'), false);
+  assert.equal((await api(base, '/teachers/8', { method: 'DELETE' })).status, 403);
+  assert.equal((await api(base, '/teachers/7', { method: 'DELETE' })).status, 204);
+  assert.equal(calls.some((item) => item[0] === 'delete-teacher'), true);
 }));
 
 test('non-director non-partner role does not gain teacher access management', () => withServer(async (base) => {

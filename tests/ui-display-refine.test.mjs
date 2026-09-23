@@ -102,3 +102,41 @@ test('desktop calendar keeps full site, weekday, time and short direction visibl
   assert.doesNotMatch(ui, /\.teacher-content:has\(\.calendar\) \.event\{\s*overflow-wrap:anywhere/);
   assert.match(ui, /\.teacher-content:has\(\.calendar\) \.event\{\s*overflow-wrap:normal;\s*word-break:normal/);
 });
+
+test('teacher form показывает три project status и отправляет все видимые projectSettings', async () => {
+  const [ui, api] = await Promise.all([readFile(uiUrl, 'utf8'), readFile(apiUrl, 'utf8')]);
+  const formStart = ui.indexOf('window.teacherForm = function');
+  const formEnd = ui.indexOf('window.saveTeacher = function', formStart);
+  const form = ui.slice(formStart, formEnd);
+  assert.match(form, /data-teacher-project/);
+  assert.match(form, /Не работает в проекте/);
+  assert.match(form, />Активен</);
+  assert.match(form, />Неактивен</);
+  assert.match(form, /tf-project-directions-/);
+  assert.doesNotMatch(form, /id="tf-project"|id="tf-active"/);
+
+  const saveStart = api.indexOf('async function saveTeacher');
+  const saveEnd = api.indexOf('async function saveGroup', saveStart);
+  const save = api.slice(saveStart, saveEnd);
+  assert.match(save, /querySelectorAll\('\[data-teacher-project\]'\)/);
+  assert.match(save, /projectSettings:/);
+  assert.match(save, /status === 'none' \? \[\]/);
+  assert.doesNotMatch(save, /#tf-project'|#tf-active'/);
+
+  const groupRefreshStart = ui.indexOf('window.refreshGroupProjectChoices=function');
+  const groupRefreshEnd = ui.indexOf('window.groups=function', groupRefreshStart);
+  const groupRefresh = ui.slice(groupRefreshStart, groupRefreshEnd);
+  assert.match(groupRefresh, /setting\?\.active!==false/);
+  assert.match(groupRefresh, /directions\|\|\[\]/);
+  assert.match(groupRefresh, /===direction/);
+});
+
+test('рабочие страницы не показывают пояснения про snapshots и внутреннюю реализацию', async () => {
+  const [ui, help] = await Promise.all([
+    readFile(uiUrl, 'utf8'),
+    readFile(new URL('../src/frontend/context-help.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.doesNotMatch(ui, /Изменение регулярных параметров влияет на будущие занятия/);
+  assert.doesNotMatch(ui, /В production|searchable select|Внутреннее значение не округляется/);
+  assert.match(help, /старое занятие осталось со старыми данными/);
+});

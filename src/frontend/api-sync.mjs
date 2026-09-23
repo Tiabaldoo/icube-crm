@@ -426,7 +426,8 @@ async function reload({ render = true } = {}) {
   legacy.state.lessonVenues = venues.map((site) => ({ ...site, id: Number(site.id), active: Boolean(site.active) }));
   legacy.state.teachers = teachers.map((teacher) => ({ ...teacher, id: Number(teacher.id), projectIds: teacher.projectIds.map(Number),
     directions: teacher.directions.map((direction) => direction.name), projectSettings: (teacher.projectSettings ?? []).map((setting) => ({
-      projectId: Number(setting.projectId), active: setting.active, directions: setting.directions.map((direction) => ({ ...direction, id: Number(direction.id) })),
+      projectId: Number(setting.projectId), status: setting.status ?? (setting.active === false ? 'inactive' : 'active'), active: setting.active,
+      directions: setting.directions.map((direction) => ({ ...direction, id: Number(direction.id) })),
     })) }));
   legacy.state.groups = groups.map(mapGroup);
   legacy.state.children = children.map(mapChild);
@@ -508,23 +509,19 @@ async function saveSite(resourceId, returnToGroup) {
 
 async function saveTeacher(resourceId, returnToGroup) {
   try {
-    const projectSettings = (legacy.state.projects ?? []).map((project) => {
-      const names = [];
-      if (checked(`#tf-project-${project.id}-robot`)) names.push('Робототехника');
-      if (checked(`#tf-project-${project.id}-code`)) names.push('Программирование');
-      return {
-        projectId: project.id,
-        active: checked(`#tf-project-active-${project.id}`),
-        directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean),
-        directionNames: names,
-      };
+    const projectSettings = [...document.querySelectorAll('[data-teacher-project]')].map((block) => {
+      const projectId = String(block.dataset.teacherProject); const status = value(`#tf-project-status-${projectId}`);
+      const names = status === 'none' ? [] : [...block.querySelectorAll('[data-teacher-direction]:checked')].map((input) => input.dataset.teacherDirection);
+      const directionIds = names.map((name) => byName(directories.directions, name)?.id).filter(Boolean);
+      return { projectId, status, directionIds, names };
     });
     const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(),
-      projectSettings: projectSettings.map(({ projectId, active, directionIds }) => ({ projectId, active, directionIds })) };
+      projectSettings: projectSettings.map(({ names: _names, ...setting }) => setting) };
     if (!body.name) return window.alert('Укажите фамилию и имя преподавателя');
-    if (!projectSettings.some((item) => item.active)) return window.alert('Активируйте хотя бы один проект');
-    const invalid = projectSettings.find((item) => item.active && (!item.directionIds.length || item.directionIds.length !== item.directionNames.length));
-    if (invalid) return window.alert('В каждом активном проекте выберите хотя бы одно доступное направление');
+    if (projectSettings.some((setting) => setting.status !== 'none'
+      && (setting.directionIds.length !== setting.names.length || !setting.names.length))) {
+      return window.alert('Для активного или неактивного проекта выберите хотя бы одно направление');
+    }
     const saved = resourceId ? await api.update('teachers', resourceId, body) : await api.create('teachers', body);
     await reload({ render: false });
     if (returnToGroup) { legacy.state.pendingGroupDraft = { ...(legacy.state.pendingGroupDraft ?? {}), teacherId: saved.id }; window.groupForm(legacy.state.pendingGroupDraft.id, legacy.state.pendingGroupDraft); }
@@ -532,14 +529,18 @@ async function saveTeacher(resourceId, returnToGroup) {
   } catch (error) { fail(error); }
 }
 
-function teacherProjectChanged(resourceId) {
-  const teacher = legacy.state.teachers.find((item) => item.id === Number(resourceId));
-  const setting = teacher?.projectSettings?.find((item) => String(item.projectId) === value('#tf-project'));
-  const names = new Set((setting?.directions ?? []).map((item) => item.name));
-  const robot = element('#tf-robot'); const code = element('#tf-code'); const status = element('#tf-active');
-  if (robot) robot.checked = names.has('Робототехника');
-  if (code) code.checked = names.has('Программирование');
-  if (status) status.value = setting?.active === false ? 'false' : 'true';
+function teacherProjectChanged(projectId) {
+  const status = element(`#tf-project-status-${projectId}`); const directions = element(`#tf-project-directions-${projectId}`);
+  if (directions) directions.hidden = status?.value === 'none';
+}
+
+async function deleteTeacher(teacherId) {
+  if (!window.confirm('Удалить преподавателя? Это возможно только при отсутствии групп, занятий и другой истории.')) return;
+  try {
+    await api.delete('teachers', teacherId);
+    await reload({ render: false });
+    legacy.state.modal = null; legacy.state.page = 'teachers'; legacy.render();
+  } catch (error) { fail(error); }
 }
 
 async function saveGroup(resourceId) {
@@ -1560,7 +1561,7 @@ async function bootstrapAuth() {
   }
 }
 
-window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
+window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   projectTransferForm, confirmProjectTransfer,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
