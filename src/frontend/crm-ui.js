@@ -2302,7 +2302,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     html+='<div class="toolbar">';
     html+='<select class="select" id="salary-teacher" style="max-width:260px">';
-    state.teachers.forEach(function(t){
+    state.teachers.filter(function(t){return t.active!==false||String(t.id)===String(state.salaryTeacher);}).forEach(function(t){
       html+='<option value="'+t.id+'"'+(String(t.id)===String(state.salaryTeacher)?' selected':'')+'>'+escapeHtml(t.name)+(t.active===false?' · неактивен':'')+'</option>';
     });
     html+='</select>';
@@ -4462,7 +4462,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     html+='<div class="toolbar">';
     html+='<select class="select" id="salary-teacher" style="max-width:260px">';
-    state.teachers.forEach(function(t){
+    state.teachers.filter(function(t){return t.active!==false||String(t.id)===String(state.salaryTeacher);}).forEach(function(t){
       html+='<option value="'+t.id+'"'+(String(t.id)===String(state.salaryTeacher)?' selected':'')+'>'+escapeHtml(t.name)+(t.active===false?' · неактивен':'')+'</option>';
     });
     html+='</select>';

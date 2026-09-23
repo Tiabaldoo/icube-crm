@@ -72,6 +72,24 @@ test('единый frontend загружается и рендерит все т
     context.__crmProbe.render();
     assert.match(app.innerHTML, /app-shell/, `раздел ${page} не отрендерился`);
   }
+  const savedSalaryState = {
+    teachers: context.__crmProbe.state.teachers,
+    salaryTeacher: context.__crmProbe.state.salaryTeacher,
+    salaryReportRows: context.__crmProbe.state.salaryReportRows,
+    salaryReportTotal: context.__crmProbe.state.salaryReportTotal,
+  };
+  context.__crmProbe.state.teachers = [
+    { id: 101, name: 'Активный преподаватель', active: true },
+    { id: 102, name: 'Исторический преподаватель', active: false },
+  ];
+  context.__crmProbe.state.salaryReportRows = [];
+  context.__crmProbe.state.salaryReportTotal = 0;
+  context.__crmProbe.state.salaryTeacher = '101';
+  assert.match(context.salary(), /Активный преподаватель/);
+  assert.doesNotMatch(context.salary(), /Исторический преподаватель/);
+  context.__crmProbe.state.salaryTeacher = '102';
+  assert.match(context.salary(), /Исторический преподаватель · неактивен/);
+  Object.assign(context.__crmProbe.state, savedSalaryState);
   const dateText = `${String(today.getDate()).padStart(2, '0')}.${String(today.getMonth() + 1).padStart(2, '0')}.${today.getFullYear()}`;
   context.__crmProbe.state.calendarCursor = todayIso;
   context.__crmProbe.state.calendarProject = 'iCubeRobots';
@@ -406,6 +424,49 @@ test('серверные прошлые и перенесённые провед
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('teacher today merge принимает Date-границы, исключает историю и заменяет materialized occurrence серверным lesson', async () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const originalMutationObserver = globalThis.MutationObserver;
+  const todayLesson = { id: 50, groupId: 4, teacherId: 3, occurrenceKey: '4|23.09.2026', scheduledDate: '23.09.2026',
+    scheduledTime: '10:00–11:00', date: '23.09.2026', time: '10:00–11:00', cancelled: false, moved: false, done: false };
+  const historicalLesson = { ...todayLesson, id: 51, occurrenceKey: '4|01.09.2026', scheduledDate: '01.09.2026', date: '01.09.2026' };
+  const foreignLesson = { ...todayLesson, id: 52, teacherId: 8, occurrenceKey: '5|23.09.2026', groupId: 5 };
+  let includeScheduledOccurrence = true;
+  const state = { role: 'teacher', sites: [], teachers: [{ id: 3, name: 'Учитель', active: true }], groups: [
+    { id: 4, name: 'Группа', project: 'iCubeRobots', siteId: 2, teacherId: 3 },
+    { id: 5, name: 'Чужая группа', project: 'iCubeRobots', siteId: 2, teacherId: 8 },
+  ], children: [], payments: [], refunds: [], balanceTransfers: [], lessons: [todayLesson, historicalLesson, foreignLesson] };
+  globalThis.window = {
+    icubeLegacy: { state, render() {} }, alert() {}, addEventListener() {},
+    sharedCalendarEvents() {
+      return includeScheduledOccurrence ? [{ key: '4|23.09.2026', groupId: 4, project: 'iCubeRobots', teacherId: 3,
+        scheduledDate: '23.09.2026', scheduledTime: '10:00–11:00', date: '23.09.2026', time: '10:00–11:00', lesson: null }] : [];
+    },
+  };
+  globalThis.document = { querySelector() { return null; }, querySelectorAll() { return []; } };
+  globalThis.MutationObserver = class { observe() {} disconnect() {} };
+  globalThis.fetch = async () => ({ ok: true, status: 200, async json() { return { data: [] }; } });
+  try {
+    await import(`../src/frontend/api-sync.mjs?teacher-today-range=${Date.now()}-${Math.random()}`);
+    const date = new Date(2026, 8, 23, 12);
+    const events = globalThis.window.sharedCalendarEvents(date, date, 3);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].lesson.id, 50);
+    assert.equal(events.some((event) => event.lesson?.id === 51), false);
+    assert.equal(events.some((event) => event.lesson?.id === 52), false);
+    includeScheduledOccurrence = false;
+    state.lessons = [historicalLesson, foreignLesson];
+    assert.equal(globalThis.window.sharedCalendarEvents(date, date, 3).length, 0);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+    globalThis.MutationObserver = originalMutationObserver;
   }
 });
 

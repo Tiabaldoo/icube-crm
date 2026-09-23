@@ -91,6 +91,59 @@ test('online teacher action sends immediately through the same queue and drains 
   assert.deepEqual(sent, ['add-extra']); assert.equal((await queue.records()).length, 0);
 });
 
+test('teacher quick-child UI sends the queued command, remaps the child and reloads server attendance', async () => {
+  const original = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch, MutationObserver: globalThis.MutationObserver };
+  const app = { style: {}, innerHTML: '' }; const requests = []; let created = false;
+  const group = { id: '4', name: 'Роботы', directionId: '1', directionName: 'Робототехника', siteId: '2', siteName: 'Площадка',
+    projectId: '1', projectName: 'iCubeRobots', teacherId: '5', teacherName: 'Учитель', weekday: 3, startTime: '10:00', endTime: '11:00',
+    startsOn: '2026-09-01', endsOn: null, active: true, price: null };
+  const lesson = () => ({ id: '61', groupId: '4', groupName: 'Роботы', directionId: '1', directionName: 'Робототехника', projectId: '1', projectName: 'iCubeRobots',
+    siteId: '2', siteName: 'Площадка', plannedTeacherId: '5', plannedTeacherName: 'Учитель', actualTeacherId: '5', actualTeacherName: 'Учитель',
+    scheduledStartsAt: '2026-09-23T10:00:00+11:00', scheduledEndsAt: '2026-09-23T11:00:00+11:00', startsAt: '2026-09-23T10:00:00+11:00', endsAt: '2026-09-23T11:00:00+11:00',
+    status: 'in_progress', topic: '', introGroup: false, emptyTrip: false, rosterFrozenAt: '2026-09-23T10:00:00+11:00', attendanceAppliedAt: null,
+    roster: created ? [{ childId: '91', type: 'extra' }] : [], attendances: created ? [{ id: '93', childId: '91', enrollmentId: '92', type: 'extra', present: true, trial: true }] : [] });
+  const child = () => ({ id: '91', name: 'Новый Ребёнок', birthDate: null, school: null, grade: null, status: 'lead', note: null,
+    needsDirectorReview: true, guardian: { name: null, phone: null }, enrollments: [{ id: '92', directionId: '1', projectId: '1', projectName: 'iCubeRobots',
+      directionName: 'Робототехника', groupId: null, groupName: null, status: 'active', startedOn: '2026-09-23', endedOn: null }] });
+  const state = { role: 'teacher', page: 'teacherLesson', selectedLesson: 61, sites: [], teachers: [], groups: [], children: [], lessons: [], payments: [], refunds: [], balanceTransfers: [] };
+  globalThis.window = { icubeLegacy: { state, render() {} }, alert() {}, addEventListener() {}, sharedCalendarEvents() { return []; } };
+  globalThis.document = {
+    querySelector(selector) {
+      if (selector === '#app') return app;
+      if (selector === '#tqc-name') return { value: 'Новый Ребёнок' };
+      if (selector === '#tqc-phone') return { value: '' };
+      return null;
+    },
+    querySelectorAll() { return []; },
+  };
+  globalThis.MutationObserver = class { observe() {} disconnect() {} };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(String(url), 'http://crm.test').pathname.replace('/api/v1', '');
+    requests.push({ path, method: options.method ?? 'GET', idempotencyKey: options.headers?.['Idempotency-Key'] });
+    let data = [];
+    if (path === '/auth/me') data = { id: '20', displayName: 'Учитель', roles: ['teacher'], teacherId: '5', projectIds: [] };
+    else if (path === '/groups') data = [group];
+    else if (path === '/children') data = created ? [child()] : [];
+    else if (path === '/lessons') data = [lesson()];
+    else if (path === '/lesson-deletions') data = [];
+    else if (path === '/lessons/61/quick-child' && options.method === 'POST') { created = true; data = { childId: '91', lesson: lesson() }; }
+    return { ok: true, status: path === '/lessons/61/quick-child' ? 201 : 200, async json() { return { data }; } };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?teacher-quick-child=${Date.now()}-${Math.random()}`);
+    await globalThis.window.icubeAuthReady;
+    state.selectedLesson = 61; state.page = 'teacherLesson';
+    await globalThis.window.icubeApi.saveQuickChild();
+    const command = requests.find((request) => request.path === '/lessons/61/quick-child');
+    assert.equal(command.method, 'POST'); assert.ok(command.idempotencyKey);
+    assert.equal(state.children.some((item) => item.id === 91), true);
+    assert.equal(state.lessons[0].extras.some((item) => item.childId === 91 && item.present && item.trial), true);
+  } finally {
+    globalThis.window = original.window; globalThis.document = original.document;
+    globalThis.fetch = original.fetch; globalThis.MutationObserver = original.MutationObserver;
+  }
+});
+
 test('frontend and backend keep IndexedDB, photo coexistence and quick-child idempotency contracts', async () => {
   const [queueSource, syncSource, photosSource, lessonsSource, routesSource, notificationsSource] = await Promise.all([
     readFile(new URL('../src/data/lesson-action-queue.mjs', import.meta.url), 'utf8'),

@@ -729,6 +729,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,TRUE,:actorId,NOW(6))`, {
           lessonId: lesson.id, childId, enrollmentId: enrollment.insertId, actorId: context.userId ?? null,
         });
+        if (hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
+          await connection.query(`INSERT INTO notifications
+            (role_code,notification_type,title,body,entity_type,entity_id)
+            VALUES ('director','quick_child_created','Новый ребёнок от преподавателя',:body,'child',:childId)`, {
+            childId, body: `${name} создан преподавателем во время занятия и ожидает проверки.`,
+          });
+        }
         if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
       });
       return { childId: String(childId), lesson: await get(lessonId, context) };

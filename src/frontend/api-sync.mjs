@@ -1354,14 +1354,17 @@ function installPersistentCalendarBridge() {
     const [day, month, year] = String(value ?? '').split('.').map(Number);
     return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12));
   };
-  const parseIsoDate = (value) => {
+  const parseRangeDate = (value) => {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate(), 12));
+    }
     const [year, month, day] = String(value ?? '').slice(0, 10).split('-').map(Number);
     return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12));
   };
   const timeStart = (value) => String(value ?? '').split('–')[0];
   window.sharedCalendarEvents = function (startDate, endDate, teacherId) {
     const events = generatedEvents.apply(this, arguments);
-    const start = parseIsoDate(startDate); const end = parseIsoDate(endDate);
+    const start = parseRangeDate(startDate); const end = parseRangeDate(endDate);
     for (const lesson of legacy.state.lessons ?? []) {
       const actual = parseRuDate(lesson.date);
       if (actual < start || actual > end) continue;
@@ -1374,7 +1377,8 @@ function installPersistentCalendarBridge() {
         scheduledDate: lesson.scheduledDate, scheduledTime: lesson.scheduledTime, date: lesson.date, time: lesson.time,
         lesson, cancelled: lesson.cancelled, moved: lesson.moved, done: lesson.done,
       };
-      const existing = events.findIndex((event) => event.lesson && Number(event.lesson.id) === Number(lesson.id));
+      const existing = events.findIndex((event) => (event.lesson && Number(event.lesson.id) === Number(lesson.id))
+        || String(event.key) === String(lesson.occurrenceKey));
       if (existing >= 0) events[existing] = persisted;
       else events.push(persisted);
     }

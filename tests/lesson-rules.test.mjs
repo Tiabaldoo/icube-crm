@@ -112,6 +112,51 @@ test('teacher не читает и не изменяет чужой lesson id', 
   await assert.rejects(service.start(50, { actualTeacherId: 9 }, { roles: ['teacher'], userId: '2', teacherId: '5' }), (error) => error.status === 403);
 });
 
+test('teacher quick-child создаёт ребёнка, enrollment и attendance один раз только в своём занятии', async () => {
+  const lesson = {
+    id: 61, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    planned_teacher_id: 5, actual_teacher_id: 5, status: 'in_progress', deleted_at: null,
+    scheduled_starts_at: '2026-09-23 10:00:00', scheduled_ends_at: '2026-09-23 11:00:00',
+    starts_at: '2026-09-23 10:00:00', ends_at: '2026-09-23 11:00:00', actual_starts_at: '2026-09-23 10:00:00',
+    actual_ends_at: null, topic: null, is_intro_group: 0, is_empty_trip: 0, roster_frozen_at: '2026-09-23 10:00:00',
+    attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 2,
+  };
+  const counters = { children: 0, enrollments: 0, roster: 0, attendances: 0, notifications: 0 };
+  let childId = null; let attendanceParams;
+  const handler = async (sql, params = {}) => {
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT tp.teacher_id FROM teacher_projects')) return [[{ teacher_id: 5 }]];
+    if (sql.startsWith('SELECT id FROM children WHERE create_idempotency_key=')) return [childId == null ? [] : [{ id: childId }]];
+    if (sql.startsWith('INSERT INTO children')) { counters.children += 1; childId = 91; return [{ insertId: childId }]; }
+    if (sql.startsWith('INSERT INTO child_enrollments')) { counters.enrollments += 1; return [{ insertId: 92 }]; }
+    if (sql.startsWith('INSERT INTO lesson_roster_members')) { counters.roster += 1; return [{ insertId: 1 }]; }
+    if (sql.startsWith('INSERT INTO attendances')) { counters.attendances += 1; attendanceParams = params; return [{ insertId: 93 }]; }
+    if (sql.startsWith('INSERT INTO notifications')) { counters.notifications += 1; return [{ insertId: 94 }]; }
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{
+      ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка',
+      planned_teacher_name: 'Учитель', actual_teacher_name: 'Учитель',
+    }]];
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [[{ lesson_id: 61, child_id: 91, roster_type: 'extra' }]];
+    if (sql.includes('FROM attendances WHERE lesson_id IN')) return [[{ id: 93, lesson_id: 61, child_id: 91, enrollment_id: 92,
+      attendance_type: 'extra', present: 1, is_trial: 1, price_snapshot: null, charged_lessons: '0.00000000', marked_at: '2026-09-23 10:05:00' }]];
+    if (sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const service = createMysqlLessons(transactionPool(handler));
+  const context = { roles: ['teacher'], userId: '20', teacherId: '5', idempotencyKey: 'quick-child-command' };
+  const created = await service.quickChild(61, { name: 'Новый Ребёнок', phone: null }, context);
+  const retried = await service.quickChild(61, { name: 'Новый Ребёнок', phone: null }, context);
+  assert.equal(created.childId, '91'); assert.equal(retried.childId, '91');
+  assert.deepEqual(counters, { children: 1, enrollments: 1, roster: 1, attendances: 1, notifications: 1 });
+  assert.equal(attendanceParams.childId, 91); assert.equal(attendanceParams.enrollmentId, 92);
+  assert.equal(created.lesson.attendances[0].present, true); assert.equal(created.lesson.attendances[0].trial, true);
+  await assert.rejects(
+    service.quickChild(61, { name: 'Чужой Ребёнок' }, { ...context, teacherId: '6', idempotencyKey: 'foreign-command' }),
+    (error) => error.status === 403,
+  );
+  assert.equal(counters.children, 1);
+});
+
 test('teacher start игнорирует чужой actualTeacherId, director teacher-mode сохраняет actor director', async () => {
   const makeHandler = (lesson, captured) => async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
