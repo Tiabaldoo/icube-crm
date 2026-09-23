@@ -129,6 +129,7 @@ test('единый frontend загружается и рендерит все т
     selectedChild: context.__crmProbe.state.selectedChild, children: context.__crmProbe.state.children,
     groups: context.__crmProbe.state.groups, sites: context.__crmProbe.state.sites,
     lessons: context.__crmProbe.state.lessons, payments: context.__crmProbe.state.payments,
+    refunds: context.__crmProbe.state.refunds, childLedgerSort: context.__crmProbe.state.childLedgerSort,
   };
   context.__crmProbe.state.role = 'director';
   context.__crmProbe.state.childTab = 'overview';
@@ -166,6 +167,48 @@ test('единый frontend загружается и рендерит все т
   assert.match(childHtml, /Другой проект/);
   assert.equal((childHtml.match(/>\+ Оплата<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает финансовые действия');
   assert.equal((childHtml.match(/>Изменить направление \/ цену<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает mutation controls');
+
+  context.__crmProbe.state.role = 'director';
+  context.__crmProbe.state.childLedgerSort = { payments: 'desc', visits: 'desc', refunds: 'desc' };
+  context.__crmProbe.state.payments = [
+    { id: 1, childId: 20, direction: 'Робототехника', amount: 1000, lessons: 1, method: 'Безналичный расчёт', date: '01.09.2026', paidOn: '2026-09-01' },
+    { id: 2, childId: 20, direction: 'Робототехника', amount: 2000, lessons: 2, method: 'Безналичный расчёт', date: '20.09.2026', paidOn: '2026-09-20' },
+  ];
+  context.__crmProbe.state.refunds = [
+    { id: 3, childId: 20, direction: 'Робототехника', amount: 500, price: 1000, lessons: 0.5, date: '03.09.2026', refundedOn: '2026-09-03' },
+    { id: 4, childId: 20, direction: 'Робототехника', amount: 700, price: 1000, lessons: 0.7, date: '21.09.2026', refundedOn: '2026-09-21' },
+  ];
+  context.__crmProbe.state.groups = [{ id: 10, name: 'Группа', direction: 'Робототехника', siteId: 1 }];
+  context.__crmProbe.state.lessons = [
+    { id: 31, groupId: 10, date: '05.09.2026', time: '10:00–11:00', cancelled: false, attendance: {20:true}, extras: [] },
+    { id: 32, groupId: 10, date: '22.09.2026', time: '10:00–11:00', cancelled: false, attendance: {20:true}, extras: [] },
+  ];
+
+  context.__crmProbe.state.childTab = 'payments';
+  childHtml = context.child();
+  assert.match(childHtml, /Сначала новые/);
+  assert.ok(childHtml.indexOf('20.09.2026') < childHtml.indexOf('01.09.2026'), 'оплаты: новые сверху');
+  context.setChildLedgerSort('payments', 'asc');
+  childHtml = context.child();
+  assert.ok(childHtml.indexOf('01.09.2026') < childHtml.indexOf('20.09.2026'), 'оплаты: старые сверху');
+
+  context.__crmProbe.state.childTab = 'visits';
+  context.__crmProbe.state.childLedgerSort.visits = 'desc';
+  childHtml = context.child();
+  assert.match(childHtml, /Сначала новые/);
+  assert.ok(childHtml.indexOf('22.09.2026') < childHtml.indexOf('05.09.2026'), 'посещения: новые сверху');
+  context.setChildLedgerSort('visits', 'asc');
+  childHtml = context.child();
+  assert.ok(childHtml.indexOf('05.09.2026') < childHtml.indexOf('22.09.2026'), 'посещения: старые сверху');
+
+  context.__crmProbe.state.childTab = 'refunds';
+  context.__crmProbe.state.childLedgerSort.refunds = 'desc';
+  childHtml = context.child();
+  assert.match(childHtml, /Сначала новые/);
+  assert.ok(childHtml.indexOf('21.09.2026') < childHtml.indexOf('03.09.2026'), 'возвраты: новые сверху');
+  context.setChildLedgerSort('refunds', 'asc');
+  childHtml = context.child();
+  assert.ok(childHtml.indexOf('03.09.2026') < childHtml.indexOf('21.09.2026'), 'возвраты: старые сверху');
 
   const payload = '<img src=x onerror=alert(1)>';
   context.__crmProbe.state.role = 'director'; context.__crmProbe.state.page = 'children';
@@ -455,4 +498,10 @@ test('настройки сохраняют цены, зарплату и пар
   assert.match(source, /event\.preventDefault\(\);\s*event\.returnValue = '';/);
   assert.match(source, /Есть несохранённые изменения\. Уйти без сохранения\?/);
   assert.match(source, /window\.navTo = function \(page\)/);
+});
+
+test('родительский доступ рендерится только на вкладке Обзор карточки ребёнка', async () => {
+  const source = await readFile(new URL('../src/frontend/parent-access.mjs', import.meta.url), 'utf8');
+  assert.match(source, /legacy\.state\.childTab !== 'overview'/);
+  assert.match(source, /return `\$\{base\}\$\{accessBlock\(legacy\.state\.selectedChild\)\}`/);
 });

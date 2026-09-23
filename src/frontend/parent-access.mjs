@@ -61,7 +61,7 @@ const originalChild = window.child;
 if (typeof originalChild === 'function') {
   window.child = function (...args) {
     const base = originalChild.apply(this, args);
-    if (!['director', 'partner'].includes(legacy.state.role)) return base;
+    if (!['director', 'partner'].includes(legacy.state.role) || legacy.state.childTab !== 'overview') return base;
     return `${base}${accessBlock(legacy.state.selectedChild)}`;
   };
 }

@@ -2031,11 +2031,38 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 // Child card tabs — overview / payments / visits / refunds.
 (function(){
   state.childTab = state.childTab || 'overview';
+  state.childLedgerSort = state.childLedgerSort || {payments:'desc',visits:'desc',refunds:'desc'};
 
   window.setChildTab = function(tab){
     state.childTab = tab;
     render();
   };
+
+  window.setChildLedgerSort = function(tab,order){
+    state.childLedgerSort[tab] = order === 'asc' ? 'asc' : 'desc';
+    render();
+  };
+
+  function childDateValue(value){
+    const text=String(value||'');
+    if(/^\d{4}-\d{2}-\d{2}/.test(text)) return new Date(text.slice(0,10)+'T00:00:00').getTime();
+    const p=text.split('.').map(Number);
+    return p.length===3 ? new Date(p[2],p[1]-1,p[0]).getTime() : 0;
+  }
+
+  function sortChildLedger(rows,tab,dateOf){
+    const direction=state.childLedgerSort[tab]==='asc'?1:-1;
+    return rows.slice().sort(function(a,b){
+      const diff=childDateValue(dateOf(a))-childDateValue(dateOf(b));
+      if(diff) return direction*diff;
+      return direction*(Number(a?.id||a?.lesson?.id||0)-Number(b?.id||b?.lesson?.id||0));
+    });
+  }
+
+  function childSortSelect(tab){
+    const order=state.childLedgerSort[tab]||'desc';
+    return '<select class="select child-ledger-sort" style="max-width:170px" onchange="setChildLedgerSort(\''+tab+'\',this.value)"><option value="desc"'+(order==='desc'?' selected':'')+'>Сначала новые</option><option value="asc"'+(order==='asc'?' selected':'')+'>Сначала старые</option></select>';
+  }
 
   function childTabs(){
     const items=[['overview','Обзор'],['payments','Оплаты'],['visits','Посещения'],['refunds','Возвраты']];
@@ -2050,8 +2077,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return '<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>'+e.direction+'</b><div class="muted">'+(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+e.balance+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="enrollmentForm('+c.id+',\''+e.direction+'\')">Изменить</button></div></div>';
     }).join('');
 
-    const payments=state.payments.filter(function(p){return p.childId===c.id;}).slice().reverse().slice(0,3);
-    const visits=childVisitRows(c.id).slice(0,3);
+    const payments=sortChildLedger(state.payments.filter(function(p){return p.childId===c.id;}),'payments',function(p){return p.paidOn||p.date;}).slice(0,3);
+    const visits=sortChildLedger(childVisitRows(c.id),'visits',function(x){return x.lesson.date;}).slice(0,3);
 
     return '<div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="badge '+statusBadge(c.status)+'">'+c.status+'</span><button class="btn soft" onclick="enrollmentForm('+c.id+',null)">+ Добавить направление</button></div></div>'+directionsHtml+'</div>'+
       '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>'+escapeHtml(c.birth)+'</b></div><div class="info-line"><span>Родитель</span><b>'+escapeHtml(c.parent)+'</b></div><div class="info-line"><span>Телефон</span><b>'+escapeHtml(c.phone)+'</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">'+escapeHtml(c.note||'—')+'</span></div></div></div></div>'+
@@ -2064,8 +2091,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function childPayments(c){
-    const rows=state.payments.filter(function(p){return p.childId===c.id;}).slice().reverse();
-    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="paymentForm('+c.id+',\''+(c.enrollments[0]?.direction||'Робототехника')+'\')">+ Оплата</button></div>'+
+    const rows=sortChildLedger(state.payments.filter(function(p){return p.childId===c.id;}),'payments',function(p){return p.paidOn||p.date;});
+    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+(rows.length?childSortSelect('payments'):'')+'<button class="btn primary" onclick="paymentForm('+c.id+',\''+(c.enrollments[0]?.direction||'Робототехника')+'\')">+ Оплата</button></div></div>'+
       (rows.length?'<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div></div>'+rows.map(function(p){return '<div class="row"><div><b>'+p.date+'</b></div><div>'+p.direction+'</div><div class="money">'+money(p.amount)+'</div><div>'+p.method+'</div><div class="positive">+'+Number(p.lessons.toFixed? p.lessons.toFixed(4):p.lessons)+'</div></div>';}).join('')+'</div>':'<div class="empty">Оплат пока нет.</div>')+'</div>';
   }
 
@@ -2080,7 +2107,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(!g) return;
       rows.push({lesson:l,group:g,extra:extra||null});
     });
-    return rows.sort(function(a,b){return parseRuDateForChild(b.lesson.date)-parseRuDateForChild(a.lesson.date);});
+    return rows;
   }
 
   function parseRuDateForChild(s){
@@ -2092,14 +2119,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function childVisits(c){
-    const rows=childVisitRows(c.id);
-    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Посещения</h2><div class="muted mini child-ledger-count">'+rows.length+' посещений</div></div></div>'+
+    const rows=sortChildLedger(childVisitRows(c.id),'visits',function(x){return x.lesson.date;});
+    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Посещения</h2><div class="muted mini child-ledger-count">'+rows.length+' посещений</div></div>'+(rows.length?childSortSelect('visits'):'')+'</div>'+
       (rows.length?'<div class="list"><div class="row header" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto"><div>Дата</div><div>Направление</div><div>Группа</div><div>Статус</div><div>Тип</div></div>'+rows.map(function(x){return '<div class="row clickable" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div><div>'+x.group.direction+'</div><div>'+x.group.name+'</div><div><span class="badge green">Был</span></div><div>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'')+'</div></div>';}).join('')+'</div>':'<div class="empty">Посещений пока нет.</div>')+'</div>';
   }
 
   function childRefunds(c){
-    const rows=state.refunds.filter(function(r){return r.childId===c.id;}).slice().reverse();
-    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Возвраты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div>'+
+    const rows=sortChildLedger(state.refunds.filter(function(r){return r.childId===c.id;}),'refunds',function(r){return r.refundedOn||r.date;});
+    return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Возвраты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+(rows.length?childSortSelect('refunds'):'')+'<button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div></div>'+
       (rows.length?'<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Цена</div><div>Занятий</div></div>'+rows.map(function(r){return '<div class="row"><div><b>'+r.date+'</b></div><div>'+r.direction+'</div><div class="money negative">−'+money(r.amount)+'</div><div>'+money(r.price)+'</div><div>−'+Number(r.lessons.toFixed?r.lessons.toFixed(4):r.lessons)+'</div></div>';}).join('')+'</div>':'<div class="empty">Возвратов пока нет.</div>')+'</div>';
   }
 
@@ -3240,10 +3267,29 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       '</div>';
   }
 
+  function childLedgerDateV118(value){
+    const text=String(value||'');
+    if(/^\d{4}-\d{2}-\d{2}/.test(text)) return new Date(text.slice(0,10)+'T00:00:00').getTime();
+    return parseRuDate(text).getTime();
+  }
+  function sortChildLedgerV118(rows,tab,dateOf){
+    state.childLedgerSort=state.childLedgerSort||{payments:'desc',visits:'desc',refunds:'desc'};
+    const direction=state.childLedgerSort[tab]==='asc'?1:-1;
+    return rows.slice().sort(function(a,b){
+      const diff=childLedgerDateV118(dateOf(a))-childLedgerDateV118(dateOf(b));
+      if(diff) return direction*diff;
+      return direction*(Number(a?.id||a?.lesson?.id||0)-Number(b?.id||b?.lesson?.id||0));
+    });
+  }
+  function childSortSelectV118(tab){
+    const order=state.childLedgerSort?.[tab]||'desc';
+    return '<select class="select child-ledger-sort" style="max-width:170px" onchange="setChildLedgerSort(\''+tab+'\',this.value)"><option value="desc"'+(order==='desc'?' selected':'')+'>Сначала новые</option><option value="asc"'+(order==='asc'?' selected':'')+'>Сначала старые</option></select>';
+  }
+
   function childPaymentsV118(c){
-    const rows=(state.payments||[]).filter(function(p){return Number(p.childId)===Number(c.id);}).slice().reverse();
+    const rows=sortChildLedgerV118((state.payments||[]).filter(function(p){return Number(p.childId)===Number(c.id);}), 'payments', function(p){return p.paidOn||p.date;});
     const paymentEnrollment=(c.enrollments||[]).find(function(e){return e.editable!==false;});
-    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div>'+(paymentEnrollment?'<button class="btn primary" onclick="paymentForm('+c.id+',\''+escapeInlineJs(paymentEnrollment.direction)+'\')">+ Оплата</button>':'')+'</div>';
+    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+(rows.length?childSortSelectV118('payments'):'')+(paymentEnrollment?'<button class="btn primary" onclick="paymentForm('+c.id+',\''+escapeInlineJs(paymentEnrollment.direction)+'\')">+ Оплата</button>':'')+'</div></div>';
     if(!rows.length) return html+'<div class="empty">Оплат пока нет.</div></div>';
     html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr 1.2fr"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div><div></div></div>';
     html+=rows.map(function(p){
@@ -3256,8 +3302,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function childVisitsV118(c){
-    const rows=childVisitsRows(c.id);
-    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Посещения</h2><div class="muted mini child-ledger-count">'+rows.length+' посещений</div></div></div>';
+    const rows=sortChildLedgerV118(childVisitsRows(c.id), 'visits', function(x){return x.lesson.date;});
+    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Посещения</h2><div class="muted mini child-ledger-count">'+rows.length+' посещений</div></div>'+(rows.length?childSortSelectV118('visits'):'')+'</div>';
     if(!rows.length) return html+'<div class="empty">Посещений пока нет.</div></div>';
     html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1fr 1.4fr auto auto auto"><div>Дата</div><div>Направление</div><div>Группа</div><div>Статус</div><div>Тип</div><div></div></div>';
     html+=rows.map(function(x){
@@ -3272,8 +3318,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function childRefundsV118(c){
-    const rows=(state.refunds||[]).filter(function(r){return Number(r.childId)===Number(c.id);}).slice().reverse();
-    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Возвраты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div>';
+    const rows=sortChildLedgerV118((state.refunds||[]).filter(function(r){return Number(r.childId)===Number(c.id);}), 'refunds', function(r){return r.refundedOn||r.date;});
+    let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Возвраты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+(rows.length?childSortSelectV118('refunds'):'')+'<button class="btn primary" onclick="refundFormForChild('+c.id+')">+ Возврат</button></div></div>';
     if(!rows.length) return html+'<div class="empty">Возвратов пока нет.</div></div>';
     html+='<div class="list"><div class="row header"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Цена</div><div>Занятий</div></div>';
     html+=rows.map(function(r){
