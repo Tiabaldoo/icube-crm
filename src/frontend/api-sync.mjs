@@ -508,11 +508,23 @@ async function saveSite(resourceId, returnToGroup) {
 
 async function saveTeacher(resourceId, returnToGroup) {
   try {
-    const names = []; if (checked('#tf-robot')) names.push('Робототехника'); if (checked('#tf-code')) names.push('Программирование');
-    const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(), projectId: value('#tf-project'),
-      active: value('#tf-active') === 'true', directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean) };
+    const projectSettings = (legacy.state.projects ?? []).map((project) => {
+      const names = [];
+      if (checked(`#tf-project-${project.id}-robot`)) names.push('Робототехника');
+      if (checked(`#tf-project-${project.id}-code`)) names.push('Программирование');
+      return {
+        projectId: project.id,
+        active: checked(`#tf-project-active-${project.id}`),
+        directionIds: names.map((name) => byName(directories.directions, name)?.id).filter(Boolean),
+        directionNames: names,
+      };
+    });
+    const body = { name: value('#tf-name').trim(), phone: value('#tf-phone').trim(),
+      projectSettings: projectSettings.map(({ projectId, active, directionIds }) => ({ projectId, active, directionIds })) };
     if (!body.name) return window.alert('Укажите фамилию и имя преподавателя');
-    if (body.directionIds.length !== names.length || !names.length) return window.alert('Выберите хотя бы одно доступное направление');
+    if (!projectSettings.some((item) => item.active)) return window.alert('Активируйте хотя бы один проект');
+    const invalid = projectSettings.find((item) => item.active && (!item.directionIds.length || item.directionIds.length !== item.directionNames.length));
+    if (invalid) return window.alert('В каждом активном проекте выберите хотя бы одно доступное направление');
     const saved = resourceId ? await api.update('teachers', resourceId, body) : await api.create('teachers', body);
     await reload({ render: false });
     if (returnToGroup) { legacy.state.pendingGroupDraft = { ...(legacy.state.pendingGroupDraft ?? {}), teacherId: saved.id }; window.groupForm(legacy.state.pendingGroupDraft.id, legacy.state.pendingGroupDraft); }

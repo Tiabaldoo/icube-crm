@@ -1830,20 +1830,25 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   window.teacherForm = function(id, returnToGroup) {
     const t=id?byId(state.teachers,id):null;
-    const draftProject=(state.projects||[]).find(function(p){return p.name===state.pendingGroupDraft?.project;});
-    const projectId=Number(draftProject?.id||t?.projectSettings?.[0]?.projectId||(state.projects||[])[0]?.id||0);
-    const projectSetting=t?.projectSettings?.find(function(item){return Number(item.projectId)===projectId;});
-    const dirs=(projectSetting?.directions||t?.directions||['Робототехника']).map(function(item){return item?.name||item;});
+    const projects=state.projects||[];
+    const draftProject=projects.find(function(p){return p.name===state.pendingGroupDraft?.project;});
+    const defaultProjectId=Number(draftProject?.id||projects[0]?.id||0);
     let html='<h3>'+(t?'Редактировать преподавателя':'Новый преподаватель')+'</h3><div class="form-grid">';
     html+='<div class="field span-2"><label>Фамилия Имя</label><input class="input" id="tf-name" value="'+escapeAttr(t?.name||'')+'" placeholder="Иванов Сергей"></div>';
     html+='<div class="field span-2"><label>Телефон</label><input class="input" id="tf-phone" value="'+escapeAttr(t?.phone||'')+'" placeholder="+7 900 000-00-00"></div>';
-    html+='<div class="field span-2"><label>Направления</label><div style="display:flex;gap:14px;flex-wrap:wrap;padding:10px 0"><label><input type="checkbox" id="tf-robot" '+(dirs.includes('Робототехника')?'checked':'')+'> Робототехника</label><label><input type="checkbox" id="tf-code" '+(dirs.includes('Программирование')?'checked':'')+'> Программирование</label></div></div>';
-    html+='<div class="field span-2"><label>Проект</label><select class="select" id="tf-project" onchange="icubeApi.teacherProjectChanged('+(id||'null')+')">'+(state.projects||[]).map(function(p){return '<option value="'+p.id+'"'+(Number(p.id)===projectId?' selected':'')+'>'+escapeHtml(p.name)+'</option>';}).join('')+'</select></div>';
-    html+='<div class="field span-2"><label>Статус в выбранном проекте</label><select class="select" id="tf-active"><option value="true"'+(projectSetting?.active!==false?' selected':'')+'>Активен</option><option value="false"'+(projectSetting?.active===false?' selected':'')+'>Неактивен</option></select></div>';
+    projects.forEach(function(p){
+      const setting=t?.projectSettings?.find(function(item){return Number(item.projectId)===Number(p.id);});
+      const active=setting ? setting.active===true : (!t && Number(p.id)===defaultProjectId);
+      const dirs=new Set((setting?.directions||(!t&&active?['Робототехника']:[])).map(function(item){return item?.name||item;}));
+      html+='<div class="field span-2 teacher-project-block" data-project-id="'+p.id+'" style="border:1px solid var(--line);border-radius:12px;padding:12px">';
+      html+='<div style="font-weight:700;margin-bottom:9px">'+escapeHtml(p.name)+'</div>';
+      html+='<label style="display:flex;gap:8px;align-items:center;margin-bottom:8px"><input type="checkbox" id="tf-project-active-'+p.id+'" '+(active?'checked':'')+'> Активен в проекте</label>';
+      html+='<div style="display:flex;gap:14px;flex-wrap:wrap"><label><input type="checkbox" id="tf-project-'+p.id+'-robot" '+(dirs.has('Робототехника')?'checked':'')+'> Робототехника</label><label><input type="checkbox" id="tf-project-'+p.id+'-code" '+(dirs.has('Программирование')?'checked':'')+'> Программирование</label></div>';
+      html+='</div>';
+    });
     html+='</div><div class="modal-actions"><button class="btn" onclick="'+(returnToGroup?'returnToGroupForm()':'closeModal()')+'">Отмена</button><button class="btn primary" onclick="icubeApi.saveTeacher('+(id||'null')+','+(returnToGroup?'true':'false')+')">Сохранить</button></div>';
     modal(html);
   };
-
   window.saveTeacher = function(id, returnToGroup) {
     const name=document.querySelector('#tf-name').value.trim();
     if(!name){alert('Укажите фамилию и имя преподавателя');return;}
@@ -1921,7 +1926,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const sorted=state.teachers.slice().sort(function(a,b){return Number(b.active!==false)-Number(a.active!==false)||a.name.localeCompare(b.name);});
     let html=pageHead('Преподаватели','Неактивные преподаватели сохраняются в истории, но не предлагаются при выборе в новых группах.','<button class="btn primary" onclick="teacherForm(null,false)">+ Преподаватель</button>');
     html+='<div class="card list"><div class="row header"><div>Преподаватель</div><div>Телефон</div><div>Направления</div><div>Статус</div><div></div></div>';
-    html+=sorted.map(function(t){return '<div class="row clickable" onclick="teacherForm('+t.id+',false)"><div><b>'+escapeHtml(t.name)+'</b></div><div>'+escapeHtml(t.phone)+'</div><div>'+escapeHtml(t.directions.join(', '))+'</div><div><span class="badge '+(t.active?'green':'gray')+'">'+(t.active?'Активен':'Неактивен')+'</span></div><div>Редактировать</div></div>';}).join('');
+    html+=sorted.map(function(t){const projectNames=(t.projectSettings||[]).filter(function(item){return item.active;}).map(function(item){return (state.projects||[]).find(function(p){return Number(p.id)===Number(item.projectId);})?.name;}).filter(Boolean);return '<div class="row clickable" onclick="teacherForm('+t.id+',false)"><div><b>'+escapeHtml(t.name)+'</b><div class="muted mini">'+escapeHtml(projectNames.join(' · ')||'Нет активных проектов')+'</div></div><div>'+escapeHtml(t.phone)+'</div><div>'+escapeHtml(t.directions.join(', '))+'</div><div><span class="badge '+(t.active?'green':'gray')+'">'+(t.active?'Активен':'Неактивен')+'</span></div><div>Редактировать</div></div>';}).join('');
     html+='</div>'; return html;
   };
 

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFile } from 'node:fs/promises';
 import { createMysqlCatalog } from '../backend/src/catalog.mjs';
 
 function pool(handler) {
@@ -73,4 +74,132 @@ test('site in an active group cannot be disabled and group cannot end in the fut
   };
   await assert.rejects(createMysqlCatalog(pool(groupHandler)).update('groups', 8, { active: false, endsOn: '2099-01-01' }, { roles: ['director'] }),
     { status: 400, code: 'GROUP_END_DATE_IN_FUTURE' });
+});
+
+
+function multiProjectTeacherFixture() {
+  const state = {
+    nextTeacherId: 20,
+    teachers: [],
+    projects: [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }],
+    directions: [{ id: 10, name: 'Робототехника' }, { id: 11, name: 'Программирование' }],
+    teacherProjects: [],
+    teacherDirections: [],
+    groups: [],
+  };
+  const handler = async (sql, params = {}) => {
+    if (sql.includes('FROM teachers t LEFT JOIN users u')) return [state.teachers.map((teacher) => ({ id: teacher.id, full_name: teacher.name, phone: teacher.phone, active: 1 }))];
+    if (sql.includes('FROM teacher_project_directions tpd')) return [state.teacherDirections.map((row) => ({
+      teacher_id: row.teacherId, project_id: row.projectId, id: row.directionId,
+      name: state.directions.find((direction) => direction.id === row.directionId)?.name,
+    }))];
+    if (sql === 'SELECT teacher_id,project_id,active FROM teacher_projects ORDER BY project_id') return [state.teacherProjects.map((row) => ({
+      teacher_id: row.teacherId, project_id: row.projectId, active: row.active ? 1 : 0,
+    }))];
+    if (sql.startsWith('SELECT id FROM projects')) return [[state.projects.find((row) => String(row.id) === String(params.id))].filter(Boolean)];
+    if (sql.startsWith('SELECT id FROM directions')) return [[state.directions.find((row) => String(row.id) === String(params.id))].filter(Boolean)];
+    if (sql.startsWith('SELECT id FROM study_groups WHERE default_teacher_id=')) return [[state.groups.find((row) => String(row.teacherId) === String(params.teacherId) && String(row.projectId) === String(params.projectId) && row.active)].filter(Boolean)];
+    if (sql.startsWith('INSERT INTO teachers ')) {
+      const teacher = { id: state.nextTeacherId++, name: params.name, phone: params.phone }; state.teachers.push(teacher); return [{ insertId: teacher.id }];
+    }
+    if (sql.startsWith('UPDATE teachers SET')) { const teacher = state.teachers.find((row) => String(row.id) === String(params.id)); if (teacher) Object.assign(teacher, { name: params.name, phone: params.phone }); return [{ affectedRows: teacher ? 1 : 0 }]; }
+    if (sql.startsWith('UPDATE users u JOIN teachers')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('INSERT INTO teacher_projects')) {
+      const existing = state.teacherProjects.find((row) => String(row.teacherId) === String(params.teacherId) && String(row.projectId) === String(params.projectId));
+      if (existing) existing.active = Boolean(params.active); else state.teacherProjects.push({ teacherId: Number(params.teacherId), projectId: Number(params.projectId), active: Boolean(params.active) });
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('DELETE FROM teacher_project_directions')) {
+      state.teacherDirections = state.teacherDirections.filter((row) => !(String(row.teacherId) === String(params.teacherId) && String(row.projectId) === String(params.projectId)));
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('INSERT INTO teacher_project_directions')) {
+      state.teacherDirections.push({ teacherId: Number(params.teacherId), projectId: Number(params.projectId), directionId: Number(params.directionId) }); return [{ affectedRows: 1 }];
+    }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  };
+  return { state, catalog: createMysqlCatalog(pool(handler)) };
+}
+
+test('director creates one teacher in two projects with independent directions', async () => {
+  const fixture = multiProjectTeacherFixture();
+  const teacher = await fixture.catalog.create('teachers', {
+    name: 'Иванов Сергей', phone: '+7', projectSettings: [
+      { projectId: 1, active: true, directionIds: [10, 11] },
+      { projectId: 2, active: true, directionIds: [10] },
+    ],
+  }, { roles: ['director'] });
+  assert.equal(fixture.state.teachers.length, 1);
+  assert.deepEqual(teacher.projectSettings.map((item) => [item.projectId, item.active, item.directions.map((direction) => direction.id)]), [
+    ['1', true, ['10', '11']], ['2', true, ['10']],
+  ]);
+});
+
+test('director adds a second project and disabling one project leaves the other active', async () => {
+  const fixture = multiProjectTeacherFixture();
+  const created = await fixture.catalog.create('teachers', {
+    name: 'Иванов', projectSettings: [{ projectId: 1, active: true, directionIds: [10] }],
+  }, { roles: ['director'] });
+  await fixture.catalog.update('teachers', created.id, {
+    projectSettings: [{ projectId: 1, active: true, directionIds: [10] }, { projectId: 2, active: true, directionIds: [11] }],
+  }, { roles: ['director'] });
+  const updated = await fixture.catalog.update('teachers', created.id, {
+    projectSettings: [{ projectId: 1, active: false, directionIds: [10] }, { projectId: 2, active: true, directionIds: [11] }],
+  }, { roles: ['director'] });
+  assert.deepEqual(updated.projectSettings.map((item) => [item.projectId, item.active]), [['1', false], ['2', true]]);
+  assert.equal(updated.active, true);
+});
+
+test('partner creates only in own project, cannot mutate foreign project, and cannot see foreign settings', async () => {
+  const fixture = multiProjectTeacherFixture();
+  const partner = { roles: ['partner'], projectIds: ['2'] };
+  const created = await fixture.catalog.create('teachers', {
+    name: 'Петров', projectSettings: [{ projectId: 2, active: true, directionIds: [10] }],
+  }, partner);
+  assert.deepEqual(created.projectSettings.map((item) => item.projectId), ['2']);
+  await fixture.catalog.update('teachers', created.id, {
+    projectSettings: [{ projectId: 2, active: true, directionIds: [10] }],
+  }, { roles: ['director'] });
+  fixture.state.teacherProjects.push({ teacherId: Number(created.id), projectId: 1, active: true });
+  fixture.state.teacherDirections.push({ teacherId: Number(created.id), projectId: 1, directionId: 11 });
+  const [scoped] = await fixture.catalog.list('teachers', partner);
+  assert.deepEqual(scoped.projectSettings.map((item) => item.projectId), ['2']);
+  await assert.rejects(fixture.catalog.update('teachers', created.id, {
+    projectSettings: [{ projectId: 1, active: true, directionIds: [11] }],
+  }, partner), { status: 403, code: 'FORBIDDEN' });
+});
+
+test('inactive teacher project with active group is still protected', async () => {
+  const fixture = multiProjectTeacherFixture();
+  const created = await fixture.catalog.create('teachers', {
+    name: 'Иванов', projectSettings: [
+      { projectId: 1, active: true, directionIds: [10] },
+      { projectId: 2, active: true, directionIds: [11] },
+    ],
+  }, { roles: ['director'] });
+  fixture.state.groups.push({ id: 7, teacherId: Number(created.id), projectId: 1, active: true });
+  await assert.rejects(fixture.catalog.update('teachers', created.id, {
+    projectSettings: [
+      { projectId: 1, active: false, directionIds: [10] },
+      { projectId: 2, active: true, directionIds: [11] },
+    ],
+  }, { roles: ['director'] }), { status: 409, code: 'TEACHER_PROJECT_IN_USE' });
+});
+
+test('teacher form renders project blocks and save sends projectSettings while group filtering stays project-direction scoped', async () => {
+  const [uiSource, syncSource, backendSource] = await Promise.all([
+    readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/catalog.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(uiSource, /projects\.forEach\(function\(p\)/);
+  assert.match(uiSource, /teacher-project-block/);
+  assert.match(uiSource, /tf-project-active-/);
+  assert.doesNotMatch(uiSource.slice(uiSource.lastIndexOf('window\.teacherForm'), uiSource.indexOf('window\.saveTeacher', uiSource.lastIndexOf('window\.teacherForm'))), /<select class="select" id="tf-project"/);
+  assert.match(syncSource, /projectSettings: projectSettings\.map/);
+  assert.match(syncSource, /Активируйте хотя бы один проект/);
+  assert.match(syncSource, /В каждом активном проекте выберите хотя бы одно доступное направление/);
+  assert.match(uiSource, /setting\.active!==false && \(setting\.directions\|\|\[\]\)\.some/);
+  assert.match(backendSource, /tp\.project_id=:projectId AND tp\.active=TRUE/);
+  assert.match(backendSource, /teacher_project_directions[\s\S]*project_id=:projectId AND direction_id=:directionId/);
 });

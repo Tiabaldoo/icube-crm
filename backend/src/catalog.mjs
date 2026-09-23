@@ -103,7 +103,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       JOIN directions d ON d.id=tpd.direction_id ORDER BY d.name`);
     const projectRows = await rows('SELECT teacher_id,project_id,active FROM teacher_projects ORDER BY project_id');
     return teacherRows.map((row) => {
-      const settings = projectRows.filter((item) => String(item.teacher_id) === String(row.id)).map((item) => ({
+      const settings = projectRows.filter((item) => String(item.teacher_id) === String(row.id)
+        && (projectId == null || String(item.project_id) === projectId)).map((item) => ({
         projectId: String(item.project_id), active: Boolean(item.active),
         directions: directionRows.filter((direction) => String(direction.teacher_id) === String(row.id)
           && String(direction.project_id) === String(item.project_id)).map((direction) => ({ id: String(direction.id), name: direction.name })),
@@ -271,34 +272,76 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     for (const value of ids) { const [found] = await connection.query(`SELECT id FROM ${table} WHERE id=:id`, { id: id(value, field) }); if (!found.length) throw new ApiProblem(400, 'INVALID_REFERENCE', `Не найдена связанная запись ${field}`); }
   }
   async function writeTeacher(connection, teacherId, body, current = {}, context = {}) {
-    const creating = teacherId == null;
     const owned = partnerProject(context);
+    const hasProjectSettings = Array.isArray(body.projectSettings);
+    if (owned && hasProjectSettings && body.projectSettings.some((item) => String(item?.projectId) !== owned)) {
+      throw new ApiProblem(403, 'FORBIDDEN', 'Партнёр не может менять доступ к чужому проекту');
+    }
     if (owned && ((body.projectId != null && String(body.projectId) !== owned)
       || body.projectIds?.some((value) => String(value) !== owned))) throw new ApiProblem(403, 'FORBIDDEN', 'Партнёр не может менять доступ к чужому проекту');
-    const projectId = id(owned ?? body.projectId ?? body.projectIds?.[0] ?? current.projectSettings?.[0]?.projectId, 'projectId');
-    assertProject(context, projectId);
-    const currentProject = current.projectSettings?.find((item) => String(item.projectId) === projectId) ?? {};
-    const directionIds = body.directionIds === undefined ? (currentProject.directions ?? []).map((item) => item.id) : body.directionIds.map((value) => id(value, 'directionIds'));
-    if (!directionIds?.length) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Нужно выбрать хотя бы одно направление');
-    await assertIds(connection, 'directions', directionIds, 'directionIds');
-    await assertIds(connection, 'projects', [projectId], 'projectId');
+
+    let settings;
+    if (hasProjectSettings) {
+      if (!body.projectSettings.length) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Нужно выбрать хотя бы один проект');
+      const seen = new Set();
+      settings = body.projectSettings.map((item) => {
+        const projectId = id(owned ?? item?.projectId, 'projectId');
+        if (seen.has(projectId)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Проект указан несколько раз');
+        seen.add(projectId);
+        assertProject(context, projectId);
+        const currentProject = current.projectSettings?.find((value) => String(value.projectId) === projectId) ?? {};
+        const active = item?.active === undefined ? Boolean(currentProject.active) : Boolean(item.active);
+        const rawDirectionIds = item?.directionIds === undefined ? (currentProject.directions ?? []).map((direction) => direction.id) : item.directionIds;
+        if (!Array.isArray(rawDirectionIds)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректные направления преподавателя');
+        const directionIds = rawDirectionIds.map((value) => id(value, 'directionIds'));
+        if (active && !directionIds.length) throw new ApiProblem(400, 'VALIDATION_ERROR', 'В активном проекте нужно выбрать хотя бы одно направление');
+        return { projectId, active, directionIds };
+      });
+      if (!settings.some((item) => item.active)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Хотя бы один проект преподавателя должен быть активен');
+    } else {
+      const projectId = id(owned ?? body.projectId ?? body.projectIds?.[0] ?? current.projectSettings?.[0]?.projectId, 'projectId');
+      assertProject(context, projectId);
+      const currentProject = current.projectSettings?.find((item) => String(item.projectId) === projectId) ?? {};
+      const directionIds = body.directionIds === undefined ? (currentProject.directions ?? []).map((item) => item.id) : body.directionIds.map((value) => id(value, 'directionIds'));
+      if (!directionIds?.length) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Нужно выбрать хотя бы одно направление');
+      settings = [{ projectId, active: body.active === undefined ? (currentProject.active ?? true) : Boolean(body.active), directionIds }];
+    }
+
+    for (const setting of settings) {
+      await assertIds(connection, 'projects', [setting.projectId], 'projectId');
+      await assertIds(connection, 'directions', setting.directionIds, 'directionIds');
+    }
+
     if (teacherId) {
       const nextName = body.name === undefined ? current.name : text(body.name, 'name');
       await connection.query('UPDATE teachers SET full_name=:name,phone=:phone WHERE id=:id', { id: teacherId, name: nextName, phone: body.phone === undefined ? current.phone : nullable(body.phone) });
       await connection.query('UPDATE users u JOIN teachers t ON t.user_id=u.id SET u.display_name=:name WHERE t.id=:id', { id: teacherId, name: nextName });
     }
-    else { const [result] = await connection.query('INSERT INTO teachers (full_name,phone,active,created_by_user_id) VALUES (:name,:phone,TRUE,:actorId)', { name: text(body.name, 'name'), phone: nullable(body.phone), actorId: context.userId ?? null }); teacherId = result.insertId; }
-    const projectActive = body.active === undefined ? (currentProject.active ?? true) : Boolean(body.active);
-    if (!projectActive) {
-      const [groups] = await connection.query(`SELECT id FROM study_groups WHERE default_teacher_id=:teacherId
-        AND project_id=:projectId AND active=TRUE AND deleted_at IS NULL LIMIT 1`, { teacherId, projectId });
-      if (groups.length) throw new ApiProblem(409, 'TEACHER_PROJECT_IN_USE', 'Нельзя сделать преподавателя неактивным, пока он назначен в активные группы');
+    else {
+      const [result] = await connection.query('INSERT INTO teachers (full_name,phone,active,created_by_user_id) VALUES (:name,:phone,TRUE,:actorId)', {
+        name: text(body.name, 'name'), phone: nullable(body.phone), actorId: context.userId ?? null,
+      });
+      teacherId = result.insertId;
     }
-    await connection.query(`INSERT INTO teacher_projects(teacher_id,project_id,active) VALUES (:teacherId,:projectId,:active)
-      ON DUPLICATE KEY UPDATE active=VALUES(active)`, { teacherId, projectId, active: projectActive });
-    await connection.query('DELETE FROM teacher_project_directions WHERE teacher_id=:teacherId AND project_id=:projectId', { teacherId, projectId });
-    for (const directionId of directionIds) await connection.query(`INSERT INTO teacher_project_directions
-      (teacher_id,project_id,direction_id) VALUES (:teacherId,:projectId,:directionId)`, { teacherId, projectId, directionId });
+
+    for (const setting of settings) {
+      if (!setting.active) {
+        const [groups] = await connection.query(`SELECT id FROM study_groups WHERE default_teacher_id=:teacherId
+          AND project_id=:projectId AND active=TRUE AND deleted_at IS NULL LIMIT 1`, { teacherId, projectId: setting.projectId });
+        if (groups.length) throw new ApiProblem(409, 'TEACHER_PROJECT_IN_USE', 'Нельзя сделать преподавателя неактивным, пока он назначен в активные группы');
+      }
+    }
+    for (const setting of settings) {
+      await connection.query(`INSERT INTO teacher_projects(teacher_id,project_id,active) VALUES (:teacherId,:projectId,:active)
+        ON DUPLICATE KEY UPDATE active=VALUES(active)`, { teacherId, projectId: setting.projectId, active: setting.active });
+      await connection.query('DELETE FROM teacher_project_directions WHERE teacher_id=:teacherId AND project_id=:projectId', {
+        teacherId, projectId: setting.projectId,
+      });
+      for (const directionId of setting.directionIds) await connection.query(`INSERT INTO teacher_project_directions
+        (teacher_id,project_id,direction_id) VALUES (:teacherId,:projectId,:directionId)`, {
+        teacherId, projectId: setting.projectId, directionId,
+      });
+    }
     return teacherId;
   }
   async function createTeacher(body, context = {}) { try { const teacherId = await inTransaction(pool, (connection) => writeTeacher(connection, null, body, {}, context)); return get('teachers', teacherId, context); } catch (error) { throw mysqlError(error); } }
