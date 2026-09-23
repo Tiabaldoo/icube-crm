@@ -522,6 +522,15 @@ async function saveTeacher(resourceId, returnToGroup) {
       && (setting.directionIds.length !== setting.names.length || !setting.names.length))) {
       return window.alert('Для активного или неактивного проекта выберите хотя бы одно направление');
     }
+    if (resourceId && legacy.state.role === 'partner') {
+      const teacher = legacy.state.teachers.find((item) => item.id === Number(resourceId));
+      const removesExistingProject = projectSettings.some((setting) => {
+        const previous = teacher?.projectSettings?.find((item) => String(item.projectId) === String(setting.projectId));
+        const previousStatus = previous?.status ?? (previous ? (previous.active === false ? 'inactive' : 'active') : 'none');
+        return previousStatus !== 'none' && setting.status === 'none';
+      });
+      if (removesExistingProject && !window.confirm('Преподаватель будет удалён из вашего проекта и исчезнет из списка преподавателей. Продолжить?')) return;
+    }
     const saved = resourceId ? await api.update('teachers', resourceId, body) : await api.create('teachers', body);
     await reload({ render: false });
     if (returnToGroup) { legacy.state.pendingGroupDraft = { ...(legacy.state.pendingGroupDraft ?? {}), teacherId: saved.id }; window.groupForm(legacy.state.pendingGroupDraft.id, legacy.state.pendingGroupDraft); }
@@ -1329,7 +1338,6 @@ function installDeleteButton(formName, resource, label) {
 
 function installDeletionUi() {
   installDeleteButton('siteForm', 'sites', 'площадку');
-  installDeleteButton('teacherForm', 'teachers', 'преподавателя');
   installDeleteButton('groupForm', 'groups', 'группу');
   const originalSites = window.sites;
   if (typeof originalSites === 'function') {
