@@ -3,6 +3,7 @@ import { ApiProblem } from './catalog.mjs';
 import { lessonUnits } from './lesson-rules.mjs';
 import { normalizeMoney } from './payments.mjs';
 import { assertProjectScope } from './project-scope.mjs';
+import { businessDate } from '../../src/shared/business-time.mjs';
 
 const identifier = (value, field = 'id') => {
   const result = String(value ?? '').trim();
@@ -31,6 +32,7 @@ export function createEnrollmentChanges(pool, balanceTransfers) {
     }
     const requestedPrice = body.individualPrice === undefined || body.individualPrice === '' || body.individualPrice == null
       ? null : normalizeMoney(body.individualPrice, 'individualPrice');
+    const operationDate = businessDate();
 
     try {
       return await inTransaction(pool, async (connection) => {
@@ -91,11 +93,12 @@ export function createEnrollmentChanges(pool, balanceTransfers) {
         const [membershipRows] = await connection.query(`SELECT id,group_id FROM group_memberships
           WHERE enrollment_id=:id AND ended_on IS NULL ORDER BY started_on DESC,id DESC LIMIT 1 FOR UPDATE`, { id: sourceEnrollmentId });
         const sourceGroupId = membershipRows[0]?.group_id ?? null;
-        await connection.query(`UPDATE child_enrollments SET status='finished',ended_on=CURDATE(),
+        await connection.query(`UPDATE child_enrollments SET status='finished',ended_on=GREATEST(:businessDate,started_on),
           superseded_at=IF(:sameDirection,NOW(6),superseded_at) WHERE id=:id`, {
-          id: sourceEnrollmentId, sameDirection,
+          id: sourceEnrollmentId, sameDirection, businessDate: operationDate,
         });
-        await connection.query('UPDATE group_memberships SET ended_on=CURDATE() WHERE enrollment_id=:id AND ended_on IS NULL', { id: sourceEnrollmentId });
+        await connection.query(`UPDATE group_memberships SET ended_on=GREATEST(:businessDate,started_on)
+          WHERE enrollment_id=:id AND ended_on IS NULL`, { id: sourceEnrollmentId, businessDate: operationDate });
         if (source.status !== 'finished') {
           await connection.query(`INSERT INTO enrollment_status_history
             (enrollment_id,old_status,new_status,direction_id_snapshot,group_id_snapshot,project_id_snapshot,changed_by_user_id)
@@ -127,23 +130,28 @@ export function createEnrollmentChanges(pool, balanceTransfers) {
               VALUES ('enrollment',:id,:price,NOW(6),:actorId)`, { id: target.id, price: requestedPrice, actorId: context.userId ?? null });
           }
           if (String(targetMemberships[0]?.group_id ?? '') !== String(targetGroupId ?? '')) {
-            await connection.query('UPDATE group_memberships SET ended_on=CURDATE() WHERE enrollment_id=:id AND ended_on IS NULL', { id: target.id });
+            await connection.query(`UPDATE group_memberships SET ended_on=GREATEST(:businessDate,started_on)
+              WHERE enrollment_id=:id AND ended_on IS NULL`, { id: target.id, businessDate: operationDate });
             if (targetGroupId != null) await connection.query(`INSERT INTO group_memberships
-              (enrollment_id,group_id,started_on) VALUES (:id,:groupId,CURDATE())`, { id: target.id, groupId: targetGroupId });
+              (enrollment_id,group_id,started_on) VALUES (:id,:groupId,:businessDate)`, {
+              id: target.id, groupId: targetGroupId, businessDate: operationDate,
+            });
           }
         } else {
           const [inserted] = await connection.query(`INSERT INTO child_enrollments
             (child_id,direction_id,project_id,status,individual_price,started_on)
-            VALUES (:childId,:directionId,:projectId,:status,:price,CURDATE())`, {
+            VALUES (:childId,:directionId,:projectId,:status,:price,:businessDate)`, {
             childId: source.child_id, directionId: targetDirectionId, projectId: source.project_id,
-            status: targetStatus, price: requestedPrice,
+            status: targetStatus, price: requestedPrice, businessDate: operationDate,
           });
           target = { id: inserted.insertId, balance_lessons: '0.00000000' };
           if (requestedPrice != null) await connection.query(`INSERT INTO price_versions
             (scope_type,enrollment_id,price,valid_from,created_by_user_id)
             VALUES ('enrollment',:id,:price,NOW(6),:actorId)`, { id: target.id, price: requestedPrice, actorId: context.userId ?? null });
           if (targetGroupId != null) await connection.query(`INSERT INTO group_memberships
-            (enrollment_id,group_id,started_on) VALUES (:id,:groupId,CURDATE())`, { id: target.id, groupId: targetGroupId });
+            (enrollment_id,group_id,started_on) VALUES (:id,:groupId,:businessDate)`, {
+            id: target.id, groupId: targetGroupId, businessDate: operationDate,
+          });
         }
 
         let transfer = null;

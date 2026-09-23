@@ -7,11 +7,11 @@ import { createEnrollmentChanges } from '../backend/src/enrollment-changes.mjs';
 
 const clone = (value) => structuredClone(value);
 
-function fixture({ existingTarget = false, failTransfer = false } = {}) {
+function fixture({ existingTarget = false, failTransfer = false, sourceStartedOn = '2026-01-01', membershipStartedOn = '2026-01-01' } = {}) {
   const state = {
     enrollments: [{ id: 9, child_id: 8, direction_id: 1, project_id: 1, status: 'active', individual_price: null,
-      balance_lessons: '4.00000000', superseded_at: null, ended_on: null }],
-    memberships: [{ id: 31, enrollment_id: 9, group_id: 41, ended_on: null }],
+      balance_lessons: '4.00000000', superseded_at: null, started_on: sourceStartedOn, ended_on: null }],
+    memberships: [{ id: 31, enrollment_id: 9, group_id: 41, started_on: membershipStartedOn, ended_on: null }],
     lots: [{ id: 60, enrollment_id: 9, remaining_lessons: '4.00000000', original_lessons: '4.00000000', unit_price: '1025.00', source_balance_entry_id: 50 }],
     transfers: [], entries: [], lotChanges: [], nextEnrollmentId: 10, nextTransferId: 70, nextEntryId: 80, nextLotId: 61,
     commits: 0, rollbacks: 0, calls: [], historical: { paymentPrice: '1025.00', attendancePrice: '1025.00' },
@@ -44,10 +44,13 @@ function fixture({ existingTarget = false, failTransfer = false } = {}) {
     }
     if (sql.includes('FROM group_memberships') && sql.includes('FOR UPDATE')) return [[...state.memberships.filter((item) => String(item.enrollment_id) === String(params.id) && item.ended_on == null).slice(-1).map(clone)]];
     if (sql.startsWith("UPDATE child_enrollments SET status='finished'")) {
-      const item = enrollment(params.id); item.status = 'finished'; item.ended_on = '2026-09-23'; if (params.sameDirection) item.superseded_at = '2026-09-23 12:00:00.000000'; return [{ affectedRows: 1 }];
+      const item = enrollment(params.id); item.status = 'finished'; item.ended_on = item.started_on > params.businessDate ? item.started_on : params.businessDate;
+      if (params.sameDirection) item.superseded_at = `${params.businessDate} 12:00:00.000000`; return [{ affectedRows: 1 }];
     }
-    if (sql === 'UPDATE group_memberships SET ended_on=CURDATE() WHERE enrollment_id=:id AND ended_on IS NULL') {
-      for (const item of state.memberships) if (String(item.enrollment_id) === String(params.id) && item.ended_on == null) item.ended_on = '2026-09-23';
+    if (sql.startsWith('UPDATE group_memberships SET ended_on=GREATEST(')) {
+      for (const item of state.memberships) if (String(item.enrollment_id) === String(params.id) && item.ended_on == null) {
+        item.ended_on = item.started_on > params.businessDate ? item.started_on : params.businessDate;
+      }
       return [{ affectedRows: 1 }];
     }
     if (sql.startsWith('INSERT INTO enrollment_status_history')) return [{ insertId: 1 }];
@@ -58,11 +61,13 @@ function fixture({ existingTarget = false, failTransfer = false } = {}) {
     if (sql.startsWith('INSERT INTO price_versions')) return [{ insertId: 1 }];
     if (sql.startsWith('INSERT INTO child_enrollments')) {
       const item = { id: state.nextEnrollmentId++, child_id: params.childId, direction_id: Number(params.directionId), project_id: params.projectId,
-        status: params.status, individual_price: params.price, balance_lessons: '0.00000000', superseded_at: null, ended_on: null };
+        status: params.status, individual_price: params.price, balance_lessons: '0.00000000', superseded_at: null,
+        started_on: params.businessDate, ended_on: null };
       state.enrollments.push(item); return [{ insertId: item.id }];
     }
     if (sql.startsWith('INSERT INTO group_memberships')) {
-      state.memberships.push({ id: state.memberships.length + 40, enrollment_id: Number(params.id), group_id: Number(params.groupId), ended_on: null }); return [{ insertId: 1 }];
+      state.memberships.push({ id: state.memberships.length + 40, enrollment_id: Number(params.id), group_id: Number(params.groupId),
+        started_on: params.businessDate, ended_on: null }); return [{ insertId: 1 }];
     }
     if (sql.startsWith('SELECT id,project_id FROM child_enrollments')) return [[clone(enrollment(params.sourceId)), clone(enrollment(params.targetId))]];
     if (sql.includes('FROM balance_entries be JOIN balance_transfers bt')) {
@@ -121,6 +126,20 @@ test('смена направления атомарно переносит 4 ×
   assert.equal(state.calls.some(({ sql }) => /UPDATE (?:payments|attendances)/.test(sql)), false);
 });
 
+test('смена направления закрывает future enrollment и membership не раньше их started_on', async () => {
+  const { state, service } = fixture({ sourceStartedOn: '2099-10-10', membershipStartedOn: '2099-11-11' });
+  const result = await service.changeDirection(9,
+    { directionId: 2, groupId: 42, status: 'active', individualPrice: null }, context('future-direction'));
+  const source = state.enrollments.find((item) => item.id === 9);
+  const membership = state.memberships.find((item) => item.id === 31);
+  const target = state.enrollments.find((item) => String(item.id) === result.targetEnrollmentId);
+  assert.equal(source.ended_on, '2099-10-10');
+  assert.equal(membership.ended_on, '2099-11-11');
+  assert.ok(source.ended_on >= source.started_on);
+  assert.ok(membership.ended_on >= membership.started_on);
+  assert.equal(target.balance_lessons, '3.64444444');
+});
+
 test('повтор смены направления не создаёт target и transfer второй раз', async () => {
   const { state, service } = fixture(); const body = { directionId: 2, status: 'active', individualPrice: null };
   const first = await service.changeDirection(9, body, context('same-command'));
@@ -151,6 +170,19 @@ test('индивидуальная цена 2900 / 4 сохраняет 4100 ₽
   const ordinary = await service.changeDirection(repriced.id, { directionId: 1, status: 'active', individualPrice: null }, context('price-standard'));
   assert.equal(state.enrollments.find((item) => String(item.id) === ordinary.targetEnrollmentId).balance_lessons, '4.00000000');
   assert.deepEqual(state.historical, { paymentPrice: '1025.00', attendancePrice: '1025.00' }); assert.equal(state.transfers.length, 2);
+});
+
+test('изменение индивидуальной цены закрывает future enrollment и membership корректной датой', async () => {
+  const { state, service } = fixture({ sourceStartedOn: '2099-10-10', membershipStartedOn: '2099-11-11' });
+  const result = await service.changeDirection(9,
+    { directionId: 1, groupId: 41, status: 'active', individualPrice: '725.00' }, context('future-price'));
+  const source = state.enrollments.find((item) => item.id === 9);
+  const membership = state.memberships.find((item) => item.id === 31);
+  assert.equal(source.ended_on, '2099-10-10');
+  assert.equal(membership.ended_on, '2099-11-11');
+  assert.ok(source.ended_on >= source.started_on);
+  assert.ok(membership.ended_on >= membership.started_on);
+  assert.equal(state.enrollments.find((item) => String(item.id) === result.targetEnrollmentId).balance_lessons, '5.65517241');
 });
 
 test('frontend отправляет смену направления и цены одним атомарным запросом', async () => {
