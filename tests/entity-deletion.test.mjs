@@ -244,3 +244,59 @@ test('удаление одного enrollment не затрагивает др�
   assert.deepEqual(enrollmentDeletes, [{ sql: 'DELETE FROM child_enrollments WHERE id=:id', params: { id: '10' } }]);
   assert.equal(deletes.some(({ sql }) => sql.includes('child_id')), false);
 });
+
+
+test('teacher CRM access does not block deletion; sessions are revoked and teacher-only user is disabled', async () => {
+  const state = { userId: 40, roles: [{ id: 2, code: 'teacher' }], userRoles: [{ user_id: 40, role_id: 2 }], sessionRevoked: false, teacherDeleted: false, userDeleted: false };
+  const service = createDeletionService(fakePool(async (sql, params = {}) => {
+    if (sql.startsWith('SELECT id FROM teachers WHERE')) return [{ id: 9 }];
+    if (sql.includes('FROM study_groups WHERE default_teacher_id')) return [{ groupCount: 0, lessons: 0, salaryRateVersions: 0, salaryAccruals: 0 }];
+    if (sql.startsWith('SELECT user_id FROM teachers')) return [{ user_id: state.userId }];
+    if (sql === "SELECT id FROM roles WHERE code='teacher' LIMIT 1") return [{ id: 2 }];
+    if (sql.startsWith('DELETE FROM user_roles')) { state.userRoles = []; return { affectedRows: 1 }; }
+    if (sql.startsWith('UPDATE auth_sessions SET revoked_at=')) { state.sessionRevoked = true; return { affectedRows: 1 }; }
+    if (sql.startsWith('SELECT COUNT(*) role_count FROM user_roles')) return [{ role_count: state.userRoles.length }];
+    if (sql.startsWith("UPDATE users SET status='blocked'")) { state.userDeleted = true; return { affectedRows: 1 }; }
+    if (sql.startsWith('DELETE FROM teacher_project_directions') || sql.startsWith('DELETE FROM teacher_directions') || sql.startsWith('DELETE FROM teacher_projects')) return { affectedRows: 0 };
+    if (sql.startsWith('DELETE FROM teachers')) { state.teacherDeleted = true; return { affectedRows: 1 }; }
+    throw new Error(`Unexpected SQL: ${sql} ${JSON.stringify(params)}`);
+  }));
+  await service.deleteTeacher(9);
+  assert.equal(state.sessionRevoked, true);
+  assert.equal(state.userDeleted, true);
+  assert.equal(state.teacherDeleted, true);
+});
+
+test('deleting teacher removes only teacher role when user has another role', async () => {
+  const state = { userRoles: [{ user_id: 40, role_id: 2 }, { user_id: 40, role_id: 7 }], revoked: false, tokenBumped: false, userSoftDeleted: false };
+  const service = createDeletionService(fakePool(async (sql) => {
+    if (sql.startsWith('SELECT id FROM teachers WHERE')) return [{ id: 9 }];
+    if (sql.includes('FROM study_groups WHERE default_teacher_id')) return [{ groupCount: 0, lessons: 0, salaryRateVersions: 0, salaryAccruals: 0 }];
+    if (sql.startsWith('SELECT user_id FROM teachers')) return [{ user_id: 40 }];
+    if (sql === "SELECT id FROM roles WHERE code='teacher' LIMIT 1") return [{ id: 2 }];
+    if (sql.startsWith('DELETE FROM user_roles')) { state.userRoles = state.userRoles.filter((item) => item.role_id !== 2); return { affectedRows: 1 }; }
+    if (sql.startsWith('UPDATE auth_sessions SET revoked_at=')) { state.revoked = true; return { affectedRows: 1 }; }
+    if (sql.startsWith('SELECT COUNT(*) role_count FROM user_roles')) return [{ role_count: state.userRoles.length }];
+    if (sql.startsWith('UPDATE users SET token_version=')) { state.tokenBumped = true; return { affectedRows: 1 }; }
+    if (sql.startsWith("UPDATE users SET status='blocked'")) { state.userSoftDeleted = true; return { affectedRows: 1 }; }
+    if (sql.startsWith('DELETE FROM teacher_project_directions') || sql.startsWith('DELETE FROM teacher_directions') || sql.startsWith('DELETE FROM teacher_projects') || sql.startsWith('DELETE FROM teachers')) return { affectedRows: 1 };
+    throw new Error(`Unexpected SQL: ${sql}`);
+  }));
+  await service.deleteTeacher(9);
+  assert.deepEqual(state.userRoles, [{ user_id: 40, role_id: 7 }]);
+  assert.equal(state.revoked, true);
+  assert.equal(state.tokenBumped, true);
+  assert.equal(state.userSoftDeleted, false);
+});
+
+test('teacher with business history still cannot be deleted', async () => {
+  let deleted = false;
+  const service = createDeletionService(fakePool(async (sql) => {
+    if (sql.startsWith('SELECT id FROM teachers WHERE')) return [{ id: 9 }];
+    if (sql.includes('FROM study_groups WHERE default_teacher_id')) return [{ groupCount: 1, lessons: 0, salaryRateVersions: 0, salaryAccruals: 0 }];
+    if (sql.startsWith('DELETE FROM teachers')) { deleted = true; return { affectedRows: 1 }; }
+    throw new Error(`Unexpected SQL: ${sql}`);
+  }));
+  await assert.rejects(service.deleteTeacher(9), { status: 409, code: 'TEACHER_HAS_DEPENDENCIES' });
+  assert.equal(deleted, false);
+});

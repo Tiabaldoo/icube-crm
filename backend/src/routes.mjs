@@ -162,10 +162,16 @@ export function createApiRouter(pool, {
   router.patch('/enrollments/:id', requirePermission('enrollments:write'), run((request) => catalog.updateEnrollment(request.params.id, request.body, request.auth)));
   router.post('/enrollments/:id/project-transfer', requirePermission('enrollments:write'), run((request) => projectTransfers.create(request.params.id, request.body, request.auth), 201));
   router.delete('/enrollments/:id', requirePermission('enrollments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.params.id, request.auth); return deletions.deleteEnrollment(request.params.id); }, 204));
-  router.get('/teachers/:id/access', requirePermission('*'), run((request) => authService.getTeacherAccess(request.params.id)));
-  router.post('/teachers/:id/access', requirePermission('*'), run((request) => authService.createTeacherAccess(request.params.id, request.body, request.auth.userId), 201));
-  router.post('/teachers/:id/access/reset-password', requirePermission('*'), run((request) => authService.resetTeacherPassword(request.params.id, request.body)));
-  router.delete('/teachers/:id/access', requirePermission('*'), run((request) => authService.disableTeacherAccess(request.params.id)));
+  const assertTeacherAccessScope = async (request) => {
+    const roles = request.auth?.roles ?? [];
+    if (roles.includes('director')) return;
+    if (roles.includes('partner')) { await assertOwned(pool, 'teachers', request.params.id, request.auth); return; }
+    throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав для управления доступом преподавателя');
+  };
+  router.get('/teachers/:id/access', requirePermission('teachers:read'), run(async (request) => { await assertTeacherAccessScope(request); return authService.getTeacherAccess(request.params.id); }));
+  router.post('/teachers/:id/access', requirePermission('teachers:write'), run(async (request) => { await assertTeacherAccessScope(request); return authService.createTeacherAccess(request.params.id, request.body, request.auth.userId); }, 201));
+  router.post('/teachers/:id/access/reset-password', requirePermission('teachers:write'), run(async (request) => { await assertTeacherAccessScope(request); return authService.resetTeacherPassword(request.params.id, request.body); }));
+  router.delete('/teachers/:id/access', requirePermission('teachers:write'), run(async (request) => { await assertTeacherAccessScope(request); return authService.disableTeacherAccess(request.params.id); }));
 
   const projectFilters = (request) => ({ ...request.query, ...(partnerProjectId(request.auth) ? { projectId: partnerProjectId(request.auth) } : {}) });
   router.get('/payments', requirePermission('payments:read'), run((request) => payments.list(projectFilters(request))));

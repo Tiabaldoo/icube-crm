@@ -54,18 +54,31 @@ export function createDeletionService(pool) {
       (SELECT COUNT(*) FROM study_groups WHERE default_teacher_id=:id) groupCount,
       (SELECT COUNT(*) FROM lessons WHERE deleted_at IS NULL AND (planned_teacher_id=:id OR actual_teacher_id=:id)) lessons,
       (SELECT COUNT(*) FROM salary_rate_versions WHERE teacher_id=:id) salaryRateVersions,
-      (SELECT COUNT(*) FROM salary_accruals WHERE teacher_id=:id) salaryAccruals,
-      (SELECT COUNT(*) FROM teachers WHERE id=:id AND user_id IS NOT NULL) userAccounts`, { id: teacherId });
-    if (hasAny(dependencies)) throw new ApiProblem(409, 'TEACHER_HAS_DEPENDENCIES', 'Нельзя удалить преподавателя, потому что он назначен в группы, связан с аккаунтом или фигурирует в занятиях/истории.', dependencies);
+      (SELECT COUNT(*) FROM salary_accruals WHERE teacher_id=:id) salaryAccruals`, { id: teacherId });
+    if (hasAny(dependencies)) throw new ApiProblem(409, 'TEACHER_HAS_DEPENDENCIES', 'Нельзя удалить преподавателя, потому что есть связанные группы, занятия или история начислений.', dependencies);
     try {
       await inTransaction(pool, async (connection) => {
+        const [teachers] = await connection.query('SELECT user_id FROM teachers WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: teacherId });
+        const userId = teachers[0]?.user_id ?? null;
         await connection.query('DELETE FROM teacher_project_directions WHERE teacher_id=:id', { id: teacherId });
         await connection.query('DELETE FROM teacher_directions WHERE teacher_id=:id', { id: teacherId });
         await connection.query('DELETE FROM teacher_projects WHERE teacher_id=:id', { id: teacherId });
+        if (userId != null) {
+          const [teacherRoles] = await connection.query("SELECT id FROM roles WHERE code='teacher' LIMIT 1");
+          const teacherRoleId = teacherRoles[0]?.id ?? null;
+          if (teacherRoleId != null) await connection.query('DELETE FROM user_roles WHERE user_id=:userId AND role_id=:roleId', { userId, roleId: teacherRoleId });
+          await connection.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW(6)) WHERE user_id=:userId', { userId });
+          const [remainingRoles] = await connection.query('SELECT COUNT(*) role_count FROM user_roles WHERE user_id=:userId', { userId });
+          if (Number(remainingRoles[0]?.role_count ?? 0) > 0) {
+            await connection.query('UPDATE users SET token_version=token_version+1 WHERE id=:userId', { userId });
+          } else {
+            await connection.query("UPDATE users SET status='blocked',deleted_at=COALESCE(deleted_at,NOW(6)),token_version=token_version+1 WHERE id=:userId", { userId });
+          }
+        }
         await connection.query('DELETE FROM teachers WHERE id=:id', { id: teacherId });
       });
     } catch (error) {
-      if (error?.code === 'ER_ROW_IS_REFERENCED_2') throw new ApiProblem(409, 'TEACHER_HAS_DEPENDENCIES', 'Нельзя удалить преподавателя, потому что он назначен в группы или фигурирует в занятиях/истории.');
+      if (error?.code === 'ER_ROW_IS_REFERENCED_2') throw new ApiProblem(409, 'TEACHER_HAS_DEPENDENCIES', 'Нельзя удалить преподавателя, потому что есть связанные группы, занятия или история начислений.');
       throw error;
     }
     return null;

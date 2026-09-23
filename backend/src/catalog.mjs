@@ -114,7 +114,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       return { id: rowId(row), name: row.full_name, phone: row.phone,
         active: selected ? selected.active : settings.some((item) => item.active),
         directions: selected?.directions ?? [...union.values()], projectIds: settings.map((item) => item.projectId), projectSettings: settings,
-        access: projectId || row.access_login == null ? null : { login: row.access_login, status: row.access_status } };
+        access: row.access_login == null ? null : { login: row.access_login, status: row.access_status } };
     });
   }
 

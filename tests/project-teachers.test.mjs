@@ -203,3 +203,21 @@ test('teacher form renders project blocks and save sends projectSettings while g
   assert.match(backendSource, /tp\.project_id=:projectId AND tp\.active=TRUE/);
   assert.match(backendSource, /teacher_project_directions[\s\S]*project_id=:projectId AND direction_id=:directionId/);
 });
+
+
+test('partner teacher list exposes common access but only own projectSettings', async () => {
+  const db = pool(async (sql, params = {}) => {
+    if (sql.includes('FROM teachers t LEFT JOIN users u')) return [[{ id: 4, full_name: 'Иванов', phone: '+7', active: 1, access_login: 'teacher@example.com', access_status: 'blocked' }]];
+    if (sql.includes('FROM teacher_project_directions tpd')) return [[
+      { teacher_id: 4, project_id: 1, id: 10, name: 'Робототехника' },
+      { teacher_id: 4, project_id: 2, id: 11, name: 'Программирование' },
+    ]];
+    if (sql === 'SELECT teacher_id,project_id,active FROM teacher_projects ORDER BY project_id') return [[
+      { teacher_id: 4, project_id: 1, active: 1 }, { teacher_id: 4, project_id: 2, active: 1 },
+    ]];
+    throw new Error(`Unexpected SQL: ${sql} ${JSON.stringify(params)}`);
+  });
+  const [teacher] = await createMysqlCatalog(db).list('teachers', { roles: ['partner'], projectIds: ['2'] });
+  assert.deepEqual(teacher.access, { login: 'teacher@example.com', status: 'blocked' });
+  assert.deepEqual(teacher.projectSettings.map((item) => item.projectId), ['2']);
+});
