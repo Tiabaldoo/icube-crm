@@ -1585,7 +1585,7 @@ function teacherNameForShell() {
 }
 
 function installAuthenticatedShells() {
-  const pushBell = () => `<button class="push-bell-button" type="button" data-push-bell onclick="window.icubePush?.togglePanel(this)" aria-label="Системные уведомления" title="Системные уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span></button>`;
+  const pushBell = () => `<button class="push-bell-button" type="button" data-push-bell onclick="const popover=()=>document.querySelector('.push-popover')?'yes':'no';const push=window.icubePush;const hasToggle=!!(push&&typeof push.togglePanel==='function');window.alert('bell tap\\nicubePush: '+(push?'yes':'no')+'\\ntogglePanel: '+(hasToggle?'yes':'no')+'\\npopover before: '+popover());if(hasToggle){let error='';try{push.togglePanel(this)}catch(err){error=err?.message||String(err)}window.alert('togglePanel called: '+(error?'error — '+error:'yes')+'\\npopover after: '+popover())}" aria-label="Системные уведомления" title="Системные уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span></button>`;
   const originalShell = window.shell;
   if (typeof originalShell === 'function') {
     window.shell = function (...args) {
