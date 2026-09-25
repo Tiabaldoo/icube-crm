@@ -713,9 +713,9 @@ test('подпись extra использует текущий active enrollment
     MutationObserver:class{observe(){} disconnect(){}},
   });
   context.window=context; context.globalThis=context;
-  vm.runInContext(source, context, { filename:'crm-ui.js' });
+  vm.runInContext(`${source}\n;globalThis.__completedExtraProbe={state,studentCheck};`, context, { filename:'crm-ui.js' });
 
-  context.state.groups=[{id:4,direction:'Робототехника',projectId:2,project:'iCubeRobots'}];
+  context.__completedExtraProbe.state.groups=[{id:4,direction:'Робототехника',projectId:2,project:'iCubeRobots'}];
   const lesson={id:90,groupId:4,projectId:2,done:true,photos:{},attendance:{},trialChildren:{},extras:[{childId:8,trial:false,present:true}]};
   const sameGroupChild={id:8,name:'Ребёнок',enrollments:[
     {id:10,projectId:2,direction:'Робототехника',status:'Закончил',groupId:99},
@@ -730,7 +730,8 @@ test('подпись extra использует текущий active enrollment
     {id:21,projectId:2,direction:'Робототехника',status:'Активный',groupId:77},
   ]};
 
-  assert.doesNotMatch(context.studentCheck(sameGroupChild,lesson,true,{childId:8,present:true}), /из другой группы/);
-  assert.match(context.studentCheck(otherGroupChild,lesson,true,{childId:9,present:true}), /из другой группы/);
-  assert.match(context.studentCheck(foreignProjectChild,lesson,true,{childId:10,present:true}), /из другой группы/);
+  const studentCheck=context.__completedExtraProbe.studentCheck;
+  assert.doesNotMatch(studentCheck(sameGroupChild,lesson,true,{childId:8,present:true}), /из другой группы/);
+  assert.match(studentCheck(otherGroupChild,lesson,true,{childId:9,present:true}), /из другой группы/);
+  assert.match(studentCheck(foreignProjectChild,lesson,true,{childId:10,present:true}), /из другой группы/);
 });
