@@ -6,7 +6,12 @@ const state = { config: null, status: 'loading', message: 'Проверяем…
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 
 function supported() {
-  return Boolean(globalThis.navigator?.serviceWorker && globalThis.PushManager && globalThis.Notification);
+  return Boolean(
+    globalThis.navigator?.serviceWorker
+      && globalThis.PushManager
+      && globalThis.Notification
+      && typeof globalThis.Notification.requestPermission === 'function'
+  );
 }
 function installedStandalone() {
   return Boolean(globalThis.matchMedia?.('(display-mode: standalone)').matches || globalThis.navigator?.standalone === true);
@@ -72,20 +77,57 @@ export async function refreshPushState() {
 }
 
 export async function enablePush() {
-  const config = state.config ?? await serverConfig();
-  if (!config.enabled || !supported()) return refreshPushState();
-  if (Notification.permission === 'denied') return refreshPushState();
-  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
-  if (permission !== 'granted') return refreshPushState();
-  const reg = await registration();
-  let subscription = await reg.pushManager.getSubscription();
-  if (!subscription) subscription = await reg.pushManager.subscribe({
-    userVisibleOnly: true, applicationServerKey: publicKeyBytes(config.publicKey),
-  });
-  setDeviceDisabled(false);
-  await bind(subscription);
-  state.subscription = subscription;
-  return refreshPushState();
+  if (!supported()) {
+    state.status = 'unsupported';
+    state.message = 'Этот браузер не поддерживает системные уведомления.';
+    return { ...state };
+  }
+  if (Notification.permission === 'denied') {
+    state.status = 'blocked';
+    state.message = 'Уведомления запрещены в настройках браузера.';
+    return { ...state };
+  }
+
+  let permission;
+  try {
+    permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  } catch {
+    state.status = 'available';
+    state.message = 'Не удалось включить уведомления. Проверьте разрешения браузера и попробуйте ещё раз.';
+    return { ...state };
+  }
+  if (permission === 'denied') {
+    state.status = 'blocked';
+    state.message = 'Уведомления запрещены в настройках браузера.';
+    return { ...state };
+  }
+  if (permission !== 'granted') {
+    state.status = 'available';
+    state.message = 'Разрешение на уведомления не было предоставлено. Проверьте настройки браузера и попробуйте ещё раз.';
+    return { ...state };
+  }
+
+  try {
+    const config = state.config ?? await serverConfig();
+    if (!config.enabled) {
+      state.status = 'unavailable';
+      state.message = 'Web Push сейчас недоступен на сервере.';
+      return { ...state };
+    }
+    const reg = await registration();
+    let subscription = await reg.pushManager.getSubscription();
+    if (!subscription) subscription = await reg.pushManager.subscribe({
+      userVisibleOnly: true, applicationServerKey: publicKeyBytes(config.publicKey),
+    });
+    setDeviceDisabled(false);
+    await bind(subscription);
+    state.subscription = subscription;
+    return refreshPushState();
+  } catch {
+    state.status = 'available';
+    state.message = 'Не удалось включить уведомления. Проверьте разрешения браузера и попробуйте ещё раз.';
+    return { ...state };
+  }
 }
 
 export async function rebindPush(profile) {
