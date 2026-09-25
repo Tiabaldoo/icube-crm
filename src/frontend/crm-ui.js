@@ -8175,8 +8175,15 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         matching.forEach(function(enrollment){
           if(Number(enrollment.groupId)!==Number(group.id)) return;
           const oldGroupId=enrollment.groupId;
+          const hadLiveGroupId=Object.prototype.hasOwnProperty.call(enrollment,'__v146LiveGroupId');
+          const oldLiveGroupId=enrollment.__v146LiveGroupId;
+          enrollment.__v146LiveGroupId=oldGroupId;
           enrollment.groupId=null;
-          restores.push(function(){enrollment.groupId=oldGroupId;});
+          restores.push(function(){
+            enrollment.groupId=oldGroupId;
+            if(hadLiveGroupId) enrollment.__v146LiveGroupId=oldLiveGroupId;
+            else delete enrollment.__v146LiveGroupId;
+          });
         });
       }
     });
@@ -8419,7 +8426,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         if(rankDiff) return rankDiff;
         return Number(b.id||0)-Number(a.id||0);
       })[0]||null;
-      const sameGroup=lessonEnrollment && lessonEnrollment.groupId!=null && Number(lessonEnrollment.groupId)===Number(l.groupId);
+      const currentGroupId=lessonEnrollment && Object.prototype.hasOwnProperty.call(lessonEnrollment,'__v146LiveGroupId')
+        ? lessonEnrollment.__v146LiveGroupId
+        : lessonEnrollment?.groupId;
+      const sameGroup=lessonEnrollment && currentGroupId!=null && Number(currentGroupId)===Number(l.groupId);
       subtitle=ex?.createdByTeacher || c.createdByTeacher
         ? '<div class="muted mini lesson-student-subtitle">добавлен преподавателем</div>'
         : sameGroup ? '' : '<div class="muted mini lesson-student-subtitle">из другой группы</div>';
