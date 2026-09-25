@@ -1,6 +1,10 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 import { createLessonActionQueue, createMemoryLessonActionStore } from '../data/lesson-action-queue.mjs';
 import { businessDate, calendarMonthPeriod } from '../shared/business-time.mjs';
+import {
+  clearTeacherOfflineSnapshot, loadTeacherOfflineSnapshot, restoreTeacherOfflineSnapshot,
+  saveTeacherOfflineSnapshot, teacherSnapshotMatchesProfile,
+} from './offline-teacher-snapshot.mjs';
 
 const legacy = window.icubeLegacy;
 const api = new ApiClient();
@@ -482,10 +486,12 @@ async function reloadTeacher({ render = true } = {}) {
   legacy.state.balanceTransfers = [];
   legacy.state.statistics = null;
   legacy.state.lessons = lessons.map(mapLesson);
-  await reapplyQueuedLessonState();
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
   legacy.state.notifications = [];
   legacy.state.prototypeTeacherId = Number(authProfile.teacherId);
+  legacy.state.offlineBootstrap = false;
+  await saveTeacherOfflineSnapshot(authProfile, legacy.state).catch((error) => console.error('Не удалось обновить offline snapshot преподавателя', error));
+  await reapplyQueuedLessonState();
   if (render) legacy.render();
 }
 
@@ -1078,7 +1084,11 @@ async function sendLessonAction(action) {
 
 async function refreshAfterLessonSync(lessonIds) {
   const selected = currentLesson()?.id;
-  if (selected && lessonIds.some((id) => String(id) === String(selected))) await reloadLesson(selected, legacy.state.page);
+  if (selected && lessonIds.some((id) => String(id) === String(selected))) {
+    await reloadLesson(selected, legacy.state.page);
+    return;
+  }
+  if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) await reloadTeacher({ render: true });
 }
 
 function setLessonSyncStatus(status) {
@@ -1461,11 +1471,17 @@ function applyAuthProfile(profile) {
   if (app) app.style.visibility = 'visible';
 }
 
+async function reconcileOfflineSnapshotIdentity(profile) {
+  const snapshot = await loadTeacherOfflineSnapshot().catch(() => null);
+  if (snapshot && !teacherSnapshotMatchesProfile(snapshot, profile)) await clearTeacherOfflineSnapshot().catch(() => {});
+}
+
 async function loginFromForm() {
   const submit = element('#auth-submit');
   if (submit) submit.disabled = true;
   try {
     const profile = await api.request('/auth/login', { method: 'POST', body: { login: value('#auth-login'), password: value('#auth-password') } });
+    await reconcileOfflineSnapshotIdentity(profile);
     applyAuthProfile(profile);
     if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
     else await reload();
@@ -1481,6 +1497,7 @@ async function loginFromForm() {
 async function logout() {
   try { await api.request('/auth/logout', { method: 'POST' }); }
   catch (error) { if (!(error instanceof ApiError) || error.status !== 401) console.error(error); }
+  await clearTeacherOfflineSnapshot().catch(() => {});
   showLogin();
 }
 
@@ -1522,8 +1539,12 @@ function installAuthenticatedShells() {
     const right = parentRole
       ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
       : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
+    const offline = legacy.state.offlineBootstrap || globalThis.navigator?.onLine === false;
+    const offlineNotice = offline
+      ? '<div class="notice" style="max-width:680px;margin:12px auto 0">Офлайн · изменения будут отправлены после подключения</div>'
+      : '';
     return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>${html(teacherNameForShell())}</b></div><div>${right}</div></div>
-      <div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn ${legacy.state.page === 'teacherToday' ? 'soft' : ''}" onclick="state.page='teacherToday';render()">Сегодня</button><button class="btn ${legacy.state.page === 'teacherCalendar' ? 'soft' : ''}" onclick="state.page='teacherCalendar';render()">Календарь</button></div></div>
+      <div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn ${legacy.state.page === 'teacherToday' ? 'soft' : ''}" onclick="state.page='teacherToday';render()">Сегодня</button><button class="btn ${legacy.state.page === 'teacherCalendar' ? 'soft' : ''}" onclick="state.page='teacherCalendar';render()">Календарь</button></div>${offlineNotice}</div>
       <div class="teacher-content">${content}</div></div>`;
   };
   const originalOpenLesson = window.openLesson;
@@ -1584,20 +1605,92 @@ async function disableTeacherAccess(teacherId) {
   return refreshTeacherAccess(teacherId, () => api.request(`/teachers/${teacherId}/access`, { method: 'DELETE' }));
 }
 
+function showOfflineUnavailable() {
+  authProfile = null;
+  legacy.state.authUser = null;
+  const app = element('#app');
+  if (!app) return;
+  app.style.visibility = 'visible';
+  app.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:20px;background:#f8fafc"><div class="card pad" style="width:min(100%,440px)">
+    <div class="brand" style="color:#111827;margin-bottom:22px"><div class="brand-mark">iC</div><div>iCube CRM</div></div>
+    <h1 style="margin:0 0 8px">Нет подключения</h1>
+    <div class="notice">Для первого входа и загрузки занятий требуется интернет.</div>
+    <button class="btn primary" type="button" style="width:100%;margin-top:18px" onclick="location.reload()">Повторить</button>
+  </div></div>`;
+}
+
+async function restoreColdOfflineTeacher() {
+  const snapshot = await loadTeacherOfflineSnapshot().catch(() => null);
+  if (!snapshot) return null;
+  const profile = restoreTeacherOfflineSnapshot(snapshot, legacy.state);
+  if (!profile) return null;
+  applyAuthProfile(profile);
+  legacy.state.offlineBootstrap = true;
+  await reapplyQueuedLessonState();
+  await lessonActions.publish().catch(() => {});
+  legacy.render();
+  return profile;
+}
+
+async function settleAuthReady(profile) {
+  resolveAuthReady?.(profile);
+  resolveAuthReady = null;
+  return profile;
+}
+
 async function bootstrapAuth() {
+  if (globalThis.navigator?.onLine === false) {
+    const offlineProfile = await restoreColdOfflineTeacher();
+    if (offlineProfile) return settleAuthReady(offlineProfile);
+    showOfflineUnavailable();
+    return settleAuthReady(null);
+  }
   try {
     const profile = await api.request('/auth/me');
+    await reconcileOfflineSnapshotIdentity(profile);
     applyAuthProfile(profile);
     if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
     else await reload();
-    resolveAuthReady?.(profile);
-    resolveAuthReady = null;
-    return profile;
+    return settleAuthReady(profile);
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) showLogin();
-    else showLogin('Не удалось проверить сессию. Обновите страницу.');
-    return null;
+    if (error instanceof ApiError && error.status === 401) {
+      await clearTeacherOfflineSnapshot().catch(() => {});
+      showLogin();
+      return settleAuthReady(null);
+    }
+    const offlineProfile = await restoreColdOfflineTeacher();
+    if (offlineProfile) return settleAuthReady(offlineProfile);
+    showOfflineUnavailable();
+    return settleAuthReady(null);
   }
+}
+
+async function validateColdOfflineSession() {
+  if (!legacy.state.offlineBootstrap) return true;
+  try {
+    const profile = await api.request('/auth/me');
+    const snapshot = await loadTeacherOfflineSnapshot().catch(() => null);
+    if (!snapshot || !teacherSnapshotMatchesProfile(snapshot, profile)) {
+      await clearTeacherOfflineSnapshot().catch(() => {});
+      showLogin('Пользователь изменился. Войдите снова.');
+      return false;
+    }
+    applyAuthProfile(profile);
+    legacy.state.offlineBootstrap = false;
+    await reloadTeacher({ render: true });
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      await clearTeacherOfflineSnapshot().catch(() => {});
+      showLogin('Сессия завершена. Войдите снова.');
+    } else console.error('Не удалось проверить сессию после восстановления сети', error);
+    return false;
+  }
+}
+
+async function reconnectTeacherOffline() {
+  if (!(await validateColdOfflineSession())) return;
+  await lessonActions.sync();
 }
 
 window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
@@ -1700,7 +1793,7 @@ window.icubeLessonOffline = {
   readyForPhoto: (lessonId, childId) => lessonActions.readyForPhoto(lessonId, childId),
   mappings: () => lessonActions.mappings(), acknowledgeMapping: (localId) => lessonActions.acknowledgeMapping(localId),
 };
-window.addEventListener?.('online', () => lessonActions.sync().catch(console.error));
+window.addEventListener?.('online', () => reconnectTeacherOffline().catch(console.error));
 
 installDeletionUi();
 installPersistentCalendarBridge();
@@ -1712,4 +1805,4 @@ if (element('#app')) {
   bootstrapAuth();
 } else window.icubeAuthReady = Promise.resolve(null);
 lessonActions.publish().catch(console.error);
-window.icubeAuthReady?.then((profile) => { if (profile) lessonActions.sync().catch(console.error); });
+window.icubeAuthReady?.then((profile) => { if (profile && !legacy.state.offlineBootstrap) lessonActions.sync().catch(console.error); });
