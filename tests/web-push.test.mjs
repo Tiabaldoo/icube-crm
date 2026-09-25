@@ -124,6 +124,37 @@ test('503 keeps delivery retryable while attempts remain', async () => {
   assert.equal(fixture.state.deliveries[0].status, 'pending');
 });
 
+test('expired short-lived delivery is not sent to provider', async () => {
+  const fixture = pushPoolFixture();
+  fixture.state.deliveries.push({ id: 3, notification_id: 3, subscription_id: 1, status: 'sending' });
+  let sends = 0;
+  const service = createWebPushService(fixture.pool, {
+    config: pushConfig, now: () => new Date('2026-09-25T10:30:00Z'),
+    sender: { sendNotification: async () => { sends += 1; } },
+  });
+  const result = await service.sendRow({ id: 3, attempts: 1, notification_id: 3, notification_type: 'teacher_lesson_start_reminder',
+    title: 'Start', body: 'Body', destination: 'lesson', entity_type: 'lesson', entity_id: 9,
+    created_at: '2026-09-25 18:00:00.000000', subscription_id: 1,
+    endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth });
+  assert.equal(result.status, 'expired');
+  assert.equal(sends, 0);
+  assert.equal(fixture.state.deliveries[0].status, 'failed');
+});
+
+test('temporary provider failure stops retrying after max attempts', async () => {
+  const fixture = pushPoolFixture();
+  fixture.state.deliveries.push({ id: 4, notification_id: 4, subscription_id: 1, status: 'sending' });
+  const service = createWebPushService(fixture.pool, {
+    config: pushConfig, now: () => new Date('2026-09-25T08:00:00Z'),
+    sender: { sendNotification: async () => { const error = new Error('temporary'); error.statusCode = 503; throw error; } },
+  });
+  await service.sendRow({ id: 4, attempts: 5, notification_id: 4, notification_type: 'teacher_lesson_soon',
+    title: 'Soon', body: 'Body', destination: 'lesson', entity_type: 'lesson', entity_id: 9,
+    created_at: '2026-09-25 18:55:00.000000', subscription_id: 1,
+    endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth });
+  assert.equal(fixture.state.deliveries[0].status, 'failed');
+});
+
 test('subscription validation requires endpoint and both Web Push keys', () => {
   assert.deepEqual(normalizePushSubscription(subscription), {
     endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth,
@@ -219,6 +250,15 @@ test('mutation points keep actor suppression, current group names and project-sc
   assert.match(source, /p\.id=:projectId/);
 });
 
+test('teacher quick-child mutation does not also emit a separate child-added-group event', async () => {
+  const source = await readFile(new URL('../backend/src/lessons.mjs', import.meta.url), 'utf8');
+  const start = source.indexOf('async function quickChild');
+  const end = source.indexOf('async function salaryAccruals', start);
+  const block = source.slice(start, end);
+  assert.match(block, /notificationEvents\.quickChildCreated/);
+  assert.doesNotMatch(block, /notificationEvents\.childAddedToGroup/);
+});
+
 test('all required scheduled teacher/director/partner event types are wired in backend scheduler', async () => {
   const source = await readFile(new URL('../backend/src/push-scheduler.mjs', import.meta.url), 'utf8');
   for (const type of ['teacher_lesson_soon','teacher_lesson_start_reminder','teacher_lesson_finish_reminder','teacher_child_birthday',
@@ -310,6 +350,10 @@ function notificationEventFixture({ directors = [10, 11], partnersByProject = { 
     if (sql.startsWith('SELECT DISTINCT u.id user_id FROM projects p')) {
       return [(partnersByProject[Number(params.projectId)] ?? []).map((user_id) => ({ user_id }))];
     }
+    if (sql.startsWith('SELECT l.id,l.project_id_snapshot,l.planned_teacher_id,l.actual_teacher_id,')) {
+      return [[{ id: Number(params.lessonId), project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null,
+        group_name: 'Школа №1 · Пн · 16:00', child_name: 'Иван Иванов' }]];
+    }
     if (sql.startsWith('SELECT e.id,e.child_id,c.full_name FROM child_enrollments')) {
       return [[{ id: Number(params.enrollmentId), child_id: 77, full_name: 'Иван Иванов' }]];
     }
@@ -362,6 +406,39 @@ test('all immediate partner event families stay inside the group project', async
   ]);
   assert.ok(partnerRows.every((row) => Number(row.userId) === 30 && Number(row.projectId) === 2));
   assert.equal(partnerRows.some((row) => Number(row.userId) === 31), false);
+});
+
+test('teacher immediate event families are delivered to the assigned teacher and self child-add is suppressed', async () => {
+  const fixture = notificationEventFixture({ directors: [] });
+  const events = createNotificationEvents(fixture.pool);
+  const lesson = { id: 90, group_id: 4, planned_teacher_id: 7, actual_teacher_id: null, starts_at: '2026-09-28 16:00:00' };
+  await events.lessonMoved(fixture.connection, { lesson, previousStartsAt: '2026-09-28 15:00:00', actorUserId: 99 });
+  await events.lessonCancelled(fixture.connection, { lesson, actorUserId: 99 });
+  await events.childAddedToGroup(fixture.connection, { groupId: 4, childId: 77, actorUserId: 99, causeKey: 'membership-teacher' });
+  await events.absenceNotice(fixture.connection, { lessonId: 90, childId: 77, actorUserId: 50 });
+  const teacherRows = fixture.state.notifications.filter((row) => String(row.roleCode) === 'teacher');
+  assert.deepEqual(teacherRows.map((row) => row.type).sort(), [
+    'teacher_absence_notice', 'teacher_child_added', 'teacher_lesson_cancelled', 'teacher_lesson_moved',
+  ]);
+  assert.ok(teacherRows.every((row) => Number(row.userId) === 20));
+  const before = teacherRows.length;
+  await events.childAddedToGroup(fixture.connection, { groupId: 4, childId: 78, actorUserId: 20, causeKey: 'membership-self' });
+  assert.equal(fixture.state.notifications.filter((row) => String(row.roleCode) === 'teacher').length, before);
+});
+
+test('director immediate events cover quick child, move, cancel and existing child group add without notifying the acting director', async () => {
+  const fixture = notificationEventFixture({ directors: [10, 11], partnersByProject: {} });
+  const events = createNotificationEvents(fixture.pool);
+  const lesson = { id: 90, group_id: 4, planned_teacher_id: 7, actual_teacher_id: null, starts_at: '2026-09-28 16:00:00' };
+  await events.quickChildCreated(fixture.connection, { lesson, childId: 77, childName: 'Иван Иванов', actorUserId: 10 });
+  await events.lessonMoved(fixture.connection, { lesson, previousStartsAt: '2026-09-28 15:00:00', actorUserId: 10 });
+  await events.lessonCancelled(fixture.connection, { lesson, actorUserId: 10 });
+  await events.childAddedToGroup(fixture.connection, { groupId: 4, childId: 78, actorUserId: 10, causeKey: 'membership-director' });
+  const directorRows = fixture.state.notifications.filter((row) => String(row.roleCode) === 'director');
+  assert.ok(directorRows.every((row) => Number(row.userId) === 11));
+  assert.deepEqual(directorRows.map((row) => row.type).sort(), [
+    'director_child_added_group', 'director_lesson_cancelled', 'director_lesson_moved', 'director_quick_child_created',
+  ]);
 });
 
 test('debt threshold can notify again only after balance recovered above -2 and crosses the threshold again', async () => {
