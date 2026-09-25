@@ -1585,7 +1585,7 @@ function teacherNameForShell() {
 }
 
 function installAuthenticatedShells() {
-  const pushBell = () => `<button class="push-bell-button" type="button" data-push-bell onclick="icubePush?.togglePanel(this)" aria-label="Системные уведомления" title="Системные уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span></button>`;
+  const pushBell = () => `<button class="push-bell-button" type="button" data-push-bell onclick="window.icubePush?.togglePanel(this)" aria-label="Системные уведомления" title="Системные уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span></button>`;
   const originalShell = window.shell;
   if (typeof originalShell === 'function') {
     window.shell = function (...args) {
