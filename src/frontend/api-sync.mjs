@@ -1163,7 +1163,14 @@ async function openCalendarEvent(key, role) {
     }
     if (role === 'teacher' && temporaryTeacherParentRole() && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
     legacy.state.selectedLesson = lesson.id; legacy.state.page = role === 'teacher' ? 'teacherLesson' : 'lesson';
-    await window.icubePhotos?.loadLessonPhotos(lesson.id, { render: false }); legacy.render();
+    try { legacy.render(); }
+    catch (error) { console.error('Не удалось отрисовать открытое занятие', error); }
+    try {
+      await window.icubePhotos?.loadLessonPhotos(lesson.id, { render: false });
+      legacy.render();
+    } catch (error) {
+      console.error('Не удалось загрузить фотографии занятия', error);
+    }
   } catch (error) { fail(error); }
 }
 
@@ -1482,6 +1489,7 @@ function temporaryTeacherParentRole() {
   if (authProfile?.roles?.includes('partner')) return 'partner';
   return null;
 }
+window.icubeTemporaryTeacherParentRole = temporaryTeacherParentRole;
 
 function returnFromTemporaryTeacherView() {
   const parentRole = temporaryTeacherParentRole();

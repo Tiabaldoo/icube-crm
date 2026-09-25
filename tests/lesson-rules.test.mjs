@@ -571,3 +571,22 @@ test('teacher lesson access requires active project and allowed direction while 
   assert.deepEqual((await service.list({}, { roles: ['director'], userId: '1' })).map((lesson) => lesson.id), ['101', '202']);
   assert.equal((await service.get(202, { roles: ['partner'], userId: '2', projectIds: ['2'] })).id, '202');
 });
+
+
+test('обычный teacher не может add/remove extra в completed lesson', async () => {
+  const lesson = {
+    id: 88, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    planned_teacher_id: 5, actual_teacher_id: 5, status: 'completed', deleted_at: null,
+    scheduled_starts_at: '2026-09-20 10:00:00', scheduled_ends_at: '2026-09-20 11:00:00',
+    starts_at: '2026-09-20 10:00:00', ends_at: '2026-09-20 11:00:00',
+  };
+  const handler = async (sql) => {
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [[{ teacher_id: 5 }]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const service = createMysqlLessons(transactionPool(handler));
+  const context = { roles: ['teacher'], userId: '2', teacherId: '5' };
+  await assert.rejects(service.addExtra(88, { childId: 9 }, context), (error) => error.status === 403);
+  await assert.rejects(service.removeExtra(88, 9, context), (error) => error.status === 403);
+});

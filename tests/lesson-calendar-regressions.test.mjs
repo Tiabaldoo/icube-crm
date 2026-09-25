@@ -47,19 +47,23 @@ test('сервер выбирает enrollment по projectId + direction и com
   assert.match(addBlock, /attendance_type,present,is_trial/);
 });
 
-test('teacher не может менять состав completed lesson, director search при этом доступен', () => {
+test('teacher не может менять состав completed lesson, а director temporary teacher-view получает UI-доступ', () => {
   const addStart = lessonSource.indexOf('async function addExtra');
   const removeStart = lessonSource.indexOf('async function removeExtra', addStart);
   const removeEnd = lessonSource.indexOf('async function quickChild', removeStart);
   assert.match(lessonSource.slice(addStart, removeStart), /lesson\.status === 'completed'[\s\S]*?hasRole\(context, 'teacher'\)[\s\S]*?403/);
   assert.match(lessonSource.slice(removeStart, removeEnd), /lesson\.status === 'completed'[\s\S]*?hasRole\(context, 'teacher'\)[\s\S]*?403/);
-  assert.match(uiSource, /state\.role!=='director'.*lesson\.started/);
-  assert.match(uiSource, /l\.done\?'':'<div style="margin-top:12px"><input class="input" id="extraSearch"/);
-  assert.match(uiSource, /l\.done && state\.role==='teacher'/);
+  assert.match(apiSource, /window\.icubeTemporaryTeacherParentRole = temporaryTeacherParentRole/);
+  assert.match(uiSource, /window\.icubeTemporaryTeacherParentRole\(\)==='director'/);
+  assert.match(uiSource, /l\.done&&!completedRosterEditable/);
+  assert.match(uiSource, /l\.done && !completedRosterEditable/);
+  assert.doesNotMatch(uiSource, /Точечная правка: исторический состав занятия/);
 });
 
-test('подпись из другой группы зависит от текущего groupId ребёнка', () => {
-  assert.match(uiSource, /Number\(enrollment\.groupId\)===Number\(l\.groupId\)/);
+test('подпись из другой группы использует enrollment проекта и направления занятия', () => {
+  assert.match(uiSource, /String\(enrollment\.projectId\)===String\(lessonProjectId\)/);
+  assert.match(uiSource, /enrollment\.direction===group\?\.direction/);
+  assert.match(uiSource, /Number\(lessonEnrollment\.groupId\)===Number\(l\.groupId\)/);
   assert.match(uiSource, /sameGroup \? '' : '<div class="muted mini lesson-student-subtitle">из другой группы<\/div>'/);
 });
 
@@ -80,5 +84,18 @@ test('ошибка открытия календаря не проглатыва
   const end = apiSource.indexOf('async function startLessonApi', start);
   const block = apiSource.slice(start, end);
   assert.match(block, /throw new Error\('Не удалось открыть занятие/);
+  assert.match(block, /catch \(error\) \{ fail\(error\); \}/);
+});
+
+
+test('calendar открывает lesson до необязательной загрузки фото и не отправляет её ошибку в fail', () => {
+  const start = apiSource.indexOf('async function openCalendarEvent');
+  const end = apiSource.indexOf('async function startLessonApi', start);
+  const block = apiSource.slice(start, end);
+  const selectedPos = block.indexOf('legacy.state.selectedLesson = lesson.id');
+  const firstRenderPos = block.indexOf('legacy.render();', selectedPos);
+  const photoPos = block.indexOf('loadLessonPhotos', firstRenderPos);
+  assert.ok(selectedPos >= 0 && firstRenderPos > selectedPos && photoPos > firstRenderPos);
+  assert.match(block, /console\.error\('Не удалось загрузить фотографии занятия'/);
   assert.match(block, /catch \(error\) \{ fail\(error\); \}/);
 });

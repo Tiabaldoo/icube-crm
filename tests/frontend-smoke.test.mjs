@@ -662,3 +662,38 @@ test('редактирование оплаты сохраняет истори�
     globalThis.MutationObserver = originalMutationObserver;
   }
 });
+
+
+test('первое открытие календаря не падает из-за вторичной ошибки загрузки фото', async () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const alerts = [];
+  const group = { id: '4', name: 'Группа', directionId: '1', directionName: 'Робототехника', siteId: '2', siteName: 'Площадка', projectId: '1', projectName: 'iCubeRobots', teacherId: '3', teacherName: 'Учитель', weekday: 1, startTime: '10:00', endTime: '11:00', startsOn: '2026-01-01', endsOn: null, active: true, price: null };
+  const lesson = { id:'70', groupId:'4', groupName:'Группа', directionId:'1', directionName:'Робототехника', projectId:'1', projectName:'iCubeRobots',
+    siteId:'2', siteName:'Площадка', plannedTeacherId:'3', plannedTeacherName:'Учитель', actualTeacherId:'3', actualTeacherName:'Учитель',
+    scheduledStartsAt:'2026-09-21T10:00:00+11:00', scheduledEndsAt:'2026-09-21T11:00:00+11:00', startsAt:'2026-09-21T10:00:00+11:00', endsAt:'2026-09-21T11:00:00+11:00',
+    status:'completed', topic:null, introGroup:false, emptyTrip:false, rosterFrozenAt:'2026-09-21T10:00:00+11:00', attendanceAppliedAt:'2026-09-21T11:00:00+11:00', roster:[], attendances:[] };
+  const state = { sites:[], teachers:[], groups:[], children:[], payments:[], refunds:[], lessons:[], settings:{} };
+  globalThis.window = { icubeLegacy:{ state, render(){} }, alert(message){ alerts.push(message); }, sharedCalendarEvents(){ return []; },
+    icubePhotos:{ async loadLessonPhotos(){ throw new Error('photo read failed'); } } };
+  globalThis.document = { querySelector(){ return null; }, querySelectorAll(){ return []; } };
+  globalThis.fetch = async (url) => {
+    const path=String(url).replace('/api/v1','');
+    const resource=path.slice(1).split('?')[0];
+    const data = resource==='groups'?[group]:resource==='lessons'?[lesson]:resource==='projects'?[{id:'1',code:'icube',name:'iCubeRobots',active:true}]:
+      resource==='directions'?[{id:'1',code:'robotics',name:'Робототехника',active:true}]:[];
+    return { ok:true,status:200,async json(){return {data};} };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?calendar-photo-failure=${Date.now()}`);
+    await globalThis.window.icubeApi.reload();
+    state.lessons=[];
+    await globalThis.window.icubeApi.openCalendarEvent('4|21.09.2026','director');
+    assert.equal(state.selectedLesson,70);
+    assert.equal(state.page,'lesson');
+    assert.equal(alerts.includes('Не удалось сохранить данные на сервере'),false);
+  } finally {
+    globalThis.window=originalWindow; globalThis.document=originalDocument; globalThis.fetch=originalFetch;
+  }
+});
