@@ -1115,26 +1115,43 @@ async function lessonCommand(path, body, page = legacy.state.page) {
   catch (error) { fail(error); }
 }
 
+function cacheCalendarLesson(mappedLesson) {
+  const index = legacy.state.lessons.findIndex((item) => Number(item.id) === Number(mappedLesson.id));
+  if (index >= 0) legacy.state.lessons[index] = mappedLesson;
+  else legacy.state.lessons.push(mappedLesson);
+  return mappedLesson;
+}
+
+function serverLessonForOccurrence(items, key) {
+  for (const item of items ?? []) {
+    const mapped = mapLesson(item);
+    if (mapped.occurrenceKey === key) return mapped;
+  }
+  return null;
+}
+
 async function openCalendarEvent(key, role) {
   try {
+    const [groupId, ...dateParts] = String(key).split('|');
+    const scheduledRuDate = dateParts.join('|');
+    if (!groupId || !scheduledRuDate) throw new Error('Некорректное событие календаря');
+    const date = ruToIso(scheduledRuDate);
+
     let lesson = legacy.state.lessons.find((item) => item.occurrenceKey === key);
     if (!lesson) {
-      const [groupId, ...dateParts] = String(key).split('|');
-      const date = ruToIso(dateParts.join('|'));
       const loaded = await api.list('lessons', `?from=${encodeURIComponent(date)}&to=${encodeURIComponent(date)}`);
-      const serverLesson = loaded.find((item) => String(item.groupId) === String(groupId));
-      if (serverLesson) {
-        lesson = mapLesson(serverLesson);
-        legacy.state.lessons.push(lesson);
-      }
+      lesson = serverLessonForOccurrence(loaded, key);
+      if (lesson) cacheCalendarLesson(lesson);
     }
     if (!lesson && role === 'director') {
-      const [groupId, ...dateParts] = String(key).split('|');
-      const date = ruToIso(dateParts.join('|'));
-      lesson = mapLesson(await api.create('lessons', { groupId, scheduledDate: date }));
-      legacy.state.lessons.push(lesson);
+      const created = mapLesson(await api.create('lessons', { groupId, scheduledDate: date }));
+      if (created.occurrenceKey !== key) {
+        const loaded = await api.list('lessons', `?from=${encodeURIComponent(date)}&to=${encodeURIComponent(date)}`);
+        lesson = serverLessonForOccurrence(loaded, key);
+      } else lesson = created;
+      if (lesson) cacheCalendarLesson(lesson);
     }
-    if (!lesson) return;
+    if (!lesson) throw new Error('Не удалось открыть занятие для выбранного события календаря');
     if (lesson.readOnly) {
       legacy.state.modal = `<h3>${html(lesson.groupName)}</h3><div class="info-list">
         <div class="info-line"><span>Проект</span><b>${html(lesson.project)}</b></div>

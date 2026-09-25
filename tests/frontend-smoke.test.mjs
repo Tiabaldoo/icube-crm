@@ -420,6 +420,10 @@ test('серверные прошлые и перенесённые провед
     assert.equal(moved.done, true);
     assert.equal(moved.date, '18.09.2026');
     assert.equal(events.some((event) => event.lesson?.id === 51), true);
+    // Regression: opening must not depend on this lesson already being cached locally.
+    // The mocked GET returns another lesson of the same group first, so groupId-only lookup would open the wrong occurrence.
+    globalThis.window.icubeLegacy.state.lessons = [];
+    resources.lessons = [resources.lessons[1], resources.lessons[0]];
     await globalThis.window.icubeApi.openCalendarEvent('4|14.09.2026', 'director');
     assert.equal(globalThis.window.icubeLegacy.state.selectedLesson, 50);
     assert.equal(globalThis.window.icubeLegacy.state.page, 'lesson');

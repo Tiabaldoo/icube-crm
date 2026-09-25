@@ -620,6 +620,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
         if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
+        if (lesson.status === 'completed' && hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
+          throw new ApiProblem(403, 'FORBIDDEN', 'Состав проведённого занятия меняет только администратор проекта');
+        }
         const enrollment = await enrollmentForAttendance(connection, lesson, childId);
         const [existing] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
         if (existing.length) return;
@@ -645,6 +648,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     try {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
+        if (lesson.status === 'completed' && hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
+          throw new ApiProblem(403, 'FORBIDDEN', 'Состав проведённого занятия меняет только администратор проекта');
+        }
         const [rows] = await connection.query(`SELECT a.* FROM attendances a JOIN lesson_roster_members r ON r.lesson_id=a.lesson_id AND r.child_id=a.child_id
           WHERE a.lesson_id=:lessonId AND a.child_id=:childId AND r.roster_type='extra' FOR UPDATE`, { lessonId: lesson.id, childId });
         if (!rows.length) return;

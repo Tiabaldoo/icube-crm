@@ -1692,7 +1692,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return html;
     }
     html+='<div class="teacher-card"><div class="section-title"><h2>Основная группа</h2><span class="badge blue">'+kids.length+' детей</span></div><div class="attendance">'+kids.map(function(c){return studentCheck(c,l,false);}).join('')+'</div></div>';
-    html+='<div class="teacher-card"><div class="section-title"><h2>Добавлены на занятие</h2></div>'+(l.extras||[]).map(function(e){return studentCheck(byId(state.children,e.childId),l,true,e);}).join('')+'<div style="margin-top:12px"><input class="input" id="extraSearch" placeholder="Начните вводить фамилию…" oninput="showExtraResults(this.value)"><div id="extraResults"></div></div></div>';
+    html+='<div class="teacher-card"><div class="section-title"><h2>Добавлены на занятие</h2></div>'+(l.extras||[]).map(function(e){return studentCheck(byId(state.children,e.childId),l,true,e);}).join('')+(l.done?'':'<div style="margin-top:12px"><input class="input" id="extraSearch" placeholder="Начните вводить фамилию…" oninput="showExtraResults(this.value)"><div id="extraResults"></div></div>')+'</div>';
     html+='<div class="teacher-card"><label class="field"><label>Тема занятия</label><textarea class="textarea" oninput="byId(state.lessons,state.selectedLesson).topic=this.value">'+escapeHtml(l.topic||'')+'</textarea></label></div>';
     html+='<div class="teacher-sticky">'+(l.done?'<div class="teacher-card" style="background:var(--greenbg)"><b style="font-size:18px;color:var(--green)">Занятие завершено ✓</b></div>':'<button class="btn primary big-action" onclick="finishLesson()">Завершить занятие</button>')+'</div>';
     return html;
@@ -3821,10 +3821,17 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const query=String(q||'').trim().toLowerCase();
     let results=[];
     if(query){
+      const lessonChildIds=new Set(
+        (lesson.groupChildIdsV146||[]).map(Number)
+          .concat(Object.keys(lesson.attendance||{}).map(Number))
+          .concat((lesson.extras||[]).map(function(e){return Number(e.childId);}))
+      );
+      const lessonProjectId=lesson.projectId!=null?lesson.projectId:group.projectId;
       results=(state.children||[]).filter(function(c){
-        const inMainGroup=groupChildren(group.id).some(function(k){return Number(k.id)===Number(c.id);});
-        const alreadyExtra=(lesson.extras||[]).some(function(e){return Number(e.childId)===Number(c.id);});
-        return !inMainGroup && !alreadyExtra &&
+        const matchingEnrollment=(c.enrollments||[]).some(function(enrollment){
+          return String(enrollment.projectId)===String(lessonProjectId) && enrollment.direction===group.direction;
+        });
+        return matchingEnrollment && !lessonChildIds.has(Number(c.id)) &&
           (String(c.name||'').toLowerCase().includes(query) || String(c.phone||'').toLowerCase().includes(query));
       }).slice(0,4);
     }
@@ -3838,7 +3845,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html+='<div class="muted mini" style="margin-top:8px">Совпадений не найдено.</div>';
     }
 
-    html+='<button class="btn soft" style="width:100%;margin-top:10px;justify-content:center" onclick="teacherQuickChildForm()">+ Новый ребёнок</button>';
+    if(state.role==='teacher' && !lesson.done){
+      html+='<button class="btn soft" style="width:100%;margin-top:10px;justify-content:center" onclick="teacherQuickChildForm()">+ Новый ребёнок</button>';
+    }
     box.innerHTML=html;
   };
 
@@ -8407,7 +8416,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       : '<input class="lesson-student-attendance" type="checkbox" '+(present?'checked':'')+' onchange="attend('+c.id+',this.checked)">';
 
     const secondaryAction=extra
-      ? '<button class="btn small student-extra-remove" aria-label="Убрать с занятия" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">×</button>'
+      ? ((l.done && state.role==='teacher') ? '' : '<button class="btn small student-extra-remove" aria-label="Убрать с занятия" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">×</button>')
       : (l.done?'<button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="visitTrialOptionsV121('+c.id+',false)">⋯</button>':'');
 
     const flags=(absenceNotice?'<span class="lesson-student-flag absence">Не будет</span>':'')+
@@ -8464,6 +8473,22 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   };
 
   window.hasPreviousPresentVisitInDirectionV148=hasPreviousPresentVisitInDirection;
+  render();
+})();
+
+/* ===== Точечная правка: исторический состав занятия ===== */
+(function(){
+  const lessonBeforeHistoricalExtras=window.lesson;
+  if(typeof lessonBeforeHistoricalExtras==='function'){
+    window.lesson=function(){
+      let html=lessonBeforeHistoricalExtras.apply(this,arguments);
+      const lesson=byId(state.lessons,state.selectedLesson);
+      if(!lesson || state.role!=='director' || lesson.readOnly || lesson.cancelled || !lesson.started) return html;
+      const addBlock='<div class="card pad" style="margin-top:16px"><div class="section-title"><div><h2>Добавить ребёнка</h2><div class="muted mini">Поиск идёт по проекту и направлению именно этого занятия</div></div></div>'+
+        '<input class="input" id="extraSearch" placeholder="Начните вводить фамилию или телефон…" oninput="showExtraResults(this.value)"><div id="extraResults"></div></div>';
+      return html+addBlock;
+    };
+  }
   render();
 })();
 
