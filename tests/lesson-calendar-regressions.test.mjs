@@ -60,9 +60,14 @@ test('teacher не может менять состав completed lesson, а dir
   assert.doesNotMatch(uiSource, /Точечная правка: исторический состав занятия/);
 });
 
-test('подпись из другой группы использует enrollment проекта и направления занятия', () => {
+test('подпись из другой группы использует текущий enrollment проекта и направления занятия', () => {
+  assert.match(uiSource, /matchingEnrollments=\(c\.enrollments\|\|\[\]\)\.filter/);
   assert.match(uiSource, /String\(enrollment\.projectId\)===String\(lessonProjectId\)/);
   assert.match(uiSource, /enrollment\.direction===group\?\.direction/);
+  assert.match(uiSource, /status==='активный'\|\|status==='active'/);
+  assert.match(uiSource, /status==='пауза'\|\|status==='paused'/);
+  assert.match(uiSource, /status==='закончил'\|\|status==='finished'/);
+  assert.match(uiSource, /Number\(b\.id\|\|0\)-Number\(a\.id\|\|0\)/);
   assert.match(uiSource, /Number\(lessonEnrollment\.groupId\)===Number\(l\.groupId\)/);
   assert.match(uiSource, /sameGroup \? '' : '<div class="muted mini lesson-student-subtitle">из другой группы<\/div>'/);
 });

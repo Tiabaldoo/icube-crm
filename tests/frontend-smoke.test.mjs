@@ -697,3 +697,39 @@ test('первое открытие календаря не падает из-з
     globalThis.window=originalWindow; globalThis.document=originalDocument; globalThis.fetch=originalFetch;
   }
 });
+
+
+test('подпись extra использует текущий active enrollment, а не старый finished', async () => {
+  const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+  const document = {
+    body: { style:{}, classList:{ add(){}, remove(){}, contains(){return false;} } },
+    documentElement:{style:{}}, head:{appendChild(){}}, getElementById(){return null;},
+    createElement(){return {style:{},appendChild(){}};}, querySelector(){return null;}, querySelectorAll(){return [];}, addEventListener(){},
+  };
+  const context = vm.createContext({
+    console, document, alert(){}, requestAnimationFrame:(fn)=>fn(), setTimeout:()=>0, clearTimeout(){},
+    scrollY:0,pageYOffset:0,scrollTo(){},addEventListener(){},Intl,Date,Math,Map,Set,Object,Array,Number,String,Boolean,RegExp,JSON,
+    MutationObserver:class{observe(){} disconnect(){}},
+  });
+  context.window=context; context.globalThis=context;
+  vm.runInContext(source, context, { filename:'crm-ui.js' });
+
+  context.state.groups=[{id:4,direction:'Робототехника',projectId:2,project:'iCubeRobots'}];
+  const lesson={id:90,groupId:4,projectId:2,done:true,photos:{},attendance:{},trialChildren:{},extras:[{childId:8,trial:false,present:true}]};
+  const sameGroupChild={id:8,name:'Ребёнок',enrollments:[
+    {id:10,projectId:2,direction:'Робототехника',status:'Закончил',groupId:99},
+    {id:11,projectId:2,direction:'Робототехника',status:'Активный',groupId:4},
+  ]};
+  const otherGroupChild={...sameGroupChild,id:9,enrollments:[
+    {id:10,projectId:2,direction:'Робототехника',status:'Закончил',groupId:4},
+    {id:12,projectId:2,direction:'Робототехника',status:'Активный',groupId:77},
+  ]};
+  const foreignProjectChild={...sameGroupChild,id:10,enrollments:[
+    {id:20,projectId:3,direction:'Робототехника',status:'Активный',groupId:4},
+    {id:21,projectId:2,direction:'Робототехника',status:'Активный',groupId:77},
+  ]};
+
+  assert.doesNotMatch(context.studentCheck(sameGroupChild,lesson,true,{childId:8,present:true}), /из другой группы/);
+  assert.match(context.studentCheck(otherGroupChild,lesson,true,{childId:9,present:true}), /из другой группы/);
+  assert.match(context.studentCheck(foreignProjectChild,lesson,true,{childId:10,present:true}), /из другой группы/);
+});

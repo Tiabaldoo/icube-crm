@@ -590,3 +590,71 @@ test('обычный teacher не может add/remove extra в completed lesso
   await assert.rejects(service.addExtra(88, { childId: 9 }, context), (error) => error.status === 403);
   await assert.rejects(service.removeExtra(88, 9, context), (error) => error.status === 403);
 });
+
+
+test('completed extra удаляется физически после reversal и второй remove не повторяет reversal', async () => {
+  const lesson = {
+    id: 90, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
+    planned_teacher_id: 6, actual_teacher_id: 6, status: 'completed', deleted_at: null,
+    scheduled_starts_at: '2026-09-20 10:00:00', scheduled_ends_at: '2026-09-20 11:00:00',
+    starts_at: '2026-09-20 10:00:00', ends_at: '2026-09-20 11:00:00',
+    actual_starts_at: '2026-09-20 10:00:00', actual_ends_at: '2026-09-20 11:00:00',
+    topic: null, is_intro_group: 0, is_empty_trip: 0, roster_frozen_at: '2026-09-20 10:00:00',
+    attendance_applied_at: '2026-09-20 11:00:00', completed_at: '2026-09-20 11:00:00', cancelled_at: null,
+    lock_version: 3, absence_notice_child_ids: null, birthday_child_ids: null,
+  };
+  let roster = [{ lesson_id: 90, child_id: 8, roster_type: 'extra' }];
+  let attendances = [
+    { id: 70, lesson_id: 90, child_id: 8, enrollment_id: 9, attendance_type: 'extra', present: 1, is_trial: 0, price_snapshot: '1025.00', charged_lessons: '1.00000000', marked_at: '2026-09-20 10:05:00' },
+    { id: 71, lesson_id: 90, child_id: 10, enrollment_id: 11, attendance_type: 'main', present: 1, is_trial: 0, price_snapshot: '1025.00', charged_lessons: '1.00000000', marked_at: '2026-09-20 10:05:00' },
+  ];
+  let activeDebit = true;
+  let reversalCount = 0;
+  let salaryCountQueries = 0;
+  let purgeQueries = 0;
+  const handler = async (sql, params = {}) => {
+    if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT a.* FROM attendances a JOIN lesson_roster_members')) {
+      const row = attendances.find((a) => String(a.child_id) === String(params.childId) && roster.some((r) => String(r.child_id) === String(params.childId)));
+      return [[row].filter(Boolean)];
+    }
+    if (sql.includes("WHERE be.attendance_id=:attendanceId AND be.entry_type='attendance'")) {
+      return [activeDebit ? [{ id: 501, enrollment_id: 9, lessons_delta: '-1.00000000', amount_delta: '-1025.00', unit_price_snapshot: '1025.00' }] : []];
+    }
+    if (sql.startsWith('SELECT balance_lot_id,lessons FROM balance_lot_consumptions')) return [[{ balance_lot_id: 600, lessons: '1.00000000' }]];
+    if (sql.startsWith('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('INSERT INTO balance_entries') && sql.includes("'reversal'")) { reversalCount += 1; activeDebit = false; return [{ insertId: 502 }]; }
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('UPDATE attendances SET charged_lessons=0')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('DELETE blc FROM balance_lot_consumptions')) { purgeQueries += 1; return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('DELETE reversal FROM balance_entries')) { purgeQueries += 1; return [{ affectedRows: 1 }]; }
+    if (sql === 'DELETE FROM balance_entries WHERE attendance_id=:attendanceId') { purgeQueries += 1; return [{ affectedRows: 1 }]; }
+    if (sql === 'DELETE FROM attendances WHERE id=:id') { attendances = attendances.filter((a) => String(a.id) !== String(params.id)); return [{ affectedRows: 1 }]; }
+    if (sql === 'DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId') { roster = roster.filter((r) => String(r.child_id) !== String(params.childId)); return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('SELECT * FROM salary_accruals WHERE lesson_id=')) return [[{ id: 800, lesson_id: 90, teacher_id: 6, rate_version_id: 3, accrual_type: 'regular', present_children: 2, total_amount: '800.00' }]];
+    if (sql.startsWith('SELECT COUNT(*) present_count FROM attendances')) { salaryCountQueries += 1; return [[{ present_count: attendances.filter((a) => a.present).length }]]; }
+    if (sql.startsWith('SELECT * FROM salary_rate_versions')) return [[{ id: 3, teacher_id: 6, direction_id: 1, regular_fixed: '600.00', per_present_child: '100.00', intro_fixed: '600.00', empty_trip_fixed: '300.00' }]];
+    if (sql.startsWith('UPDATE salary_accruals SET reversed_at=')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('INSERT INTO salary_accruals')) return [{ insertId: 801 }];
+    if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка', planned_teacher_name: 'Учитель', actual_teacher_name: 'Учитель', site_override_id: null, site_override_name: null }]];
+    if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [roster];
+    if (sql.includes('FROM attendances WHERE lesson_id IN')) return [attendances];
+    if (sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
+    throw new Error(`Неожиданный SQL: ${sql}`);
+  };
+  const service = createMysqlLessons(transactionPool(handler));
+  const context = { roles: ['director'], userId: '1' };
+  const afterRemove = await service.removeExtra(90, 8, context);
+  assert.equal(afterRemove.roster.some((row) => row.childId === '8'), false);
+  assert.equal(afterRemove.attendances.some((row) => row.childId === '8'), false);
+  assert.equal(reversalCount, 1);
+  assert.equal(purgeQueries, 3);
+  assert.equal(salaryCountQueries, 1);
+
+  const reloaded = await service.get(90, context);
+  assert.equal(reloaded.roster.some((row) => row.childId === '8'), false);
+  assert.equal(reloaded.attendances.some((row) => row.childId === '8'), false);
+
+  await service.removeExtra(90, 8, context);
+  assert.equal(reversalCount, 1);
+});

@@ -8404,9 +8404,21 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(extra){
       const group=byId(state.groups,l.groupId);
       const lessonProjectId=l.projectId!=null?l.projectId:group?.projectId;
-      const lessonEnrollment=(c.enrollments||[]).find(function(enrollment){
+      const matchingEnrollments=(c.enrollments||[]).filter(function(enrollment){
         return String(enrollment.projectId)===String(lessonProjectId) && enrollment.direction===group?.direction;
-      })||null;
+      });
+      const statusRank=function(enrollment){
+        const status=String(enrollment?.status||'Активный').toLowerCase();
+        if(status==='активный'||status==='active') return 0;
+        if(status==='пауза'||status==='paused') return 1;
+        if(status==='закончил'||status==='finished') return 2;
+        return 1;
+      };
+      const lessonEnrollment=matchingEnrollments.slice().sort(function(a,b){
+        const rankDiff=statusRank(a)-statusRank(b);
+        if(rankDiff) return rankDiff;
+        return Number(b.id||0)-Number(a.id||0);
+      })[0]||null;
       const sameGroup=lessonEnrollment && lessonEnrollment.groupId!=null && Number(lessonEnrollment.groupId)===Number(l.groupId);
       subtitle=ex?.createdByTeacher || c.createdByTeacher
         ? '<div class="muted mini lesson-student-subtitle">добавлен преподавателем</div>'

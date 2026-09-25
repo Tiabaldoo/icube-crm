@@ -656,7 +656,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (!rows.length) return;
         if (lesson.status === 'completed') {
           await reverseAttendanceDebit(connection, rows[0], context);
-          await connection.query('UPDATE attendances SET present=FALSE,charged_lessons=0,marked_at=NOW(6) WHERE id=:id', { id: rows[0].id });
+          await purgeAttendanceLedger(connection, rows[0].id);
+          await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
+          await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
           await recalculateSalary(connection, lesson);
         } else {
           await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
