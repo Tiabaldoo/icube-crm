@@ -393,8 +393,11 @@ function positionPushPanel() {
   const viewportRight = viewportLeft + viewportWidth;
   const viewportBottom = viewportTop + viewportHeight;
   const width = Math.min(320, Math.max(0, viewportWidth - margin * 2));
+  const anchorOutsideViewport = rect.bottom < viewportTop || rect.top > viewportBottom
+    || rect.right < viewportLeft || rect.left > viewportRight;
 
   pushPanel.style.width = `${width}px`;
+  pushPanel.style.maxHeight = `${Math.max(0, viewportHeight - margin * 2)}px`;
   pushPanel.style.left = `${viewportLeft + margin}px`;
   pushPanel.style.top = `${viewportTop + margin}px`;
 
@@ -407,13 +410,19 @@ function positionPushPanel() {
   const maxTop = Math.max(minTop, viewportBottom - panelHeight - margin);
   const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
-  const desiredLeft = rect.right - panelWidth;
-  const belowTop = rect.bottom + gap;
-  const aboveTop = rect.top - panelHeight - gap;
-  let top = belowTop;
-
-  if (belowTop + panelHeight <= viewportBottom - margin) top = belowTop;
-  else if (aboveTop >= minTop) top = aboveTop;
+  let desiredLeft;
+  let top;
+  if (viewportWidth <= 760 && anchorOutsideViewport) {
+    desiredLeft = viewportRight - panelWidth - margin;
+    top = viewportTop + 64;
+  } else {
+    desiredLeft = rect.right - panelWidth;
+    const belowTop = rect.bottom + gap;
+    const aboveTop = rect.top - panelHeight - gap;
+    top = belowTop;
+    if (belowTop + panelHeight <= viewportBottom - margin) top = belowTop;
+    else if (aboveTop >= minTop) top = aboveTop;
+  }
 
   const left = clamp(desiredLeft, minLeft, maxLeft);
   top = clamp(top, minTop, maxTop);
