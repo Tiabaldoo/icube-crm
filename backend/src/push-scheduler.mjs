@@ -44,14 +44,14 @@ export function createPushScheduler(pool, {
         })));
       }
       if (lesson.status === 'scheduled' && String(lesson.starts_at) <= parts.sql) {
-        if (teacher) created += Number(Boolean(await notificationEvents.createUser(connection, {
+        const minutesLate = (new Date(String(parts.sql).replace(' ', 'T') + '+11:00') - new Date(String(lesson.starts_at).replace(' ', 'T') + '+11:00')) / 60000;
+        if (teacher && minutesLate >= 0 && minutesLate < 15) created += Number(Boolean(await notificationEvents.createUser(connection, {
           userId: teacher.user_id, roleCode: 'teacher', projectId: lesson.project_id_snapshot,
           type: 'teacher_lesson_start_reminder', title: 'Начните занятие',
           body: `Не забудьте начать занятие группы «${lesson.group_name}».`,
           entityType: 'lesson', entityId: lesson.id, destination: 'lesson',
           dedupKey: `teacher:start:${lesson.id}`,
         })));
-        const minutesLate = (new Date(String(parts.sql).replace(' ', 'T') + '+11:00') - new Date(String(lesson.starts_at).replace(' ', 'T') + '+11:00')) / 60000;
         if (minutesLate >= 15) {
           for (const director of directors) created += Number(Boolean(await notificationEvents.createUser(connection, {
             userId: director.user_id, roleCode: 'director', type: 'director_lesson_not_started',
@@ -71,14 +71,14 @@ export function createPushScheduler(pool, {
         }
       }
       if (!['completed', 'cancelled'].includes(lesson.status) && String(lesson.ends_at) <= parts.sql) {
-        if (teacher) created += Number(Boolean(await notificationEvents.createUser(connection, {
+        const minutesLate = (new Date(String(parts.sql).replace(' ', 'T') + '+11:00') - new Date(String(lesson.ends_at).replace(' ', 'T') + '+11:00')) / 60000;
+        if (teacher && minutesLate >= 0 && minutesLate < 30) created += Number(Boolean(await notificationEvents.createUser(connection, {
           userId: teacher.user_id, roleCode: 'teacher', projectId: lesson.project_id_snapshot,
           type: 'teacher_lesson_finish_reminder', title: 'Завершите занятие',
           body: `Не забудьте завершить занятие группы «${lesson.group_name}».`,
           entityType: 'lesson', entityId: lesson.id, destination: 'lesson',
           dedupKey: `teacher:finish:${lesson.id}`,
         })));
-        const minutesLate = (new Date(String(parts.sql).replace(' ', 'T') + '+11:00') - new Date(String(lesson.ends_at).replace(' ', 'T') + '+11:00')) / 60000;
         if (minutesLate >= 30) {
           for (const director of directors) created += Number(Boolean(await notificationEvents.createUser(connection, {
             userId: director.user_id, roleCode: 'director', type: 'director_lesson_not_finished',

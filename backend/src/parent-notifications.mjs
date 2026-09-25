@@ -10,27 +10,27 @@ const eventStamp = (value) => (value instanceof Date ? value.toISOString() : Str
 export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
   reminder_day_before: ({ startsAt }) => ({
     title: 'Занятие завтра',
-    body: `Завтра занятие по расписанию в ${clock(startsAt)}. Если ребёнка не будет, отметьте это в расписании.`,
+    body: `Завтра занятие в ${clock(startsAt)}. Если ребёнка не будет, отметьте это в расписании.`,
     destination: 'schedule',
   }),
   lesson_move: ({ previousStartsAt, startsAt }) => ({
     title: 'Занятие перенесено',
-    body: `Занятие ${dateRu(previousStartsAt)} в ${clock(previousStartsAt)} перенесено на ${dateRu(startsAt)} в ${clock(startsAt)}. Актуальное расписание можно посмотреть в календаре.`,
+    body: `Занятие перенесено на ${dateRu(startsAt)}, ${clock(startsAt)}. Актуальное время смотрите в расписании.`,
     destination: 'schedule',
   }),
   lesson_cancel: ({ startsAt }) => ({
     title: 'Занятие отменено',
-    body: `Занятие ${dateRu(startsAt)} в ${clock(startsAt)} отменено. Актуальное расписание можно посмотреть в календаре.`,
+    body: `Занятие ${dateRu(startsAt)} в ${clock(startsAt)} отменено. Актуальное расписание доступно в кабинете.`,
     destination: 'schedule',
   }),
   last_paid_lesson: () => ({
     title: 'Абонемент закончился',
-    body: 'Сегодня прошло последнее оплаченное занятие. Пожалуйста, оплатите следующий абонемент до следующего занятия.',
+    body: 'Сегодня прошло последнее оплаченное занятие. Пожалуйста, оплатите абонемент до следующего занятия.',
     destination: 'payments',
   }),
   payment_reminder: ({ startsAt }) => ({
     title: 'Напоминание об оплате',
-    body: `Завтра занятие в ${clock(startsAt)}. Оплаченных занятий не осталось — пожалуйста, оплатите абонемент.`,
+    body: `Завтра занятие в ${clock(startsAt)}, но оплаченных занятий не осталось. Пожалуйста, оплатите абонемент.`,
     destination: 'payments',
   }),
   lesson_finished: () => ({
@@ -40,7 +40,7 @@ export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
   }),
 });
 
-export function createParentNotifications(pool, { notificationEvents = createNotificationEvents(pool) } = {}) {
+export function createParentNotifications(pool, { notificationEvents = null } = {}) {
   async function recipients(connection, childId, type) {
     const [rows] = await connection.query(`SELECT DISTINCT u.id user_id,g.id guardian_id,
       COALESCE(s.enabled,:defaultEnabled) enabled
@@ -60,12 +60,22 @@ export function createParentNotifications(pool, { notificationEvents = createNot
     const message = template(data);
     let created = 0;
     for (const recipient of await recipients(connection, childId, type)) {
-      const notificationId = await notificationEvents.createUser(connection, {
-        userId: recipient.user_id, roleCode: 'parent', childId, type, title: message.title, body: message.body,
-        entityType: referenceType, entityId: referenceId, destination: message.destination, dedupKey,
-        referenceType, referenceId, respectSettings: false,
-      });
-      created += Number(Boolean(notificationId));
+      if (notificationEvents) {
+        const notificationId = await notificationEvents.createUser(connection, {
+          userId: recipient.user_id, roleCode: 'parent', childId, type, title: message.title, body: message.body,
+          entityType: referenceType, entityId: referenceId, destination: message.destination, dedupKey,
+          referenceType, referenceId, respectSettings: false,
+        });
+        created += Number(Boolean(notificationId));
+      } else {
+        const [result] = await connection.query(`INSERT IGNORE INTO notifications
+          (user_id,role_code,child_id,notification_type,title,body,entity_type,entity_id,destination,dedup_key,reference_type,reference_id)
+          VALUES (:userId,'parent',:childId,:type,:title,:body,:referenceType,:referenceId,:destination,:dedupKey,:referenceType,:referenceId)`, {
+          userId: recipient.user_id, childId, type, title: message.title, body: message.body,
+          referenceType, referenceId, destination: message.destination, dedupKey,
+        });
+        created += Number(result.affectedRows ?? 0);
+      }
     }
     return created;
   }

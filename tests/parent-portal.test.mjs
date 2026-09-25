@@ -274,7 +274,7 @@ test('parent notifications respect settings, destinations and deduplicate event 
   await fixture.service.lessonFinished(fixture.pool, lesson);
   assert.equal(fixture.state.notifications.filter((item) => item.type === 'lesson_move').length, 1);
   assert.equal(fixture.state.notifications.find((item) => item.type === 'lesson_move').destination, 'schedule');
-  assert.match(fixture.state.notifications.find((item) => item.type === 'lesson_move').body, /20\.09\.2026 в 13:00.*21\.09\.2026 в 13:00/);
+  assert.match(fixture.state.notifications.find((item) => item.type === 'lesson_move').body, /перенесено на 21\.09\.2026, 13:00/);
   assert.equal(fixture.state.notifications.filter((item) => item.type === 'lesson_finished').length, 0);
   assert.equal(fixture.state.notifications.filter((item) => item.type === 'last_paid_lesson').length, 1);
   assert.equal(fixture.state.notifications.find((item) => item.type === 'last_paid_lesson').destination, 'payments');

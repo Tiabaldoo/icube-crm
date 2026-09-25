@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'icube-crm-shell-';
-const CACHE_NAME = 'icube-crm-shell-v1-20260925-1';
+const CACHE_NAME = 'icube-crm-shell-v2-20260925-1';
 const STATIC_PATHS = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const STATIC_PATHS = [
   './src/ui/parent-portal.css',
   './src/frontend/crm-ui.js',
   './src/frontend/pwa-register.mjs',
+  './src/frontend/push-client.mjs',
   './src/frontend/offline-teacher-snapshot.mjs',
   './src/frontend/parent-portal.mjs',
   './src/frontend/api-sync.mjs',
@@ -66,4 +67,45 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (staticUrls().has(request.url)) event.respondWith(networkFirst(request));
+});
+
+
+self.addEventListener('push', (event) => {
+  let payload = {};
+  try { payload = event.data?.json?.() ?? {}; }
+  catch { payload = { title: 'iCube CRM', body: event.data?.text?.() ?? '' }; }
+  const title = payload.title || 'iCube CRM';
+  const options = {
+    body: payload.body || '',
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    tag: payload.tag || undefined,
+    data: {
+      notificationId: payload.notificationId ?? null,
+      destination: payload.destination ?? 'home',
+      entityType: payload.entityType ?? null,
+      entityId: payload.entityId ?? null,
+      type: payload.type ?? null,
+    },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const data = event.notification.data ?? {};
+  const target = new URL('./', self.registration.scope);
+  if (data.notificationId) target.searchParams.set('pushNotification', String(data.notificationId));
+  if (data.destination) target.searchParams.set('destination', String(data.destination));
+  if (data.entityType) target.searchParams.set('entityType', String(data.entityType));
+  if (data.entityId) target.searchParams.set('entityId', String(data.entityId));
+  event.waitUntil((async () => {
+    const windows = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const existing = windows.find((client) => new URL(client.url).origin === target.origin);
+    if (existing) {
+      if ('navigate' in existing) await existing.navigate(target.href);
+      return existing.focus();
+    }
+    return clients.openWindow(target.href);
+  })());
 });

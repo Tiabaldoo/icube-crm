@@ -408,8 +408,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       await connection.query(`INSERT INTO balance_lot_consumptions (balance_lot_id,balance_entry_id,lessons,amount)
         VALUES (:lotId,:entryId,:lessons,:amount)`, { lotId: consumption.lotId, entryId: entry.insertId, lessons: consumption.lessons, amount: consumption.amount });
     }
-    const balanceBefore = String(enrollment.balance_lessons);
-    const balanceAfter = lessonDecimal(lessonUnits(balanceBefore) - lessonUnits('1.00000000'));
+    const balanceBefore = notificationEvents ? String(enrollment.balance_lessons ?? '0.00000000') : null;
+    const balanceAfter = notificationEvents ? lessonDecimal(lessonUnits(balanceBefore) - lessonUnits('1.00000000')) : null;
     await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-1.00000000 WHERE id=:id', { id: enrollment.id });
     await connection.query('UPDATE attendances SET enrollment_id=:enrollmentId,price_snapshot=:price,charged_lessons=1.00000000 WHERE id=:id', { id: attendance.id, enrollmentId: enrollment.id, price: String(enrollment.current_price) });
     if (notificationEvents) await notificationEvents.debtThreshold(connection, {

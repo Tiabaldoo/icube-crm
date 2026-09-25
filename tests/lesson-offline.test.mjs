@@ -161,5 +161,5 @@ test('frontend and backend keep IndexedDB, photo coexistence and quick-child ide
   assert.match(lessonsSource, /create_idempotency_key/);
   assert.match(routesSource, /quick-child[\s\S]{0,300}requireIdempotencyKey/);
   assert.match(notificationsSource, /title: 'Как прошло занятие'/);
-  assert.match(notificationsSource, /В личном кабинете доступна информация о занятии и новые фотографии\./);
+  assert.match(notificationsSource, /В личном кабинете доступны новые фотографии с занятия\./);
 });

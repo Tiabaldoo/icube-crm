@@ -48,7 +48,7 @@ export function createNotificationEvents(pool) {
         WHERE user_id=:userId AND dedup_key=:dedupKey LIMIT 1`, { userId, dedupKey });
       notificationId = rows[0]?.id == null ? null : String(rows[0].id);
     }
-    if (result.affectedRows && notificationId) await enqueueDeliveries(connection, notificationId, userId);
+    if (notificationId) await enqueueDeliveries(connection, notificationId, userId);
     return result.affectedRows ? notificationId : null;
   }
 
@@ -64,7 +64,9 @@ export function createNotificationEvents(pool) {
       JOIN partner_users pu ON pu.partner_id=p.partner_id
       JOIN users u ON u.id=pu.user_id
       JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id AND r.code='partner'
-      WHERE p.id=:projectId AND p.active=TRUE AND u.status='active' AND u.deleted_at IS NULL`, { projectId });
+      WHERE p.id=:projectId AND p.active=TRUE AND u.status='active' AND u.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM user_roles dur JOIN roles dr ON dr.id=dur.role_id
+          WHERE dur.user_id=u.id AND dr.code='director')`, { projectId });
     return rows;
   }
 

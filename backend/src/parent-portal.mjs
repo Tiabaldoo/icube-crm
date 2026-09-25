@@ -59,7 +59,7 @@ export function createParentPortal(pool, {
   makePassword = generatedParentPassword,
   contact = {},
   materializeLessons = async () => {},
-  notificationEvents = createNotificationEvents(pool),
+  notificationEvents = null,
 } = {}) {
   const timeZone = contact.timeZone ?? 'Asia/Sakhalin';
   const localDate = (date = new Date()) => timeZone === 'Asia/Sakhalin' ? businessDate(date) : (() => {
@@ -270,7 +270,7 @@ export function createParentPortal(pool, {
         VALUES (:lessonId,:childId,:guardianId,NULL) ON DUPLICATE KEY UPDATE guardian_id=VALUES(guardian_id),cancelled_at=NULL,updated_at=NOW(6)`, {
         lessonId, childId: child.id, guardianId: child.guardian_id,
       });
-      await notificationEvents.absenceNotice(connection, { lessonId, childId: child.id, actorUserId: context.userId });
+      if (notificationEvents) await notificationEvents.absenceNotice(connection, { lessonId, childId: child.id, actorUserId: context.userId });
     });
     return { lessonId, childId: String(child.id), active: true };
   }
@@ -352,11 +352,14 @@ export function createParentPortal(pool, {
 
   async function notifications(context = {}) {
     await assertConsents(context); const userId = parentOnly(context);
-    const [rows] = await pool.query(`SELECT n.id,n.child_id,c.full_name child_name,n.notification_type,n.title,n.body,n.destination,n.created_at,n.read_at
+    const [rows] = await pool.query(`SELECT n.id,n.child_id,c.full_name child_name,n.notification_type,n.title,n.body,n.destination,
+      n.entity_type,n.entity_id,n.reference_type,n.reference_id,n.created_at,n.read_at
       FROM notifications n LEFT JOIN children c ON c.id=n.child_id WHERE n.user_id=:userId AND n.dismissed_at IS NULL
       ORDER BY n.created_at DESC,n.id DESC LIMIT 100`, { userId });
     return rows.map((row) => ({ id: String(row.id), childId: row.child_id == null ? null : String(row.child_id), childName: row.child_name,
       type: row.notification_type, title: row.title, body: row.body, destination: row.destination,
+      entityType: row.entity_type, entityId: row.entity_id == null ? null : String(row.entity_id),
+      referenceType: row.reference_type, referenceId: row.reference_id == null ? null : String(row.reference_id),
       createdAt: isoDateTime(row.created_at), readAt: isoDateTime(row.read_at) }));
   }
 

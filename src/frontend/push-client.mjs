@@ -1,0 +1,187 @@
+import { ApiClient, ApiError } from '../data/api-client.mjs';
+
+const api = new ApiClient();
+const DEVICE_DISABLED_KEY = 'icube-push-device-disabled';
+const state = { config: null, status: 'loading', message: 'Проверяем…', subscription: null };
+const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+
+function supported() {
+  return Boolean(globalThis.navigator?.serviceWorker && globalThis.PushManager && globalThis.Notification);
+}
+function installedStandalone() {
+  return Boolean(globalThis.matchMedia?.('(display-mode: standalone)').matches || globalThis.navigator?.standalone === true);
+}
+function iosLike() {
+  return /iPhone|iPad|iPod/i.test(globalThis.navigator?.userAgent ?? '');
+}
+function deviceDisabled() {
+  try { return localStorage.getItem(DEVICE_DISABLED_KEY) === '1'; } catch { return false; }
+}
+function setDeviceDisabled(value) {
+  try { value ? localStorage.setItem(DEVICE_DISABLED_KEY, '1') : localStorage.removeItem(DEVICE_DISABLED_KEY); } catch { /* ignore */ }
+}
+function publicKeyBytes(value) {
+  const padded = String(value).replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(String(value).length / 4) * 4, '=');
+  const raw = atob(padded); return Uint8Array.from(raw, (char) => char.charCodeAt(0));
+}
+async function registration() {
+  return navigator.serviceWorker.ready;
+}
+async function currentSubscription() {
+  if (!supported()) return null;
+  return (await registration()).pushManager.getSubscription();
+}
+async function serverConfig() {
+  state.config = await api.request('/push/config');
+  return state.config;
+}
+async function bind(subscription) {
+  if (!subscription) return null;
+  return api.request('/push/subscriptions', { method: 'POST', body: subscription.toJSON() });
+}
+
+export async function refreshPushState() {
+  if (!supported()) {
+    state.status = 'unsupported';
+    state.message = iosLike() && !installedStandalone()
+      ? 'Для уведомлений на iPhone добавьте iCube на экран «Домой» и откройте приложение с иконки.'
+      : 'Системные уведомления не поддерживаются этим браузером.';
+    return { ...state };
+  }
+  try {
+    const config = await serverConfig();
+    if (!config.enabled) {
+      state.status = 'unavailable'; state.message = 'Web Push сейчас недоступен на сервере.'; return { ...state };
+    }
+    if (Notification.permission === 'denied') {
+      state.status = 'blocked'; state.message = 'Уведомления заблокированы в настройках браузера/телефона.'; return { ...state };
+    }
+    state.subscription = await currentSubscription();
+    if (deviceDisabled()) {
+      state.status = 'disabled'; state.message = 'Уведомления на этом устройстве отключены.'; return { ...state };
+    }
+    if (Notification.permission === 'granted' && state.subscription) {
+      state.status = 'enabled'; state.message = 'Уведомления включены.'; return { ...state };
+    }
+    state.status = 'available'; state.message = 'Уведомления можно включить на этом устройстве.';
+    return { ...state };
+  } catch (error) {
+    state.status = 'unavailable'; state.message = error instanceof ApiError ? error.message : 'Не удалось проверить Web Push.';
+    return { ...state };
+  }
+}
+
+export async function enablePush() {
+  const config = state.config ?? await serverConfig();
+  if (!config.enabled || !supported()) return refreshPushState();
+  if (Notification.permission === 'denied') return refreshPushState();
+  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  if (permission !== 'granted') return refreshPushState();
+  const reg = await registration();
+  let subscription = await reg.pushManager.getSubscription();
+  if (!subscription) subscription = await reg.pushManager.subscribe({
+    userVisibleOnly: true, applicationServerKey: publicKeyBytes(config.publicKey),
+  });
+  setDeviceDisabled(false);
+  await bind(subscription);
+  state.subscription = subscription;
+  return refreshPushState();
+}
+
+export async function rebindPush(profile) {
+  if (!profile || !supported() || deviceDisabled() || Notification.permission !== 'granted') return null;
+  const config = await serverConfig().catch(() => null); if (!config?.enabled) return null;
+  const reg = await registration();
+  let subscription = await reg.pushManager.getSubscription();
+  if (!subscription) subscription = await reg.pushManager.subscribe({
+    userVisibleOnly: true, applicationServerKey: publicKeyBytes(config.publicKey),
+  });
+  return bind(subscription);
+}
+
+export async function unbindPush() {
+  if (!supported()) return null;
+  const subscription = await currentSubscription().catch(() => null); if (!subscription) return null;
+  try { return await api.request('/push/subscriptions', { method: 'DELETE', body: { endpoint: subscription.endpoint } }); }
+  catch (error) {
+    if (error instanceof ApiError && error.status === 401) return null;
+    await subscription.unsubscribe?.().catch(() => {});
+    throw error;
+  }
+}
+
+export async function disablePush() {
+  const subscription = await currentSubscription().catch(() => null);
+  if (subscription) await api.request('/push/subscriptions', { method: 'DELETE', body: { endpoint: subscription.endpoint } });
+  setDeviceDisabled(true); return refreshPushState();
+}
+
+export async function testPush() {
+  return api.request('/push/test', { method: 'POST', body: {} });
+}
+
+function controlsMarkup() {
+  const status = state.status;
+  const dot = ['enabled'].includes(status) ? '●' : status === 'blocked' ? '●' : '○';
+  const actions = [];
+  if (['available', 'disabled'].includes(status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Разрешить уведомления</button>');
+  if (status === 'enabled') {
+    actions.push('<button class="btn" type="button" onclick="icubePush.test()">Отправить тестовое уведомление</button>');
+    actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления на этом устройстве</button>');
+  }
+  return `<div class="push-device-card"><h3 style="margin:0 0 8px">Системные уведомления</h3>
+    <div class="muted" style="margin-bottom:12px"><b>${dot}</b> ${esc(state.message)}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">${actions.join('')}</div></div>`;
+}
+
+export async function mountPushControls(selector) {
+  const target = typeof selector === 'string' ? document.querySelector(selector) : selector;
+  if (!target) return;
+  await refreshPushState(); target.innerHTML = controlsMarkup();
+}
+
+async function rerenderMounted() {
+  for (const element of document.querySelectorAll('[data-push-controls]')) {
+    await mountPushControls(element);
+  }
+}
+
+async function runAction(action) {
+  try {
+    await action();
+    await rerenderMounted();
+  } catch (error) { window.alert(error?.message ?? 'Не удалось выполнить действие с уведомлениями.'); }
+}
+
+async function openSettings() {
+  const legacy = window.icubeLegacy; if (!legacy) return;
+  try {
+    const settings = await api.request('/notification-settings');
+    await refreshPushState();
+    legacy.state.modal = `<h3>Уведомления</h3><div data-push-controls>${controlsMarkup()}</div>
+      <div style="margin-top:18px"><h3 style="font-size:16px">Типы уведомлений</h3>
+      ${settings.map((item) => `<label class="parent-toggle" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0">
+        <span>${esc(item.label)}</span><input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="icubePush.setting('${esc(item.type)}',this.checked)">
+      </label>`).join('')}</div>
+      <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
+    legacy.render();
+  } catch (error) { window.alert(error?.message ?? 'Не удалось загрузить настройки уведомлений.'); }
+}
+
+async function saveSetting(type, enabled) {
+  try { await api.request('/notification-settings', { method: 'PATCH', body: { [type]: Boolean(enabled) } }); }
+  catch (error) { window.alert(error?.message ?? 'Не удалось сохранить настройку.'); await openSettings(); }
+}
+
+window.icubePush = {
+  refresh: refreshPushState, mount: mountPushControls, rebind: rebindPush, unbind: unbindPush,
+  enable: () => runAction(enablePush), disable: () => runAction(disablePush),
+  test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
+  openSettings, setting: saveSetting,
+};
+
+window.icubeAuthReady?.then(async (profile) => {
+  if (!profile) return;
+  await rebindPush(profile).catch(console.error);
+  if (window.icubeHandlePushDeepLink) await window.icubeHandlePushDeepLink(profile).catch(console.error);
+});

@@ -26,14 +26,14 @@ export function createNotifications(pool) {
 
   async function list(context = {}) {
     const params = scope(context);
-    const [rows] = await pool.query(`SELECT id,notification_type,title,body,entity_type,entity_id,created_at,read_at
+    const [rows] = await pool.query(`SELECT id,notification_type,title,body,entity_type,entity_id,destination,created_at,read_at
       FROM notifications WHERE (user_id=:userId OR (:allowRoleWide=TRUE AND user_id IS NULL AND role_code=:roleCode))
         AND (:projectId IS NULL OR recipient_project_id=:projectId)
         AND dismissed_at IS NULL
       ORDER BY created_at DESC,id DESC LIMIT 50`, params);
     return rows.map((row) => ({
       id: String(row.id), type: row.notification_type, title: row.title, body: row.body,
-      entityType: row.entity_type, entityId: row.entity_id == null ? null : String(row.entity_id),
+      entityType: row.entity_type, entityId: row.entity_id == null ? null : String(row.entity_id), destination: row.destination,
       createdAt: isoDateTime(row.created_at), readAt: isoDateTime(row.read_at),
     }));
   }

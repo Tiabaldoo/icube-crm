@@ -33,17 +33,27 @@ export function createWebPushService(pool, {
   async function bind(userId, value, userAgent = null) {
     const subscription = normalizePushSubscription(value);
     const hash = endpointHash(subscription.endpoint);
-    await pool.query(`INSERT INTO web_push_subscriptions
-      (user_id,endpoint,endpoint_hash,p256dh,auth,user_agent,last_seen_at,disabled_at)
-      VALUES (:userId,:endpoint,:hash,:p256dh,:auth,:userAgent,NOW(6),NULL)
-      ON DUPLICATE KEY UPDATE user_id=VALUES(user_id),endpoint=VALUES(endpoint),p256dh=VALUES(p256dh),auth=VALUES(auth),
-        user_agent=VALUES(user_agent),last_seen_at=NOW(6),disabled_at=NULL`, {
-      userId, endpoint: subscription.endpoint, hash, p256dh: subscription.p256dh, auth: subscription.auth,
-      userAgent: String(userAgent ?? '').slice(0, 512) || null,
+    return inTransaction(pool, async (connection) => {
+      const [beforeRows] = await connection.query(`SELECT id,user_id FROM web_push_subscriptions
+        WHERE endpoint_hash=:hash LIMIT 1 FOR UPDATE`, { hash });
+      await connection.query(`INSERT INTO web_push_subscriptions
+        (user_id,endpoint,endpoint_hash,p256dh,auth,user_agent,last_seen_at,disabled_at)
+        VALUES (:userId,:endpoint,:hash,:p256dh,:auth,:userAgent,NOW(6),NULL)
+        ON DUPLICATE KEY UPDATE user_id=VALUES(user_id),endpoint=VALUES(endpoint),p256dh=VALUES(p256dh),auth=VALUES(auth),
+          user_agent=VALUES(user_agent),last_seen_at=NOW(6),disabled_at=NULL`, {
+        userId, endpoint: subscription.endpoint, hash, p256dh: subscription.p256dh, auth: subscription.auth,
+        userAgent: String(userAgent ?? '').slice(0, 512) || null,
+      });
+      const [rows] = await connection.query(`SELECT id,user_id,disabled_at FROM web_push_subscriptions
+        WHERE endpoint_hash=:hash LIMIT 1`, { hash });
+      if (beforeRows.length && String(beforeRows[0].user_id) !== String(userId)) {
+        await connection.query(`UPDATE push_deliveries pd JOIN notifications n ON n.id=pd.notification_id
+          SET pd.status='failed',pd.last_error='subscription rebound to another user'
+          WHERE pd.subscription_id=:subscriptionId AND pd.status IN ('pending','sending')
+            AND (n.user_id IS NULL OR n.user_id<>:userId)`, { subscriptionId: rows[0].id, userId });
+      }
+      return { id: String(rows[0].id), userId: String(rows[0].user_id), active: rows[0].disabled_at == null };
     });
-    const [rows] = await pool.query(`SELECT id,user_id,disabled_at FROM web_push_subscriptions
-      WHERE endpoint_hash=:hash LIMIT 1`, { hash });
-    return { id: String(rows[0].id), userId: String(rows[0].user_id), active: rows[0].disabled_at == null };
   }
 
   async function disable(userId, endpoint) {
@@ -71,6 +81,7 @@ export function createWebPushService(pool, {
     return inTransaction(pool, async (connection) => {
       const [rows] = await connection.query(`SELECT pd.id FROM push_deliveries pd
         JOIN web_push_subscriptions s ON s.id=pd.subscription_id
+        JOIN notifications n ON n.id=pd.notification_id AND n.user_id=s.user_id
         WHERE s.disabled_at IS NULL AND pd.attempts<:maxAttempts
           AND ((pd.status='pending' AND pd.next_attempt_at<=NOW(6))
             OR (pd.status='sending' AND pd.updated_at<DATE_SUB(NOW(6),INTERVAL 10 MINUTE)))
@@ -126,7 +137,8 @@ export function createWebPushService(pool, {
 
   async function sendRow(row) {
     const configForType = notificationTypeConfig(row.notification_type);
-    const ageSeconds = Math.max(0, Math.floor((now().getTime() - new Date(String(row.created_at).replace(' ', 'T') + '+11:00').getTime()) / 1000));
+    const createdAt = row.created_at instanceof Date ? row.created_at : new Date(String(row.created_at).replace(' ', 'T').replace(/(\.\d{3})\d+$/, '$1') + '+11:00');
+    const ageSeconds = Math.max(0, Math.floor((now().getTime() - createdAt.getTime()) / 1000));
     if (ageSeconds > configForType.ttl) { await markExpired(row.id); return { id: String(row.id), status: 'expired' }; }
     const payload = JSON.stringify({
       notificationId: String(row.notification_id), type: row.notification_type, title: row.title, body: row.body,

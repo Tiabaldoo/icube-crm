@@ -4,6 +4,8 @@ import { createNotificationEvents } from './notification-events.mjs';
 import { createParentNotifications } from './parent-notifications.mjs';
 import { createPushScheduler } from './push-scheduler.mjs';
 import { createWebPushService } from './web-push.mjs';
+import { createMysqlLessons } from './lessons.mjs';
+import { addCalendarDays, businessDate } from '../../src/shared/business-time.mjs';
 
 export async function runPushWorker({ pool, config, sender, now } = {}) {
   const ownedPool = !pool;
@@ -12,6 +14,10 @@ export async function runPushWorker({ pool, config, sender, now } = {}) {
   try {
     const notificationEvents = createNotificationEvents(resolvedPool);
     const parentNotifications = createParentNotifications(resolvedPool, { notificationEvents });
+    const lessons = createMysqlLessons(resolvedPool, { parentNotifications, notificationEvents });
+    const current = now ? now() : new Date();
+    const today = businessDate(current);
+    await lessons.materialize(today, addCalendarDays(today, 1));
     const scheduler = createPushScheduler(resolvedPool, {
       notificationEvents, parentNotifications, reminderTime: resolvedConfig.push.parentReminderTime, now,
     });

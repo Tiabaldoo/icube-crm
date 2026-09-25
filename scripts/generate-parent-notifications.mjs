@@ -3,6 +3,7 @@ import { createPool } from '../backend/src/db.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { createBirthdayNotifications } from '../backend/src/birthday-notifications.mjs';
+import { createNotificationEvents } from '../backend/src/notification-events.mjs';
 
 export function localDate(date, timeZone) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
@@ -22,7 +23,8 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
     const targetDate = nextDate(today);
     const lessons = createMysqlLessons(pool);
     await lessons.materialize(targetDate, targetDate);
-    const parent = await createParentNotifications(pool).generateDayBefore(targetDate);
+    const notificationEvents = createNotificationEvents(pool);
+    const parent = await createParentNotifications(pool, { notificationEvents }).generateDayBefore(targetDate);
     const birthdays = await createBirthdayNotifications(pool).generate(today);
     console.log(JSON.stringify({ parent, birthdays }));
   } finally {

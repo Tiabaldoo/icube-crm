@@ -1476,6 +1476,65 @@ async function reconcileOfflineSnapshotIdentity(profile) {
   if (snapshot && !teacherSnapshotMatchesProfile(snapshot, profile)) await clearTeacherOfflineSnapshot().catch(() => {});
 }
 
+function pushLinkParams() {
+  const params = new URLSearchParams(globalThis.location?.search ?? '');
+  const notificationId = params.get('pushNotification');
+  if (!notificationId) return null;
+  return {
+    notificationId, destination: params.get('destination') ?? 'home',
+    entityType: params.get('entityType'), entityId: params.get('entityId'),
+  };
+}
+
+function clearPushLinkParams() {
+  if (!globalThis.history?.replaceState || !globalThis.location) return;
+  const url = new URL(globalThis.location.href);
+  for (const key of ['pushNotification', 'destination', 'entityType', 'entityId']) url.searchParams.delete(key);
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+}
+
+async function handlePushDeepLink(profile = authProfile) {
+  const link = pushLinkParams();
+  if (!link || !profile) return false;
+  const parentOnly = profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role));
+  if (parentOnly) {
+    await window.icubeParentPortal?.openPushDestination?.(link);
+    clearPushLinkParams();
+    return true;
+  }
+
+  const id = link.entityId == null ? null : Number(link.entityId);
+  if ((link.destination === 'lesson' || link.entityType === 'lesson') && id) {
+    let lesson = legacy.state.lessons.find((item) => Number(item.id) === id);
+    if (!lesson && globalThis.navigator?.onLine !== false) {
+      try { lesson = mapLesson(await api.get('lessons', id)); legacy.state.lessons.push(lesson); }
+      catch (error) { console.error('Не удалось открыть занятие из push', error); }
+    }
+    if (lesson) {
+      legacy.state.selectedLesson = id;
+      legacy.state.page = legacy.state.role === 'teacher' ? 'teacherLesson' : 'lesson';
+      if (legacy.state.role === 'teacher' && lesson.teacherId) legacy.state.prototypeTeacherId = Number(lesson.teacherId);
+    }
+  } else if ((link.destination === 'child' || link.entityType === 'child') && id
+    && legacy.state.children.some((item) => Number(item.id) === id)) {
+    legacy.state.selectedChild = id; legacy.state.page = 'child';
+  } else if ((link.destination === 'group' || link.entityType === 'group') && id
+    && legacy.state.groups.some((item) => Number(item.id) === id)) {
+    legacy.state.selectedGroup = id; legacy.state.page = 'group';
+  } else if (legacy.state.role === 'teacher') legacy.state.page = 'teacherToday';
+  else legacy.state.page = 'dashboard';
+
+  legacy.render();
+  await api.request(`/notifications/${encodeURIComponent(link.notificationId)}/read`, { method: 'POST', body: {} }).catch(() => {});
+  clearPushLinkParams();
+  return true;
+}
+
+async function afterAuthenticatedLoad(profile) {
+  if (window.icubePush?.rebind) await window.icubePush.rebind(profile).catch(console.error);
+  await handlePushDeepLink(profile).catch((error) => console.error('Не удалось открыть push destination', error));
+}
+
 async function loginFromForm() {
   const submit = element('#auth-submit');
   if (submit) submit.disabled = true;
@@ -1485,6 +1544,7 @@ async function loginFromForm() {
     applyAuthProfile(profile);
     if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
     else await reload();
+    await afterAuthenticatedLoad(profile);
     resolveAuthReady?.(profile);
     resolveAuthReady = null;
     return profile;
@@ -1495,6 +1555,7 @@ async function loginFromForm() {
 }
 
 async function logout() {
+  if (window.icubePush?.unbind) await window.icubePush.unbind().catch((error) => console.error('Не удалось отвязать push subscription', error));
   try { await api.request('/auth/logout', { method: 'POST' }); }
   catch (error) { if (!(error instanceof ApiError) || error.status !== 401) console.error(error); }
   await clearTeacherOfflineSnapshot().catch(() => {});
@@ -1530,15 +1591,15 @@ function installAuthenticatedShells() {
       const result = originalShell.apply(this, args);
       if (!authProfile) return result;
       const roleLabel = authProfile.roles.includes('director') ? 'Директор' : 'Партнёр';
-      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
+      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
       return result.replace(/<div><select class="role-switch"[\s\S]*?<\/select><div class="muted mini">Режим прототипа<\/div><\/div>/, account);
     };
   }
   window.teacherShell = function (content) {
     const parentRole = temporaryTeacherParentRole();
     const right = parentRole
-      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
-      : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
+      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
+      : '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>';
     const offline = legacy.state.offlineBootstrap || globalThis.navigator?.onLine === false;
     const offlineNotice = offline
       ? '<div class="notice" style="max-width:680px;margin:12px auto 0">Офлайн · изменения будут отправлены после подключения</div>'
@@ -1629,6 +1690,7 @@ async function restoreColdOfflineTeacher() {
   await reapplyQueuedLessonState();
   await lessonActions.publish().catch(() => {});
   legacy.render();
+  await handlePushDeepLink(profile).catch((error) => console.error('Не удалось открыть offline push destination', error));
   return profile;
 }
 
@@ -1651,6 +1713,7 @@ async function bootstrapAuth() {
     applyAuthProfile(profile);
     if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
     else await reload();
+    await handlePushDeepLink(profile).catch((error) => console.error('Не удалось открыть push destination', error));
     return settleAuthReady(profile);
   } catch (error) {
     if (error instanceof ApiError && error.status === 401) {
@@ -1784,6 +1847,7 @@ window.salaryCalculation = window.icubeApi.salaryCalculation;
 window.icubeSalaryDefaultPeriod = salaryDefaultPeriod;
 window.icubeAuthLogin = loginFromForm;
 window.icubeAuthLogout = logout;
+window.icubeHandlePushDeepLink = handlePushDeepLink;
 window.icubeReturnToHome = returnFromTemporaryTeacherView;
 window.icubeReturnToDirector = returnFromTemporaryTeacherView;
 window.icubeCreateTeacherAccess = createTeacherAccess;

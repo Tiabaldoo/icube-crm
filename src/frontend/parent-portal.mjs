@@ -187,7 +187,8 @@ function settingsHtml(data) {
   const contact = state.profile.contact ?? {};
   return `<section class="parent-title"><h1>Настройки</h1></section>
     <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
-    <article class="parent-card"><h2>Уведомления</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
+    <article class="parent-card"><div id="parent-push-controls" data-push-controls></div></article>
+    <article class="parent-card"><h2>Типы уведомлений</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
     <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
     <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-contact-button primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a class="parent-contact-button" href="tel:${escapeHtml(String(contact.phone).replace(/[^\d+]/g, ''))}">Позвонить: ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
@@ -259,7 +260,9 @@ function render() {
   if (state.tab === 'payments') return shell(paymentsHtml(state.data ?? { rows: [], home: null }));
   if (state.tab === 'about') return shell(aboutHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [] }));
   if (state.tab === 'photos') return shell(photosHtml(state.data ?? []));
-  return shell(settingsHtml(state.data ?? { profile: {}, settings: [], documents: [] }));
+  const result = shell(settingsHtml(state.data ?? { profile: {}, settings: [], documents: [] }));
+  queueMicrotask(() => window.icubePush?.mount?.('#parent-push-controls'));
+  return result;
 }
 
 async function start() {
@@ -350,4 +353,17 @@ app?.addEventListener('click', async (event) => {
 app?.addEventListener('touchstart', (event) => { if (state.viewer) state.touchX = event.changedTouches[0]?.clientX ?? null; }, { passive: true });
 app?.addEventListener('touchend', (event) => { if (!state.viewer || state.touchX == null) return; const delta = (event.changedTouches[0]?.clientX ?? state.touchX) - state.touchX; if (Math.abs(delta) > 50) setViewer(delta < 0 ? 1 : -1); state.touchX = null; }, { passive: true });
 
-if (globalThis.window) window.icubeParentPortal = { start, reload: loadTab };
+async function openPushDestination({ notificationId, destination, entityType, entityId } = {}) {
+  const rows = await api.request('/parent/notifications').catch(() => []);
+  const item = rows.find((row) => String(row.id) === String(notificationId)) ?? null;
+  const childId = item?.childId ?? null;
+  if (childId && state.profile?.children?.some((child) => String(child.id) === String(childId))) state.childId = String(childId);
+  const target = item?.destination ?? destination ?? 'home';
+  state.tab = ['home', 'schedule', 'payments', 'photos'].includes(target) ? target : 'home';
+  state.lessonInfo = null;
+  await loadTab();
+  if (notificationId) await api.request(`/parent/notifications/${notificationId}/read`, { method: 'POST', body: {} }).catch(() => {});
+  return { destination: state.tab, entityType: item?.entityType ?? entityType ?? null, entityId: item?.entityId ?? entityId ?? null };
+}
+
+if (globalThis.window) window.icubeParentPortal = { start, reload: loadTab, openPushDestination };
