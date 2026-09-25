@@ -4,14 +4,15 @@ import { ApiProblem } from './catalog.mjs';
 import { inTransaction } from './db.mjs';
 import { partnerProjectId } from './project-scope.mjs';
 import { addCalendarDays, businessDate, BUSINESS_UTC_OFFSET } from '../../src/shared/business-time.mjs';
+import { createNotificationEvents } from './notification-events.mjs';
 
 export const PARENT_NOTIFICATION_TYPES = Object.freeze([
   { type: 'reminder_day_before', label: 'Напомнить о занятии вечером накануне', defaultEnabled: true },
   { type: 'lesson_move', label: 'Перенос занятия', defaultEnabled: true },
   { type: 'lesson_cancel', label: 'Отмена занятия', defaultEnabled: true },
-  { type: 'last_paid_lesson', label: 'Последнее оплаченное занятие', defaultEnabled: false },
+  { type: 'last_paid_lesson', label: 'Абонемент закончился', defaultEnabled: true },
   { type: 'payment_reminder', label: 'Напомнить об оплате перед следующим занятием', defaultEnabled: true },
-  { type: 'lesson_finished', label: 'Занятие завершено', defaultEnabled: false },
+  { type: 'lesson_finished', label: 'Новые фотографии с занятия', defaultEnabled: true },
 ]);
 
 const typeMap = new Map(PARENT_NOTIFICATION_TYPES.map((item) => [item.type, item]));
@@ -58,6 +59,7 @@ export function createParentPortal(pool, {
   makePassword = generatedParentPassword,
   contact = {},
   materializeLessons = async () => {},
+  notificationEvents = createNotificationEvents(pool),
 } = {}) {
   const timeZone = contact.timeZone ?? 'Asia/Sakhalin';
   const localDate = (date = new Date()) => timeZone === 'Asia/Sakhalin' ? businessDate(date) : (() => {
@@ -268,6 +270,7 @@ export function createParentPortal(pool, {
         VALUES (:lessonId,:childId,:guardianId,NULL) ON DUPLICATE KEY UPDATE guardian_id=VALUES(guardian_id),cancelled_at=NULL,updated_at=NOW(6)`, {
         lessonId, childId: child.id, guardianId: child.guardian_id,
       });
+      await notificationEvents.absenceNotice(connection, { lessonId, childId: child.id, actorUserId: context.userId });
     });
     return { lessonId, childId: String(child.id), active: true };
   }

@@ -11,7 +11,8 @@
     "create-partner": "node scripts/create-partner.mjs",
     "photos:cleanup": "node scripts/cleanup-lesson-photos.mjs",
     "parent-notifications:daily": "node scripts/generate-parent-notifications.mjs",
-    "start:api": "node backend/src/server.mjs"
+    "start:api": "node backend/src/server.mjs",
+    "push:worker": "node backend/src/push-worker.mjs"
   },
   "engines": {
     "node": ">=22"
@@ -20,6 +21,7 @@
     "bcryptjs": "^3.0.2",
     "express": "^5.1.0",
     "helmet": "^8.1.0",
-    "mysql2": "^3.14.4"
+    "mysql2": "^3.14.4",
+    "web-push": "^3.6.7"
   }
 }

@@ -1,0 +1,12 @@
+[Unit]
+Description=iCube CRM Web Push worker
+After=network.target mysql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/icube-crm
+EnvironmentFile=/opt/icube-crm/.env
+ExecStart=/usr/bin/npm run push:worker
+User=icube
+Group=icube
+NoNewPrivileges=true

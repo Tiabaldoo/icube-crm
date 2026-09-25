@@ -1,0 +1,10 @@
+[Unit]
+Description=Run iCube CRM Web Push worker every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+Persistent=true
+Unit=icube-crm-push.service
+
+[Install]
+WantedBy=timers.target

@@ -80,6 +80,7 @@ export function createLessonPhotoService(pool, {
   retentionDays = 30,
   maxUploadBytes = 5 * 1024 * 1024,
   now = () => new Date(),
+  parentNotifications = null,
 } = {}) {
   const root = path.resolve(storageDir);
   const safePath = (storageKey) => {
@@ -174,6 +175,7 @@ export function createLessonPhotoService(pool, {
           replacedStorageKey = replacement.storage_key;
           await connection.query('UPDATE lesson_photos SET deleted_at=NOW(6) WHERE id=:id', { id: replacement.id });
         }
+        if (parentNotifications) await parentNotifications.photoAvailable(connection, lesson, childId);
         return String(result.insertId);
       });
     } catch (error) {

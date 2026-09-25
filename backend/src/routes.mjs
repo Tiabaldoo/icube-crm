@@ -23,6 +23,8 @@ import { createParentNotifications } from './parent-notifications.mjs';
 import { createParentPortal } from './parent-portal.mjs';
 import { createLoginRateLimiter } from './login-rate-limit.mjs';
 import { requireIdempotencyKey } from './idempotency.mjs';
+import { createNotificationEvents } from './notification-events.mjs';
+import { createWebPushService } from './web-push.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -33,23 +35,25 @@ const run = (handler, status = 200) => async (request, response, next) => {
 };
 
 export function createApiRouter(pool, {
+  notificationEvents = createNotificationEvents(pool),
   siteRent = createSiteRentService(pool),
-  catalog = createMysqlCatalog(pool, { siteRent }),
+  catalog = createMysqlCatalog(pool, { siteRent, notificationEvents }),
   deletions = createDeletionService(pool),
   payments = createMysqlPayments(pool),
   refunds = createMysqlRefunds(pool),
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
-  parentNotifications = createParentNotifications(pool),
-  lessonPhotos = createLessonPhotoService(pool),
-  lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications }),
-  parentPortal = createParentPortal(pool, { materializeLessons: lessons.materialize }),
+  parentNotifications = createParentNotifications(pool, { notificationEvents }),
+  lessonPhotos = createLessonPhotoService(pool, { parentNotifications }),
+  lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications, notificationEvents }),
+  parentPortal = createParentPortal(pool, { materializeLessons: lessons.materialize, notificationEvents }),
   balanceTransfers = createBalanceTransfers(pool),
-  enrollmentChanges = createEnrollmentChanges(pool, balanceTransfers),
+  enrollmentChanges = createEnrollmentChanges(pool, balanceTransfers, { notificationEvents }),
   projectTransfers = createProjectTransfers(pool, balanceTransfers),
   dailyDashboard = createDailyDashboard(pool),
   notifications = createNotifications(pool),
+  push = createWebPushService(pool, { config: {}, notificationEvents }),
   partnerSettlements = createPartnerSettlements(pool),
   statistics = createStatistics(pool),
   authService = createAuthService(pool),
@@ -80,6 +84,14 @@ export function createApiRouter(pool, {
   }, authenticate);
   router.get('/auth/me', run((request) => ({ id: request.auth.userId, displayName: request.auth.displayName,
     roles: request.auth.roles, teacherId: request.auth.teacherId ?? null, projectIds: request.auth.projectIds ?? [] })));
+
+  router.get('/push/config', run(() => push.publicConfig()));
+  router.post('/push/subscriptions', run((request) => push.bind(request.auth.userId, request.body, request.get('user-agent'))));
+  router.delete('/push/subscriptions', run((request) => push.disable(request.auth.userId, request.body?.endpoint)));
+  router.post('/push/test', run((request) => push.createTestNotification(request.auth)));
+  router.get('/notification-settings', run((request) => notificationEvents.getSettings(request.auth.userId, request.auth.roles)));
+  router.patch('/notification-settings', run((request) => notificationEvents.updateSettings(request.auth.userId, request.auth.roles, request.body)));
+
   router.get('/dashboard/daily', requirePermission('dashboard:financial'), run((request) => dailyDashboard.get(request.auth)));
   router.post('/auth/logout', async (request, response, next) => {
     try {

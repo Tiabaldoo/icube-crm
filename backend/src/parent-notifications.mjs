@@ -1,4 +1,5 @@
 import { PARENT_NOTIFICATION_TYPES } from './parent-portal.mjs';
+import { createNotificationEvents } from './notification-events.mjs';
 
 const defaults = new Map(PARENT_NOTIFICATION_TYPES.map((item) => [item.type, item.defaultEnabled]));
 const timestamp = (value) => value instanceof Date ? value.toISOString().replace('T', ' ') : String(value ?? '').replace('T', ' ');
@@ -34,12 +35,12 @@ export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
   }),
   lesson_finished: () => ({
     title: 'Как прошло занятие',
-    body: 'В личном кабинете доступна информация о занятии и новые фотографии.',
-    destination: 'home',
+    body: 'В личном кабинете доступны новые фотографии с занятия.',
+    destination: 'photos',
   }),
 });
 
-export function createParentNotifications(pool) {
+export function createParentNotifications(pool, { notificationEvents = createNotificationEvents(pool) } = {}) {
   async function recipients(connection, childId, type) {
     const [rows] = await connection.query(`SELECT DISTINCT u.id user_id,g.id guardian_id,
       COALESCE(s.enabled,:defaultEnabled) enabled
@@ -59,13 +60,12 @@ export function createParentNotifications(pool) {
     const message = template(data);
     let created = 0;
     for (const recipient of await recipients(connection, childId, type)) {
-      const [result] = await connection.query(`INSERT IGNORE INTO notifications
-        (user_id,role_code,child_id,notification_type,title,body,entity_type,entity_id,destination,dedup_key,reference_type,reference_id)
-        VALUES (:userId,'parent',:childId,:type,:title,:body,:referenceType,:referenceId,:destination,:dedupKey,:referenceType,:referenceId)`, {
-        userId: recipient.user_id, childId, type, title: message.title, body: message.body,
-        referenceType, referenceId, destination: message.destination, dedupKey,
+      const notificationId = await notificationEvents.createUser(connection, {
+        userId: recipient.user_id, roleCode: 'parent', childId, type, title: message.title, body: message.body,
+        entityType: referenceType, entityId: referenceId, destination: message.destination, dedupKey,
+        referenceType, referenceId, respectSettings: false,
       });
-      created += Number(result.affectedRows ?? 0);
+      created += Number(Boolean(notificationId));
     }
     return created;
   }
@@ -106,16 +106,19 @@ export function createParentNotifications(pool) {
       WHERE a.lesson_id=:lessonId AND a.present=TRUE`, { lessonId: lesson.id });
     let created = 0;
     for (const row of rows) {
-      created += await createForChild(connection, {
-        childId: row.child_id, type: 'lesson_finished', referenceType: 'lesson', referenceId: lesson.id,
-        dedupKey: `parent:lesson_finished:${lesson.id}:${row.child_id}`,
-      });
       if (!row.is_trial && String(row.balance_lessons) === '0.00000000') created += await createForChild(connection, {
         childId: row.child_id, type: 'last_paid_lesson', referenceType: 'lesson', referenceId: lesson.id,
         dedupKey: `parent:last_paid_lesson:${lesson.id}:${row.enrollment_id}`,
       });
     }
     return created;
+  }
+
+  async function photoAvailable(connection, lesson, childId) {
+    return createForChild(connection, {
+      childId, type: 'lesson_finished', referenceType: 'lesson', referenceId: lesson.id,
+      dedupKey: `parent:lesson_finished:${lesson.id}:${childId}`,
+    });
   }
 
   async function generateDayBefore(targetDate, connection = pool) {
@@ -144,5 +147,5 @@ export function createParentNotifications(pool) {
     return { targetDate, candidates: rows.length, created };
   }
 
-  return { createForChild, lessonMoved, lessonCancelled, lessonFinished, generateDayBefore };
+  return { createForChild, lessonMoved, lessonCancelled, lessonFinished, photoAvailable, generateDayBefore };
 }

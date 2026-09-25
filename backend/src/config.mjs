@@ -23,6 +23,19 @@ function positiveNumber(name, value) {
   return number;
 }
 
+function pushConfig(env) {
+  const requested = String(env.WEB_PUSH_ENABLED ?? '').toLowerCase() === 'true';
+  const publicKey = env.WEB_PUSH_VAPID_PUBLIC_KEY ?? null;
+  const privateKey = env.WEB_PUSH_VAPID_PRIVATE_KEY ?? null;
+  const subject = env.WEB_PUSH_VAPID_SUBJECT ?? null;
+  return {
+    enabled: Boolean(requested && publicKey && privateKey && subject),
+    publicKey, privateKey, subject,
+    parentReminderTime: /^\d{2}:\d{2}$/.test(env.PARENT_NOTIFICATION_TIME ?? '') ? env.PARENT_NOTIFICATION_TIME : '19:00',
+    batchSize: positiveNumber('WEB_PUSH_BATCH_SIZE', env.WEB_PUSH_BATCH_SIZE ?? 50),
+  };
+}
+
 export function loadConfig(env = process.env) {
   const appEnv = env.APP_ENV ?? 'development';
   const database = {
@@ -52,6 +65,7 @@ export function loadConfig(env = process.env) {
       phone: env.PARENT_CONTACT_PHONE ?? null,
       paymentQrUrl: env.PARENT_PAYMENT_QR_URL ?? null,
     },
+    push: pushConfig(env),
     database,
   };
 }

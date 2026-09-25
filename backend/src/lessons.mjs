@@ -47,7 +47,7 @@ function lessonKind(row) {
   return 'regular';
 }
 
-export function createMysqlLessons(pool, { lessonPhotos = null, parentNotifications = null } = {}) {
+export function createMysqlLessons(pool, { lessonPhotos = null, parentNotifications = null, notificationEvents = null } = {}) {
   const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
     (SELECT JSON_ARRAYAGG(an.child_id) FROM lesson_child_absence_notices an
       WHERE an.lesson_id=l.id AND an.cancelled_at IS NULL) absence_notice_child_ids,
@@ -298,8 +298,12 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           introGroup, emptyTrip,
         });
         const updatedStartsAt = `${date} ${start}:00`;
-        if (parentNotifications && lesson.status !== 'completed' && mysqlDateTime(lesson.starts_at) !== updatedStartsAt) {
-          await parentNotifications.lessonMoved(connection, { ...lesson, starts_at: updatedStartsAt }, lesson.starts_at);
+        if (lesson.status !== 'completed' && mysqlDateTime(lesson.starts_at) !== updatedStartsAt) {
+          const updatedLesson = { ...lesson, starts_at: updatedStartsAt };
+          if (parentNotifications) await parentNotifications.lessonMoved(connection, updatedLesson, lesson.starts_at);
+          if (notificationEvents) await notificationEvents.lessonMoved(connection, {
+            lesson: updatedLesson, previousStartsAt: lesson.starts_at, actorUserId: context.userId,
+          });
         }
         if (lesson.status === 'completed' && (introGroup !== bool(lesson.is_intro_group) || emptyTrip !== bool(lesson.is_empty_trip))) {
           lesson.is_intro_group = introGroup; lesson.is_empty_trip = emptyTrip; lesson.starts_at = updatedStartsAt;
@@ -358,7 +362,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
 
   async function enrollmentForAttendance(connection, lesson, childId) {
     const date = isoDate(lesson.starts_at);
-    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.balance_lessons,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
@@ -404,8 +408,14 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       await connection.query(`INSERT INTO balance_lot_consumptions (balance_lot_id,balance_entry_id,lessons,amount)
         VALUES (:lotId,:entryId,:lessons,:amount)`, { lotId: consumption.lotId, entryId: entry.insertId, lessons: consumption.lessons, amount: consumption.amount });
     }
+    const balanceBefore = String(enrollment.balance_lessons);
+    const balanceAfter = lessonDecimal(lessonUnits(balanceBefore) - lessonUnits('1.00000000'));
     await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-1.00000000 WHERE id=:id', { id: enrollment.id });
     await connection.query('UPDATE attendances SET enrollment_id=:enrollmentId,price_snapshot=:price,charged_lessons=1.00000000 WHERE id=:id', { id: attendance.id, enrollmentId: enrollment.id, price: String(enrollment.current_price) });
+    if (notificationEvents) await notificationEvents.debtThreshold(connection, {
+      enrollmentId: enrollment.id, before: balanceBefore, after: balanceAfter,
+      causeKey: `attendance-${attendance.id}`, actorUserId: context.userId,
+    });
   }
 
   async function reverseAttendanceDebit(connection, attendance, context) {
@@ -566,6 +576,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         lesson.status = 'cancelled';
         await recalculateSalary(connection, lesson);
         if (parentNotifications) await parentNotifications.lessonCancelled(connection, lesson);
+        if (notificationEvents) await notificationEvents.lessonCancelled(connection, { lesson, actorUserId: context.userId });
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -738,7 +749,10 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           lessonId: lesson.id, childId, enrollmentId: enrollment.insertId, actorId: context.userId ?? null,
         });
         if (hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
-          await connection.query(`INSERT INTO notifications
+          if (notificationEvents) await notificationEvents.quickChildCreated(connection, {
+            lesson, childId, childName: name, actorUserId: context.userId,
+          });
+          else await connection.query(`INSERT INTO notifications
             (role_code,notification_type,title,body,entity_type,entity_id)
             VALUES ('director','quick_child_created','Новый ребёнок от преподавателя',:body,'child',:childId)`, {
             childId, body: `${name} создан преподавателем во время занятия и ожидает проверки.`,
