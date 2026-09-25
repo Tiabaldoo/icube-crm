@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 import { createWebPushService, normalizePushSubscription } from '../backend/src/web-push.mjs';
 import { createNotificationEvents, crossedDebtThreshold } from '../backend/src/notification-events.mjs';
@@ -281,6 +282,63 @@ test('service worker preserves app-shell/API exclusion and adds real push + noti
   assert.match(source, /pushNotification/);
 });
 
+test('service worker runtime parses push payload, shows tagged notification and focuses/navigates existing CRM window', async () => {
+  const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
+  const handlers = {}; const shown = []; const navigations = []; let focused = 0; let closed = 0;
+  const client = {
+    url: 'https://crm.example/app/',
+    async navigate(url) { navigations.push(url); this.url = url; return this; },
+    async focus() { focused += 1; return this; },
+  };
+  const context = {
+    URL,
+    self: {
+      registration: {
+        scope: 'https://crm.example/app/',
+        async showNotification(title, options) { shown.push({ title, options }); },
+      },
+      location: { origin: 'https://crm.example' },
+      addEventListener(type, handler) { handlers[type] = handler; },
+    },
+    clients: {
+      async matchAll() { return [client]; },
+      async openWindow(url) { throw new Error('openWindow must not be used when CRM window exists: ' + url); },
+    },
+    caches: { open: async () => ({ addAll: async () => {}, put: async () => {}, match: async () => null }), keys: async () => [] },
+    fetch: async () => ({ ok: true, clone() { return this; } }),
+  };
+  runInNewContext(source, context, { filename: 'service-worker.js' });
+  let pending;
+  handlers.push({
+    data: { json: () => ({
+      notificationId: '123', type: 'teacher_lesson_moved', title: 'Занятие перенесено', body: 'Новое время',
+      destination: 'lesson', entityType: 'lesson', entityId: '456', tag: 'lesson-move-456',
+    }) },
+    waitUntil(value) { pending = value; },
+  });
+  await pending;
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].title, 'Занятие перенесено');
+  assert.equal(shown[0].options.body, 'Новое время');
+  assert.equal(shown[0].options.tag, 'lesson-move-456');
+  assert.equal(shown[0].options.data.notificationId, '123');
+  assert.equal(shown[0].options.data.entityId, '456');
+
+  handlers.notificationclick({
+    notification: { data: shown[0].options.data, close() { closed += 1; } },
+    waitUntil(value) { pending = value; },
+  });
+  await pending;
+  assert.equal(closed, 1);
+  assert.equal(focused, 1);
+  assert.equal(navigations.length, 1);
+  const target = new URL(navigations[0]);
+  assert.equal(target.searchParams.get('pushNotification'), '123');
+  assert.equal(target.searchParams.get('destination'), 'lesson');
+  assert.equal(target.searchParams.get('entityType'), 'lesson');
+  assert.equal(target.searchParams.get('entityId'), '456');
+});
+
 test('push frontend uses capability detection, explicit permission button and backend test path', async () => {
   const source = await readFile(new URL('../src/frontend/push-client.mjs', import.meta.url), 'utf8');
   assert.match(source, /navigator\?\.serviceWorker.*PushManager.*Notification/s);
@@ -302,6 +360,50 @@ test('deep-link bridge opens teacher lesson, director child and parent schedule 
   assert.match(parentSource, /\/parent\/notifications\/\$\{notificationId\}\/read/);
   assert.match(apiSource, /showLogin\(\)/);
   assert.match(apiSource, /afterAuthenticatedLoad\(profile\)/);
+});
+
+test('one logical notification enqueues one delivery per active device and deduplicates repeated generation', async () => {
+  const subscriptions = [
+    { id: 1, user_id: 20, disabled_at: null },
+    { id: 2, user_id: 20, disabled_at: null },
+    { id: 3, user_id: 20, disabled_at: new Date() },
+    { id: 4, user_id: 21, disabled_at: null },
+  ];
+  const state = { notifications: [], deliveries: [], nextId: 1 };
+  const connection = { query: async (sql, params = {}) => {
+    if (sql.startsWith('SELECT enabled FROM user_notification_settings')) return [[]];
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) {
+      const existing = state.notifications.find((row) => String(row.userId) === String(params.userId) && row.dedupKey === params.dedupKey);
+      if (existing) return [{ affectedRows: 0, insertId: 0 }];
+      const row = { id: state.nextId++, ...params }; state.notifications.push(row);
+      return [{ affectedRows: 1, insertId: row.id }];
+    }
+    if (sql.startsWith('SELECT id FROM notifications')) {
+      const row = state.notifications.find((item) => String(item.userId) === String(params.userId) && item.dedupKey === params.dedupKey);
+      return [[row ? { id: row.id } : undefined].filter(Boolean)];
+    }
+    if (sql.startsWith('INSERT IGNORE INTO push_deliveries')) {
+      for (const sub of subscriptions.filter((item) => String(item.user_id) === String(params.userId) && item.disabled_at == null)) {
+        if (!state.deliveries.some((item) => item.notificationId === Number(params.notificationId) && item.subscriptionId === sub.id)) {
+          state.deliveries.push({ notificationId: Number(params.notificationId), subscriptionId: sub.id });
+        }
+      }
+      return [{ affectedRows: 0 }];
+    }
+    throw new Error('Unexpected multi-device SQL: ' + sql);
+  } };
+  const events = createNotificationEvents({ query: connection.query });
+  const payload = {
+    userId: 20, roleCode: 'teacher', type: 'teacher_lesson_moved', title: 'Move', body: 'Body',
+    entityType: 'lesson', entityId: 90, destination: 'lesson', dedupKey: 'teacher:lesson_move:90:20260925160000',
+  };
+  await events.createUser(connection, payload);
+  await events.createUser(connection, payload);
+  assert.equal(state.notifications.length, 1);
+  assert.deepEqual(state.deliveries, [
+    { notificationId: 1, subscriptionId: 1 },
+    { notificationId: 1, subscriptionId: 2 },
+  ]);
 });
 
 test('push migration and worker are durable, per-device and atomically claimed', async () => {
