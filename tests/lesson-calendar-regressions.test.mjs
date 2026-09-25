@@ -68,7 +68,8 @@ test('подпись из другой группы использует тек�
   assert.match(uiSource, /status==='пауза'\|\|status==='paused'/);
   assert.match(uiSource, /status==='закончил'\|\|status==='finished'/);
   assert.match(uiSource, /Number\(b\.id\|\|0\)-Number\(a\.id\|\|0\)/);
-  assert.match(uiSource, /Number\(lessonEnrollment\.groupId\)===Number\(l\.groupId\)/);
+  assert.match(uiSource, /Object\.prototype\.hasOwnProperty\.call\(lessonEnrollment,'__v146LiveGroupId'\)/);
+  assert.match(uiSource, /Number\(currentGroupId\)===Number\(l\.groupId\)/);
   assert.match(uiSource, /sameGroup \? '' : '<div class="muted mini lesson-student-subtitle">из другой группы<\/div>'/);
 });
 
