@@ -182,16 +182,17 @@ export async function mountPushControls(selector) {
   await refreshPushState(); target.innerHTML = controlsMarkup();
 }
 
-async function rerenderMounted() {
+async function rerenderMounted(refresh = true) {
   for (const element of document.querySelectorAll('[data-push-controls]')) {
-    await mountPushControls(element);
+    if (refresh) await mountPushControls(element);
+    else element.innerHTML = controlsMarkup();
   }
 }
 
-async function runAction(action) {
+async function runAction(action, refresh = true) {
   try {
     await action();
-    await rerenderMounted();
+    await rerenderMounted(refresh);
   } catch (error) { window.alert(error?.message ?? 'Не удалось выполнить действие с уведомлениями.'); }
 }
 
@@ -217,7 +218,7 @@ async function saveSetting(type, enabled) {
 
 window.icubePush = {
   refresh: refreshPushState, mount: mountPushControls, rebind: rebindPush, unbind: unbindPush,
-  enable: () => runAction(enablePush), disable: () => runAction(disablePush),
+  enable: () => runAction(enablePush, false), disable: () => runAction(disablePush),
   test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
   openSettings, setting: saveSetting,
 };
