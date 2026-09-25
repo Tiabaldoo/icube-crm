@@ -83,7 +83,7 @@ function fixture(overrides = {}) {
     throw new Error(`Неожиданный SQL: ${sql}`);
   };
   const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
-  return { state, service: createBalanceTransfers({ query, getConnection: async () => connection }, { notificationEvents }) };
+  return { state, service: createBalanceTransfers({ query, getConnection: async () => connection }, { notificationEvents: overrides.notificationEvents ?? null }) };
 }
 
 test('transfer одной транзакцией обнуляет source, пополняет target и создаёт новый lot', async () => {
