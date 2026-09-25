@@ -81,12 +81,12 @@ test('удаление ошибочного посещения восстана�
   assert.ok(calls.some(({ sql }) => sql.startsWith('UPDATE salary_accruals SET reversed_at=')));
 });
 
-function paymentRemovalPool({ activeConsumption = false } = {}) {
+function paymentRemovalPool({ activeConsumption = false, balance = '4.00000000' } = {}) {
   const calls = [];
   const handler = async (sql, params = {}) => {
     calls.push({ sql, params });
     if (sql.startsWith('SELECT * FROM payments')) return [[{ id: 11, enrollment_id: 9, lessons_credit: '4.00000000' }]];
-    if (sql.includes('FROM child_enrollments e')) return [[{ id: 9, child_id: 8, direction_id: 1, balance_lessons: '4.00000000', current_price: null }]];
+    if (sql.includes('FROM child_enrollments e')) return [[{ id: 9, child_id: 8, direction_id: 1, balance_lessons: balance, current_price: null }]];
     if (sql.startsWith('SELECT id FROM refunds')) return [[]];
     if (sql.startsWith('SELECT id FROM balance_entries')) return [[{ id: 12 }]];
     if (sql.startsWith('SELECT blc.id FROM balance_lot_consumptions')) return [activeConsumption ? [{ id: 30 }] : []];
@@ -102,6 +102,72 @@ test('после reversal посещения оплату можно удали�
   assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE blc FROM balance_lot_consumptions')));
   assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE FROM balance_lots')));
   assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE FROM payments')));
+});
+
+test('удаление оплаты уведомляет о реальном пересечении долга без изменения финансового расчёта', async () => {
+  const { pool } = paymentRemovalPool({ balance: '1.00000000' });
+  const calls = [];
+  const notificationEvents = { async debtThreshold(_connection, payload) { calls.push(payload); } };
+  await createMysqlPayments(pool, { notificationEvents }).remove(11, { actorUserId: 5 });
+  assert.deepEqual(calls, [{
+    enrollmentId: 9, before: '1.00000000', after: '-3.00000000',
+    causeKey: 'payment-remove-11', actorUserId: 5,
+  }]);
+});
+
+function paymentUpdateDebtPool() {
+  const state = {
+    balance: '1.00000000',
+    payment: { id: 11, enrollment_id: 9, child_id: 8, direction_id: 1, group_id_snapshot: 4, project_id_snapshot: 2,
+      paid_on: '2026-09-01', amount: '4100.00', price_snapshot: '1025.00', lessons_credit: '4.00000000',
+      method: 'cashless', note: null, created_at: '2026-09-01 12:00:00.000000', updated_at: '2026-09-10 12:00:00.000000' },
+  };
+  const decimal = (value) => Number(value).toFixed(8);
+  const handler = async (sql, params = {}) => {
+    if (sql.startsWith('SELECT * FROM payments WHERE id=')) return [[{ ...state.payment }]];
+    if (sql.startsWith('SELECT id FROM refunds WHERE payment_id=')) return [[]];
+    if (sql.includes('FROM child_enrollments e')) return [[{
+      id: 9, child_id: 8, direction_id: 1, group_id: 4, project_id: 2, superseded_at: null,
+      balance_lessons: state.balance, current_price: '1025.00',
+    }]];
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons-')) {
+      state.balance = decimal(Number(state.balance) - Number(params.lessons)); return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+')) {
+      state.balance = decimal(Number(state.balance) + Number(params.lessons)); return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('UPDATE payments SET')) {
+      Object.assign(state.payment, { amount: params.amount, price_snapshot: params.price, lessons_credit: params.lessons,
+        paid_on: params.paidOn, method: params.method, updated_at: '2026-09-25 12:00:00.000000' });
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('SELECT id FROM balance_entries WHERE payment_id=')) return [[{ id: 12 }]];
+    if (sql.startsWith('SELECT id FROM balance_lots WHERE source_balance_entry_id=')) return [[{ id: 20 }]];
+    if (sql.startsWith('SELECT id FROM balance_lot_consumptions WHERE balance_lot_id=')) return [[]];
+    if (sql.startsWith('UPDATE balance_entries SET')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('UPDATE balance_lots SET enrollment_id=')) return [{ affectedRows: 1 }];
+    if (sql.includes('FROM payments p JOIN children c')) return [[{
+      ...state.payment, child_name: 'Иван', direction_name: 'Робототехника', refunded_amount: '0.00', remaining_lessons: '0.00000000',
+    }]];
+    throw new Error(`Неожиданный SQL payment update debt: ${sql}`);
+  };
+  const connection = { query: handler, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+  return { state, pool: { query: handler, getConnection: async () => connection } };
+}
+
+test('уменьшение оплаты уведомляет о crossing > -2 → <= -2 и сохраняет существующий расчёт balance', async () => {
+  const fixture = paymentUpdateDebtPool();
+  const calls = [];
+  const notificationEvents = { async debtThreshold(_connection, payload) { calls.push(payload); } };
+  const result = await createMysqlPayments(fixture.pool, { notificationEvents }).update(11, {
+    amount: '1025.00', paidOn: '2026-09-01', method: 'cashless',
+  }, { actorUserId: 6 });
+  assert.equal(fixture.state.balance, '-2.00000000');
+  assert.equal(result.lessonsCredit, '1.00000000');
+  assert.deepEqual(calls, [{
+    enrollmentId: 9, before: '1.00000000', after: '-2.00000000',
+    causeKey: 'payment-update-11-2026-09-10 12:00:00.000000', actorUserId: 6,
+  }]);
 });
 
 test('оплата с активным consumed lot по-прежнему не удаляется', async () => {

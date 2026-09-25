@@ -39,7 +39,7 @@ export function createApiRouter(pool, {
   siteRent = createSiteRentService(pool),
   catalog = createMysqlCatalog(pool, { siteRent, notificationEvents }),
   deletions = createDeletionService(pool),
-  payments = createMysqlPayments(pool),
+  payments = createMysqlPayments(pool, { notificationEvents }),
   refunds = createMysqlRefunds(pool),
   priceVersions = createDirectionPriceVersions(pool),
   salaryRateVersions = createSalaryRateVersions(pool),
@@ -212,7 +212,9 @@ export function createApiRouter(pool, {
   router.patch('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); if (request.body.enrollmentId) await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.update(request.params.id, request.body, {
     actorUserId: request.auth?.userId ?? null,
   }); }));
-  router.delete('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.remove(request.params.id); }, 204));
+  router.delete('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.remove(request.params.id, {
+    actorUserId: request.auth?.userId ?? null,
+  }); }, 204));
   router.get('/balances', requirePermission('balances:read'), run((request) => payments.balances(projectFilters(request))));
   router.get('/refunds', requirePermission('refunds:read'), run((request) => refunds.list(projectFilters(request))));
   router.post('/refunds', requirePermission('refunds:write'), run(async (request) => { await assertOwned(pool, 'payments', request.body.paymentId, request.auth); return refunds.create(request.body, {

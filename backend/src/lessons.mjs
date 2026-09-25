@@ -414,7 +414,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     await connection.query('UPDATE attendances SET enrollment_id=:enrollmentId,price_snapshot=:price,charged_lessons=1.00000000 WHERE id=:id', { id: attendance.id, enrollmentId: enrollment.id, price: String(enrollment.current_price) });
     if (notificationEvents) await notificationEvents.debtThreshold(connection, {
       enrollmentId: enrollment.id, before: balanceBefore, after: balanceAfter,
-      causeKey: `attendance-${attendance.id}`, actorUserId: context.userId,
+      causeKey: `balance-entry-${entry.insertId}`, actorUserId: context.userId,
     });
   }
 

@@ -79,7 +79,7 @@ function fundedLessons(credit, balanceBefore) {
   return lessonDecimal(available > 0n ? available : 0n);
 }
 
-export function createMysqlPayments(pool) {
+export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
   const paymentSelect = `SELECT p.id,p.enrollment_id,p.child_id,c.full_name child_name,p.direction_id,d.name direction_name,
     p.group_id_snapshot,p.project_id_snapshot,p.paid_on,p.amount,p.price_snapshot,p.lessons_credit,p.method,p.note,
     (SELECT COALESCE(SUM(r.amount),0) FROM refunds r WHERE r.payment_id=p.id AND r.deleted_at IS NULL) refunded_amount,
@@ -204,8 +204,17 @@ export function createMysqlPayments(pool) {
           : String(target.balance_lessons);
         const lotLessons = fundedLessons(lessons, targetBalanceBefore);
         const method = paymentMethod(body.method ?? old.method);
+        const oldBalanceBefore = String(oldEnrollment.balance_lessons);
+        const oldBalanceAfter = String(oldEnrollment.id) === String(target.id)
+          ? lessonDecimal(lessonUnits(oldBalanceBefore) - lessonUnits(String(old.lessons_credit)) + lessonUnits(lessons))
+          : lessonDecimal(lessonUnits(oldBalanceBefore) - lessonUnits(String(old.lessons_credit)));
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: old.enrollment_id, lessons: String(old.lessons_credit) });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: target.id, lessons });
+        if (notificationEvents) await notificationEvents.debtThreshold(connection, {
+          enrollmentId: oldEnrollment.id, before: oldBalanceBefore, after: oldBalanceAfter,
+          causeKey: `payment-update-${paymentId}-${String(old.updated_at ?? old.created_at ?? old.paid_on)}`,
+          actorUserId: context.actorUserId,
+        });
         await connection.query(`UPDATE payments SET enrollment_id=:enrollmentId,child_id=:childId,direction_id=:directionId,
           group_id_snapshot=:groupId,project_id_snapshot=:projectId,paid_on=:paidOn,amount=:amount,
           price_snapshot=:price,lessons_credit=:lessons,method=:method,note=:note WHERE id=:id`, {
@@ -238,13 +247,14 @@ export function createMysqlPayments(pool) {
       return get(paymentId);
     } catch (error) { throw mysqlError(error); }
   }
-  async function remove(paymentId) {
+  async function remove(paymentId, context = {}) {
     paymentId = identifier(paymentId);
     try {
       await inTransaction(pool, async (connection) => {
         const [payments] = await connection.query('SELECT * FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: paymentId });
         if (!payments.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
-        const payment = payments[0]; await lockEnrollment(connection, payment.enrollment_id, { requirePrice: false });
+        const payment = payments[0];
+        const enrollment = await lockEnrollment(connection, payment.enrollment_id, { requirePrice: false });
         const [refunds] = await connection.query('SELECT id FROM refunds WHERE payment_id=:id AND deleted_at IS NULL LIMIT 1', { id: paymentId });
         if (refunds.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплату с возвратом удалить нельзя');
         const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:id AND entry_type='payment' FOR UPDATE`, { id: paymentId });
@@ -255,7 +265,13 @@ export function createMysqlPayments(pool) {
           LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=debit.id
           WHERE bl.source_balance_entry_id=:id AND reversal.id IS NULL LIMIT 1`, { id: entries[0].id });
         if (activeConsumptions.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплата ещё используется в активной финансовой истории');
+        const balanceBefore = String(enrollment.balance_lessons);
+        const balanceAfter = lessonDecimal(lessonUnits(balanceBefore) - lessonUnits(String(payment.lessons_credit)));
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: payment.enrollment_id, lessons: String(payment.lessons_credit) });
+        if (notificationEvents) await notificationEvents.debtThreshold(connection, {
+          enrollmentId: enrollment.id, before: balanceBefore, after: balanceAfter,
+          causeKey: `payment-remove-${paymentId}`, actorUserId: context.actorUserId,
+        });
         await connection.query(`DELETE blc FROM balance_lot_consumptions blc
           JOIN balance_lots bl ON bl.id=blc.balance_lot_id WHERE bl.source_balance_entry_id=:id`, { id: entries[0].id });
         await connection.query('DELETE FROM balance_lots WHERE source_balance_entry_id=:id', { id: entries[0].id });
