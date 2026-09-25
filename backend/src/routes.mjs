@@ -48,7 +48,7 @@ export function createApiRouter(pool, {
   lessonPhotos = createLessonPhotoService(pool, { parentNotifications }),
   lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications, notificationEvents }),
   parentPortal = createParentPortal(pool, { materializeLessons: lessons.materialize, notificationEvents }),
-  balanceTransfers = createBalanceTransfers(pool),
+  balanceTransfers = createBalanceTransfers(pool, { notificationEvents }),
   enrollmentChanges = createEnrollmentChanges(pool, balanceTransfers, { notificationEvents }),
   projectTransfers = createProjectTransfers(pool, balanceTransfers),
   dailyDashboard = createDailyDashboard(pool),
@@ -281,7 +281,9 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
     idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }); }, 201));
-  router.delete('/balance-transfers/:id', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'transfers', request.params.id, request.auth); return balanceTransfers.remove(request.params.id); }, 204));
+  router.delete('/balance-transfers/:id', requirePermission('balance-transfers:write'), run(async (request) => { await assertOwned(pool, 'transfers', request.params.id, request.auth); return balanceTransfers.remove(request.params.id, {
+    actorUserId: request.auth?.userId ?? null,
+  }); }, 204));
   router.post('/payments/:id/reverse', requirePermission('*'), notImplemented('payment reversal'));
   router.post('/refunds/:id/reverse', requirePermission('*'), notImplemented('refund reversal'));
   router.get('/children/:id/ledger', requirePermission('children:read'), notImplemented('child ledger'));

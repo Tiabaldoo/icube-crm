@@ -55,7 +55,7 @@ export function fundedTransferLessons(credit, balanceBefore) {
   return lessonDecimal(funded > 0n ? funded : 0n);
 }
 
-export function createBalanceTransfers(pool) {
+export function createBalanceTransfers(pool, { notificationEvents = null } = {}) {
   const enrollmentSql = `SELECT e.id,e.child_id,e.direction_id,e.project_id,e.status,e.balance_lessons,
     COALESCE(
       (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
@@ -209,7 +209,7 @@ export function createBalanceTransfers(pool) {
     }
   }
 
-  async function remove(rawTransferId) {
+  async function remove(rawTransferId, context = {}) {
     const transferId = identifier(rawTransferId);
     try {
       await inTransaction(pool, async (connection) => {
@@ -228,9 +228,11 @@ export function createBalanceTransfers(pool) {
           throw new ApiProblem(409, 'AUTOMATIC_TRANSFER_NOT_REVERSIBLE',
             'Этот перенос создан автоматически при изменении направления или цены и отдельно не отменяется.');
         }
-        await connection.query('SELECT id FROM child_enrollments WHERE id IN (:sourceId,:targetId) ORDER BY id FOR UPDATE', {
+        const [enrollments] = await connection.query('SELECT id,balance_lessons FROM child_enrollments WHERE id IN (:sourceId,:targetId) ORDER BY id FOR UPDATE', {
           sourceId: transfer.source_enrollment_id, targetId: transfer.target_enrollment_id,
         });
+        const targetEnrollment = enrollments.find((row) => String(row.id) === String(transfer.target_enrollment_id));
+        if (!targetEnrollment) throw new ApiProblem(409, 'TRANSFER_LEDGER_INCONSISTENT', 'Целевое направление переноса не найдено');
         const [entries] = await connection.query(`SELECT id,enrollment_id,entry_type,lessons_delta FROM balance_entries
           WHERE transfer_id=:id AND entry_type IN ('transfer_out','transfer_in') ORDER BY id FOR UPDATE`, { id: transferId });
         const outEntry = entries.find((entry) => entry.entry_type === 'transfer_out');
@@ -261,8 +263,14 @@ export function createBalanceTransfers(pool) {
         for (const change of sourceChanges) {
           await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: change.balance_lot_id, lessons: String(change.lessons_delta) });
         }
+        const targetBalanceBefore = String(targetEnrollment.balance_lessons);
+        const targetBalanceAfter = lessonDecimal(lessonUnits(targetBalanceBefore) - lessonUnits(String(inEntry.lessons_delta)));
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: transfer.target_enrollment_id, lessons: String(inEntry.lessons_delta) });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: transfer.source_enrollment_id, lessons: lessonDecimal(-lessonUnits(String(outEntry.lessons_delta))) });
+        if (notificationEvents) await notificationEvents.debtThreshold(connection, {
+          enrollmentId: targetEnrollment.id, before: targetBalanceBefore, after: targetBalanceAfter,
+          causeKey: `balance-transfer-remove-${transferId}`, actorUserId: context.actorUserId,
+        });
         await connection.query('DELETE FROM balance_lot_consumptions WHERE balance_entry_id=:entryId', { entryId: outEntry.id });
         await connection.query('DELETE FROM balance_transfer_lot_changes WHERE transfer_id=:id', { id: transferId });
         await connection.query('DELETE FROM balance_lots WHERE id=:id', { id: targetChange.balance_lot_id });
