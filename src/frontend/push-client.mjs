@@ -4,6 +4,21 @@ const api = new ApiClient();
 const DEVICE_DISABLED_KEY = 'icube-push-device-disabled';
 const state = { config: null, status: 'loading', message: 'Проверяем…', subscription: null };
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+let pushPanel = null;
+let pushPanelAnchor = null;
+let pushPanelInbox = false;
+
+function bellIcon() {
+  return state.status === 'enabled' ? '🔔' : '🔕';
+}
+function syncBellIcons() {
+  document.querySelectorAll('[data-push-bell-icon]').forEach((element) => { element.textContent = bellIcon(); });
+}
+function pushStatusText() {
+  if (state.status === 'enabled') return 'Уведомления включены';
+  if (['available', 'disabled'].includes(state.status)) return 'Уведомления выключены';
+  return state.message;
+}
 
 function supported() {
   return Boolean(
@@ -164,15 +179,11 @@ export async function testPush() {
 
 function controlsMarkup() {
   const status = state.status;
-  const dot = ['enabled'].includes(status) ? '●' : status === 'blocked' ? '●' : '○';
   const actions = [];
-  if (['available', 'disabled'].includes(status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Разрешить уведомления</button>');
-  if (status === 'enabled') {
-    actions.push('<button class="btn" type="button" onclick="icubePush.test()">Отправить тестовое уведомление</button>');
-    actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления на этом устройстве</button>');
-  }
+  if (['available', 'disabled', 'blocked'].includes(status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
+  if (status === 'enabled') actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления</button>');
   return `<div class="push-device-card"><h3 style="margin:0 0 8px">Системные уведомления</h3>
-    <div class="muted" style="margin-bottom:12px"><b>${dot}</b> ${esc(state.message)}</div>
+    <div class="muted" style="margin-bottom:12px">${esc(pushStatusText())}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">${actions.join('')}</div></div>`;
 }
 
@@ -189,10 +200,71 @@ async function rerenderMounted(refresh = true) {
   }
 }
 
+function closePushPanel() {
+  pushPanel?.remove();
+  pushPanel = null;
+  pushPanelAnchor = null;
+  pushPanelInbox = false;
+}
+
+function positionPushPanel() {
+  if (!pushPanel || !pushPanelAnchor?.isConnected) return;
+  const rect = pushPanelAnchor.getBoundingClientRect();
+  const gap = 8;
+  const margin = 12;
+  const width = Math.min(320, Math.max(240, window.innerWidth - margin * 2));
+  let left = Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin);
+  let top = rect.bottom + gap;
+  pushPanel.style.width = `${width}px`;
+  pushPanel.style.left = `${left}px`;
+  pushPanel.style.top = `${top}px`;
+  const panelRect = pushPanel.getBoundingClientRect();
+  if (panelRect.bottom > window.innerHeight - margin) {
+    top = Math.max(margin, rect.top - panelRect.height - gap);
+    pushPanel.style.top = `${top}px`;
+  }
+}
+
+function pushPanelMarkup() {
+  const actions = [];
+  if (state.status === 'enabled') actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления</button>');
+  else if (['available', 'disabled', 'blocked'].includes(state.status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
+  if (pushPanelInbox) actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotifications?.()">Открыть уведомления</button>');
+  else actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();icubePush.openSettings()">Типы уведомлений</button>');
+  return `<div class="push-popover-head"><b>Системные уведомления</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
+    <div class="push-popover-status">${esc(pushStatusText())}</div>
+    <div class="push-popover-actions">${actions.join('')}</div>`;
+}
+
+function renderPushPanel() {
+  if (!pushPanel) return;
+  pushPanel.innerHTML = pushPanelMarkup();
+  syncBellIcons();
+  positionPushPanel();
+}
+
+async function togglePushPanel(anchor, inbox = false) {
+  if (!anchor) return;
+  if (pushPanel && pushPanelAnchor === anchor) { closePushPanel(); return; }
+  closePushPanel();
+  await refreshPushState();
+  syncBellIcons();
+  pushPanelAnchor = anchor;
+  pushPanelInbox = Boolean(inbox);
+  pushPanel = document.createElement('div');
+  pushPanel.className = 'push-popover';
+  pushPanel.setAttribute('role', 'dialog');
+  pushPanel.setAttribute('aria-label', 'Системные уведомления');
+  document.body.appendChild(pushPanel);
+  renderPushPanel();
+}
+
 async function runAction(action, refresh = true) {
   try {
     await action();
     await rerenderMounted(refresh);
+    syncBellIcons();
+    renderPushPanel();
   } catch (error) { window.alert(error?.message ?? 'Не удалось выполнить действие с уведомлениями.'); }
 }
 
@@ -201,8 +273,8 @@ async function openSettings() {
   try {
     const settings = await api.request('/notification-settings');
     await refreshPushState();
-    legacy.state.modal = `<h3>Уведомления</h3><div data-push-controls>${controlsMarkup()}</div>
-      <div style="margin-top:18px"><h3 style="font-size:16px">Типы уведомлений</h3>
+    legacy.state.modal = `<h3>Типы уведомлений</h3>
+      <div style="margin-top:8px">
       ${settings.map((item) => `<label class="parent-toggle" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0">
         <span>${esc(item.label)}</span><input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="icubePush.setting('${esc(item.type)}',this.checked)">
       </label>`).join('')}</div>
@@ -220,11 +292,21 @@ window.icubePush = {
   refresh: refreshPushState, mount: mountPushControls, rebind: rebindPush, unbind: unbindPush,
   enable: () => runAction(enablePush, false), disable: () => runAction(disablePush),
   test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
+  icon: bellIcon, syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
   openSettings, setting: saveSetting,
 };
+
+document.addEventListener('click', (event) => {
+  if (!pushPanel || pushPanel.contains(event.target) || pushPanelAnchor?.contains(event.target)) return;
+  closePushPanel();
+});
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closePushPanel(); });
+window.addEventListener('resize', closePushPanel);
 
 window.icubeAuthReady?.then(async (profile) => {
   if (!profile) return;
   await rebindPush(profile).catch(console.error);
+  await refreshPushState();
+  syncBellIcons();
   if (window.icubeHandlePushDeepLink) await window.icubeHandlePushDeepLink(profile).catch(console.error);
 });

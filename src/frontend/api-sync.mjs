@@ -1585,22 +1585,23 @@ function teacherNameForShell() {
 }
 
 function installAuthenticatedShells() {
+  const pushBell = () => `<button class="push-bell-button" type="button" data-push-bell onclick="icubePush?.togglePanel(this)" aria-label="Системные уведомления" title="Системные уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span></button>`;
   const originalShell = window.shell;
   if (typeof originalShell === 'function') {
     window.shell = function (...args) {
       const result = originalShell.apply(this, args);
       if (!authProfile) return result;
       const roleLabel = authProfile.roles.includes('director') ? 'Директор' : 'Партнёр';
-      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
+      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div>${pushBell()}<button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
       return result.replace(/<div><select class="role-switch"[\s\S]*?<\/select><div class="muted mini">Режим прототипа<\/div><\/div>/, account);
     };
   }
   window.teacherShell = function (content) {
     const parentRole = temporaryTeacherParentRole();
     const right = parentRole
-      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
+      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button>${pushBell()}<button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
       : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
-    const teacherPushButton = parentRole ? '' : '<button class="btn" onclick="icubePush?.openSettings()">Уведомления</button>';
+    const teacherPushButton = parentRole ? '' : '${pushBell()}';
     const offline = legacy.state.offlineBootstrap || globalThis.navigator?.onLine === false;
     const offlineNotice = offline
       ? '<div class="notice" style="max-width:680px;margin:12px auto 0">Офлайн · изменения будут отправлены после подключения</div>'

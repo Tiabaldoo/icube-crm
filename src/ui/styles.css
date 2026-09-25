@@ -1414,3 +1414,17 @@ body.context-help-open{overflow:hidden}
   .student-check.lesson-student-card>.lesson-photo-add-slot{width:46px!important}
   .lesson-photo-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
+
+
+/* Compact Web Push control */
+.push-bell-button{width:42px;height:42px;min-width:42px;padding:0;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--text);display:inline-grid;place-items:center;font-size:20px;line-height:1;cursor:pointer;flex:0 0 42px}
+.push-bell-button:hover{background:#f9fafb}
+.push-bell-button [data-push-bell-icon]{display:block;line-height:1}
+.push-popover{position:fixed;z-index:120;box-sizing:border-box;max-width:calc(100vw - 24px);max-height:min(70vh,420px);overflow:auto;padding:14px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--text);box-shadow:0 16px 40px rgba(16,24,40,.18)}
+.push-popover-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.push-popover-close{width:32px;height:32px;padding:0;border:0;border-radius:9px;background:transparent;color:var(--muted);font-size:24px;line-height:1;cursor:pointer}
+.push-popover-close:hover{background:#f2f4f7}
+.push-popover-status{margin-top:8px;color:var(--muted);font-size:14px;line-height:1.4}
+.push-popover-actions{display:grid;gap:8px;margin-top:14px}
+.push-popover-actions .btn{width:100%;min-height:42px}
+@media(max-width:760px){.push-bell-button{width:42px;height:42px;min-width:42px}.push-popover{max-width:calc(100vw - 20px);padding:13px}}

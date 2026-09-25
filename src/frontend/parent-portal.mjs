@@ -85,7 +85,7 @@ function shell(content) {
   app.innerHTML = `<div class="parent-app">
     <aside class="parent-sidebar ${state.menuOpen ? 'open' : ''}"><div class="parent-brand"><b>iCube</b><span>Кабинет родителя</span></div><nav>${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav></aside>
     ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
-    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>iCube</b></div>${childSelector()}<button class="parent-bell" data-action="notifications" aria-label="Уведомления">🔔${unread ? `<i>${unread}</i>` : ''}</button></header>
+    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>iCube</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span>${unread ? `<i>${unread}</i>` : ''}</button></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
     ${viewerHtml()}${paymentModalHtml()}${lessonInfoHtml()}
   </div>`;
@@ -187,7 +187,6 @@ function settingsHtml(data) {
   const contact = state.profile.contact ?? {};
   return `<section class="parent-title"><h1>Настройки</h1></section>
     <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
-    <article class="parent-card"><div id="parent-push-controls" data-push-controls></div></article>
     <article class="parent-card"><h2>Типы уведомлений</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
     <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
@@ -260,9 +259,7 @@ function render() {
   if (state.tab === 'payments') return shell(paymentsHtml(state.data ?? { rows: [], home: null }));
   if (state.tab === 'about') return shell(aboutHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [] }));
   if (state.tab === 'photos') return shell(photosHtml(state.data ?? []));
-  const result = shell(settingsHtml(state.data ?? { profile: {}, settings: [], documents: [] }));
-  queueMicrotask(() => window.icubePush?.mount?.('#parent-push-controls'));
-  return result;
+  return shell(settingsHtml(state.data ?? { profile: {}, settings: [], documents: [] }));
 }
 
 async function start() {
@@ -310,7 +307,7 @@ app?.addEventListener('click', async (event) => {
   try {
   if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; state.menuOpen = false; await loadTab(); }
   else if (action === 'retry') await loadTab();
-  else if (action === 'notifications') { state.tab = 'notifications'; await loadTab(); }
+  else if (action === 'notifications') window.icubePush?.togglePanel?.(target, true);
   else if (action === 'notification') { await api.request(`/parent/notifications/${target.dataset.id}/read`, { method: 'POST' }); if (state.profile.children.some((child) => String(child.id) === target.dataset.child)) state.childId = target.dataset.child; state.tab = target.dataset.destination || 'home'; await loadTab(); }
   else if (action === 'photo') { const rows = state.data ?? []; state.viewer = { photos: rows, index: Math.max(0, rows.findIndex((item) => String(item.id) === target.dataset.photo)) }; render(); }
   else if (action === 'viewer-close' && (event.target === target || event.target.tagName === 'BUTTON')) { state.viewer = null; render(); }
@@ -353,6 +350,12 @@ app?.addEventListener('click', async (event) => {
 app?.addEventListener('touchstart', (event) => { if (state.viewer) state.touchX = event.changedTouches[0]?.clientX ?? null; }, { passive: true });
 app?.addEventListener('touchend', (event) => { if (!state.viewer || state.touchX == null) return; const delta = (event.changedTouches[0]?.clientX ?? state.touchX) - state.touchX; if (Math.abs(delta) > 50) setViewer(delta < 0 ? 1 : -1); state.touchX = null; }, { passive: true });
 
+async function openNotifications() {
+  state.tab = 'notifications';
+  state.data = null;
+  await loadTab();
+}
+
 async function openPushDestination({ notificationId, destination, entityType, entityId } = {}) {
   const rows = await api.request('/parent/notifications').catch(() => []);
   const item = rows.find((row) => String(row.id) === String(notificationId)) ?? null;
@@ -366,4 +369,4 @@ async function openPushDestination({ notificationId, destination, entityType, en
   return { destination: state.tab, entityType: item?.entityType ?? entityType ?? null, entityId: item?.entityId ?? entityId ?? null };
 }
 
-if (globalThis.window) window.icubeParentPortal = { start, reload: loadTab, openPushDestination };
+if (globalThis.window) window.icubeParentPortal = { start, reload: loadTab, openNotifications, openPushDestination };
