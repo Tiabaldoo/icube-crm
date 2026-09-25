@@ -699,7 +699,7 @@ test('первое открытие календаря не падает из-з
 });
 
 
-test('подпись extra использует текущий active enrollment, а не старый finished', async () => {
+test('teacherLesson использует актуальный window.studentCheck для подписи extra', async () => {
   const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
   const app={innerHTML:''};
   const document = {
@@ -713,25 +713,34 @@ test('подпись extra использует текущий active enrollment
     MutationObserver:class{observe(){} disconnect(){}},
   });
   context.window=context; context.globalThis=context;
-  vm.runInContext(`${source}\n;globalThis.__completedExtraProbe={state,studentCheck};`, context, { filename:'crm-ui.js' });
+  vm.runInContext(`${source}\n;globalThis.__completedExtraProbe={state,studentCheck:window.studentCheck,teacherLesson:window.teacherLesson};`, context, { filename:'crm-ui.js' });
 
-  context.__completedExtraProbe.state.groups=[{id:4,direction:'Робототехника',projectId:2,project:'iCubeRobots'}];
-  const lesson={id:90,groupId:4,projectId:2,done:true,photos:{},attendance:{},trialChildren:{},extras:[{childId:8,trial:false,present:true}]};
-  const sameGroupChild={id:8,name:'Ребёнок',enrollments:[
+  const state=context.__completedExtraProbe.state;
+  state.groups=[{id:4,name:'Группа',direction:'Робототехника',projectId:2,project:'iCubeRobots',siteId:1}];
+  state.sites=[{id:1,name:'Площадка'}];
+  state.teachers=[{id:1,name:'Учитель',active:true}];
+  const child={id:8,name:'Ребёнок',status:'Активный',enrollments:[
     {id:10,projectId:2,direction:'Робототехника',status:'Закончил',groupId:99},
     {id:11,projectId:2,direction:'Робототехника',status:'Активный',groupId:4},
   ]};
-  const otherGroupChild={...sameGroupChild,id:9,enrollments:[
-    {id:10,projectId:2,direction:'Робототехника',status:'Закончил',groupId:4},
-    {id:12,projectId:2,direction:'Робототехника',status:'Активный',groupId:77},
-  ]};
-  const foreignProjectChild={...sameGroupChild,id:10,enrollments:[
-    {id:20,projectId:3,direction:'Робототехника',status:'Активный',groupId:4},
-    {id:21,projectId:2,direction:'Робототехника',status:'Активный',groupId:77},
-  ]};
+  state.children=[child];
+  const lesson={
+    id:90,groupId:4,projectId:2,teacherId:1,done:true,started:true,cancelled:false,
+    date:'20.09.2026',time:'10:00–11:00',siteName:'Площадка',photos:{},attendance:{},
+    trialChildren:{},extras:[{childId:8,trial:false,present:true}],topic:''
+  };
+  state.lessons=[lesson];
+  state.selectedLesson=90;
 
   const studentCheck=context.__completedExtraProbe.studentCheck;
-  assert.doesNotMatch(studentCheck(sameGroupChild,lesson,true,{childId:8,present:true}), /из другой группы/);
-  assert.match(studentCheck(otherGroupChild,lesson,true,{childId:9,present:true}), /из другой группы/);
-  assert.match(studentCheck(foreignProjectChild,lesson,true,{childId:10,present:true}), /из другой группы/);
+  const teacherLesson=()=>context.window.teacherLesson();
+
+  assert.doesNotMatch(studentCheck(child,lesson,true,lesson.extras[0]), /из другой группы/);
+  const sameGroupHtml=teacherLesson();
+  assert.doesNotMatch(sameGroupHtml, /из другой группы/);
+
+  child.enrollments[1].groupId=77;
+  assert.match(studentCheck(child,lesson,true,lesson.extras[0]), /из другой группы/);
+  const otherGroupHtml=teacherLesson();
+  assert.match(otherGroupHtml, /из другой группы/);
 });
