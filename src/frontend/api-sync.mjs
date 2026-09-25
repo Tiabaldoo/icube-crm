@@ -1665,32 +1665,48 @@ async function bootstrapAuth() {
   }
 }
 
+let coldOfflineValidationPromise = null;
+
 async function validateColdOfflineSession() {
   if (!legacy.state.offlineBootstrap) return true;
-  try {
-    const profile = await api.request('/auth/me');
-    const snapshot = await loadTeacherOfflineSnapshot().catch(() => null);
-    if (!snapshot || !teacherSnapshotMatchesProfile(snapshot, profile)) {
-      await clearTeacherOfflineSnapshot().catch(() => {});
-      showLogin('Пользователь изменился. Войдите снова.');
+  if (coldOfflineValidationPromise) return coldOfflineValidationPromise;
+  coldOfflineValidationPromise = (async () => {
+    try {
+      const profile = await api.request('/auth/me');
+      const snapshot = await loadTeacherOfflineSnapshot().catch(() => null);
+      if (!snapshot || !teacherSnapshotMatchesProfile(snapshot, profile)) {
+        await clearTeacherOfflineSnapshot().catch(() => {});
+        showLogin('Пользователь изменился. Войдите снова.');
+        return false;
+      }
+      applyAuthProfile(profile);
+      legacy.state.offlineBootstrap = false;
+      await reloadTeacher({ render: true });
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        await clearTeacherOfflineSnapshot().catch(() => {});
+        showLogin('Сессия завершена. Войдите снова.');
+      } else console.error('Не удалось проверить сессию после восстановления сети', error);
       return false;
     }
-    applyAuthProfile(profile);
-    legacy.state.offlineBootstrap = false;
-    await reloadTeacher({ render: true });
-    return true;
-  } catch (error) {
-    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-      await clearTeacherOfflineSnapshot().catch(() => {});
-      showLogin('Сессия завершена. Войдите снова.');
-    } else console.error('Не удалось проверить сессию после восстановления сети', error);
-    return false;
-  }
+  })();
+  try { return await coldOfflineValidationPromise; }
+  finally { coldOfflineValidationPromise = null; }
+}
+
+async function syncLessonActionsWithSession() {
+  if (!(await validateColdOfflineSession())) return;
+  return lessonActions.sync();
+}
+
+async function retryLessonActionsWithSession() {
+  if (!(await validateColdOfflineSession())) return;
+  return lessonActions.retry();
 }
 
 async function reconnectTeacherOffline() {
-  if (!(await validateColdOfflineSession())) return;
-  await lessonActions.sync();
+  return syncLessonActionsWithSession();
 }
 
 window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
@@ -1709,7 +1725,7 @@ window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher,
   calculatePartnerSettlement, applySalaryFilters: applySalaryFiltersApi, refreshSalaryReport: refreshAppliedSalaryReport,
   calculateSiteRentReport, toggleSiteRentDetails, refreshSiteRentReport: refreshAppliedRentReport,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi,
-  retryLessonSync: () => lessonActions.retry() };
+  retryLessonSync: () => retryLessonActionsWithSession() };
 window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
 window.saveGroupV111 = window.icubeApi.saveGroup;
@@ -1788,7 +1804,7 @@ if (typeof teacherLessonBeforeOffline === 'function') window.teacherLesson = fun
 };
 
 window.icubeLessonOffline = {
-  sync: () => lessonActions.sync(), retry: () => lessonActions.retry(),
+  sync: () => syncLessonActionsWithSession(), retry: () => retryLessonActionsWithSession(),
   pendingForLesson: (lessonId) => lessonActions.pendingForLesson(lessonId),
   readyForPhoto: (lessonId, childId) => lessonActions.readyForPhoto(lessonId, childId),
   mappings: () => lessonActions.mappings(), acknowledgeMapping: (localId) => lessonActions.acknowledgeMapping(localId),

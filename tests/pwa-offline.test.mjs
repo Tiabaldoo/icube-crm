@@ -113,3 +113,11 @@ test('F: snapshot teacher A не совпадает с teacher B', () => {
   assert.equal(teacherSnapshotMatchesProfile(snapshot, teacherProfile), true);
   assert.equal(teacherSnapshotMatchesProfile(snapshot, { ...teacherProfile, id: '3', teacherId: '8' }), false);
 });
+
+
+test('reconnect lesson/photo sync проходит через проверку cold offline session', async () => {
+  const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
+  assert.match(source, /async function syncLessonActionsWithSession\(\)[\s\S]*?validateColdOfflineSession\(\)[\s\S]*?lessonActions\.sync\(\)/);
+  assert.match(source, /window\.icubeLessonOffline = \{[\s\S]*?sync: \(\) => syncLessonActionsWithSession\(\)/);
+  assert.match(source, /coldOfflineValidationPromise/);
+});
