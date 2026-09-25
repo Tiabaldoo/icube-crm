@@ -46,6 +46,16 @@ test('A: manifest валиден и содержит install metadata и обя�
   assert.match(index, /pwa-register\.mjs/);
 });
 
+test('A2: placeholder PNG icons имеют реальные install-размеры', async () => {
+  for (const [name, size] of [['icon-192.png', 192], ['icon-512.png', 512], ['apple-touch-icon.png', 180]]) {
+    const bytes = await readFile(new URL(`../icons/${name}`, import.meta.url));
+    assert.equal(bytes.subarray(1, 4).toString('ascii'), 'PNG');
+    assert.equal(bytes.readUInt32BE(16), size);
+    assert.equal(bytes.readUInt32BE(20), size);
+    assert.equal(bytes.subarray(-8).toString('hex'), '49454e44ae426082');
+  }
+});
+
 test('B: service worker versionирует shell, чистит старые cache, кеширует critical assets и не перехватывает API', async () => {
   const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
   for (const asset of ['index.html','manifest.webmanifest','crm-ui.js','api-sync.mjs','lesson-action-queue.mjs','offline-teacher-snapshot.mjs','icon-192.png','icon-512.png']) {
