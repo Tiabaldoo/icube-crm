@@ -70,6 +70,20 @@ function pushPoolFixture() {
 const subscription = { endpoint: 'https://push.example/device', keys: { p256dh: 'public-key', auth: 'auth-key' } };
 const pushConfig = { enabled: true, publicKey: 'public', privateKey: 'private', subject: 'mailto:test@example.com' };
 
+test('missing VAPID configuration disables push cleanly and public config never exposes private key', () => {
+  const disabled = createWebPushService({ query: async () => { throw new Error('DB must not be touched'); } }, {
+    config: { enabled: true, publicKey: 'public-only', privateKey: null, subject: 'mailto:test@example.com' },
+  });
+  assert.deepEqual(disabled.publicConfig(), { enabled: false, publicKey: null });
+  assert.equal('privateKey' in disabled.publicConfig(), false);
+
+  const enabled = createWebPushService({ query: async () => { throw new Error('DB must not be touched'); } }, {
+    config: pushConfig, sender: { setVapidDetails() {}, sendNotification: async () => {} },
+  });
+  assert.deepEqual(enabled.publicConfig(), { enabled: true, publicKey: 'public' });
+  assert.equal('privateKey' in enabled.publicConfig(), false);
+});
+
 test('push subscription upsert does not duplicate endpoint and rebind invalidates previous-user pending deliveries', async () => {
   const fixture = pushPoolFixture();
   const service = createWebPushService(fixture.pool, { config: pushConfig, sender: { sendNotification: async () => {} } });
@@ -494,6 +508,18 @@ test('lesson move suppresses the actor but still notifies teacher, another direc
   assert.equal(fixture.state.notifications.some((row) => Number(row.userId) === 31), false);
 });
 
+test('partner lesson move suppresses the acting partner while still notifying teacher and directors', async () => {
+  const fixture = notificationEventFixture({ directors: [10], partnersByProject: { 2: [30] } });
+  const events = createNotificationEvents(fixture.pool);
+  await events.lessonMoved(fixture.connection, {
+    lesson: { id: 90, group_id: 4, planned_teacher_id: 7, starts_at: '2026-09-28 16:00:00' },
+    previousStartsAt: '2026-09-28 15:00:00', actorUserId: 30,
+  });
+  assert.equal(fixture.state.notifications.some((row) => Number(row.userId) === 30), false);
+  assert.equal(fixture.state.notifications.some((row) => row.type === 'teacher_lesson_moved' && Number(row.userId) === 20), true);
+  assert.equal(fixture.state.notifications.some((row) => row.type === 'director_lesson_moved' && Number(row.userId) === 10), true);
+});
+
 test('all immediate partner event families stay inside the group project', async () => {
   const fixture = notificationEventFixture({ directors: [] });
   const events = createNotificationEvents(fixture.pool);
@@ -543,6 +569,19 @@ test('director immediate events cover quick child, move, cancel and existing chi
   ]);
 });
 
+test('debt crossing callers use mutation-unique keys so recovery can be followed by a new crossing', async () => {
+  const [lessons, payments, routes] = await Promise.all([
+    readFile(new URL('../backend/src/lessons.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/payments.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/routes.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(lessons, /causeKey: `balance-entry-\${entry\.insertId}`/);
+  assert.match(payments, /causeKey: `payment-remove-\${paymentId}`/);
+  assert.match(payments, /causeKey: `payment-update-\${paymentId}-\${String\(old\.updated_at/);
+  assert.match(routes, /payments = createMysqlPayments\(pool, \{ notificationEvents \}\)/);
+  assert.match(routes, /payments\.remove\(request\.params\.id, \{[\s\S]*?actorUserId:/);
+});
+
 test('debt threshold can notify again only after balance recovered above -2 and crosses the threshold again', async () => {
   const fixture = notificationEventFixture({ directors: [10], partnersByProject: {} });
   const events = createNotificationEvents(fixture.pool);
@@ -556,6 +595,42 @@ test('debt threshold can notify again only after balance recovered above -2 and 
     'director:debt:55:attendance-1',
     'director:debt:55:attendance-3',
   ]);
+});
+
+test('partner overdue notification types are default-off but explicit true enables them', async () => {
+  const off = notificationEventFixture({ directors: [], partnersByProject: {} });
+  const offEvents = createNotificationEvents(off.pool);
+  await offEvents.createUser(off.connection, {
+    userId: 30, roleCode: 'partner', projectId: 2, type: 'partner_lesson_not_started',
+    title: 'Late', body: 'Body', entityType: 'lesson', entityId: 90, destination: 'lesson', dedupKey: 'partner:late:90',
+  });
+  assert.equal(off.state.notifications.length, 0);
+
+  const on = notificationEventFixture({ directors: [], partnersByProject: {}, settings: { '30:partner_lesson_not_started': true } });
+  const onEvents = createNotificationEvents(on.pool);
+  await onEvents.createUser(on.connection, {
+    userId: 30, roleCode: 'partner', projectId: 2, type: 'partner_lesson_not_started',
+    title: 'Late', body: 'Body', entityType: 'lesson', entityId: 90, destination: 'lesson', dedupKey: 'partner:late:90',
+  });
+  assert.equal(on.state.notifications.length, 1);
+});
+
+test('explicit parent false remains stronger than the new default true', async () => {
+  let inserts = 0;
+  const pool = { query: async (sql) => {
+    if (sql.includes('FROM child_guardians cg') && sql.includes('parent_notification_settings')) {
+      return [[{ user_id: 10, guardian_id: 5, enabled: 0 }]];
+    }
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) { inserts += 1; return [{ affectedRows: 1 }]; }
+    throw new Error('Unexpected parent preference SQL: ' + sql);
+  } };
+  const service = createParentNotifications(pool);
+  const created = await service.createForChild(pool, {
+    childId: 5, type: 'lesson_move', data: { startsAt: '2026-09-28 16:00:00', previousStartsAt: '2026-09-28 15:00:00' },
+    referenceType: 'lesson', referenceId: 90, dedupKey: 'parent:move:90',
+  });
+  assert.equal(created, 0);
+  assert.equal(inserts, 0);
 });
 
 test('generic saved false suppresses the logical notification before outbox delivery is created', async () => {
