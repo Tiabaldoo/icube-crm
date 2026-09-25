@@ -1599,9 +1599,9 @@ function installAuthenticatedShells() {
   window.teacherShell = function (content) {
     const parentRole = temporaryTeacherParentRole();
     const right = parentRole
-      ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button>${pushBell()}<button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
+      ? `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button>${pushBell()}<button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`
       : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
-    const teacherPushButton = parentRole ? '' : '${pushBell()}';
+    const teacherPushButton = parentRole ? '' : pushBell();
     const offline = legacy.state.offlineBootstrap || globalThis.navigator?.onLine === false;
     const offlineNotice = offline
       ? '<div class="notice" style="max-width:680px;margin:12px auto 0">Офлайн · изменения будут отправлены после подключения</div>'
