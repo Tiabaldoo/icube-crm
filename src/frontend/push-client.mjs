@@ -385,17 +385,40 @@ function positionPushPanel() {
   const rect = pushPanelAnchor.getBoundingClientRect();
   const gap = 8;
   const margin = 12;
-  const width = Math.min(320, Math.max(240, window.innerWidth - margin * 2));
-  let left = Math.min(Math.max(margin, rect.right - width), window.innerWidth - width - margin);
-  let top = rect.bottom + gap;
+  const visualViewport = window.visualViewport;
+  const viewportLeft = visualViewport?.offsetLeft ?? 0;
+  const viewportTop = visualViewport?.offsetTop ?? 0;
+  const viewportWidth = visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = visualViewport?.height ?? window.innerHeight;
+  const viewportRight = viewportLeft + viewportWidth;
+  const viewportBottom = viewportTop + viewportHeight;
+  const width = Math.min(320, Math.max(0, viewportWidth - margin * 2));
+
   pushPanel.style.width = `${width}px`;
+  pushPanel.style.left = `${viewportLeft + margin}px`;
+  pushPanel.style.top = `${viewportTop + margin}px`;
+
+  const panelRect = pushPanel.getBoundingClientRect();
+  const panelWidth = panelRect.width;
+  const panelHeight = panelRect.height;
+  const minLeft = viewportLeft + margin;
+  const maxLeft = Math.max(minLeft, viewportRight - panelWidth - margin);
+  const minTop = viewportTop + margin;
+  const maxTop = Math.max(minTop, viewportBottom - panelHeight - margin);
+  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+  const desiredLeft = rect.right - panelWidth;
+  const belowTop = rect.bottom + gap;
+  const aboveTop = rect.top - panelHeight - gap;
+  let top = belowTop;
+
+  if (belowTop + panelHeight <= viewportBottom - margin) top = belowTop;
+  else if (aboveTop >= minTop) top = aboveTop;
+
+  const left = clamp(desiredLeft, minLeft, maxLeft);
+  top = clamp(top, minTop, maxTop);
   pushPanel.style.left = `${left}px`;
   pushPanel.style.top = `${top}px`;
-  const panelRect = pushPanel.getBoundingClientRect();
-  if (panelRect.bottom > window.innerHeight - margin) {
-    top = Math.max(margin, rect.top - panelRect.height - gap);
-    pushPanel.style.top = `${top}px`;
-  }
 }
 
 function pushPanelMarkup() {
