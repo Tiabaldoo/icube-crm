@@ -84,7 +84,12 @@ export function createMysqlPayments(pool) {
     p.group_id_snapshot,p.project_id_snapshot,p.paid_on,p.amount,p.price_snapshot,p.lessons_credit,p.method,p.note,
     (SELECT COALESCE(SUM(r.amount),0) FROM refunds r WHERE r.payment_id=p.id AND r.deleted_at IS NULL) refunded_amount,
     (SELECT bl.remaining_lessons FROM balance_entries be JOIN balance_lots bl ON bl.source_balance_entry_id=be.id
-      WHERE be.payment_id=p.id AND be.entry_type='payment' LIMIT 1) remaining_lessons
+      WHERE be.payment_id=p.id AND be.entry_type='payment' LIMIT 1) remaining_lessons,
+    EXISTS(SELECT 1 FROM balance_entries pbe
+      JOIN balance_lots pbl ON pbl.source_balance_entry_id=pbe.id
+      JOIN balance_lot_consumptions blc ON blc.balance_lot_id=pbl.id
+      JOIN balance_entries moved ON moved.id=blc.balance_entry_id
+      WHERE pbe.payment_id=p.id AND pbe.entry_type='payment' AND moved.entry_type='transfer_out') has_transfer_history
     FROM payments p JOIN children c ON c.id=p.child_id JOIN directions d ON d.id=p.direction_id`;
   async function queryRows(sql, params = {}) { const [rows] = await pool.query(sql, params); return rows; }
   async function list(filters = {}) {
@@ -94,9 +99,11 @@ export function createMysqlPayments(pool) {
     if (filters.projectId != null && filters.projectId !== '') { conditions.push('p.project_id_snapshot=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
     const rows = await queryRows(`${paymentSelect} WHERE ${conditions.join(' AND ')} ORDER BY p.paid_on DESC,p.id DESC`, params);
     return Promise.all(rows.map(async (row) => {
-      const lineage = await loadPaymentLineage(pool, row.id);
-      const amountLeft = moneyCents(String(row.amount)) - moneyCents(String(row.refunded_amount ?? '0.00'));
-      row.refundable_amount_lineage = moneyDecimal(lineage ? (lineage.availableCents < amountLeft ? lineage.availableCents : amountLeft) : 0n);
+      if (row.has_transfer_history) {
+        const lineage = await loadPaymentLineage(pool, row.id);
+        const amountLeft = moneyCents(String(row.amount)) - moneyCents(String(row.refunded_amount ?? '0.00'));
+        row.refundable_amount_lineage = moneyDecimal(lineage ? (lineage.availableCents < amountLeft ? lineage.availableCents : amountLeft) : 0n);
+      }
       return mapPayment(row);
     }));
   }
@@ -104,9 +111,11 @@ export function createMysqlPayments(pool) {
     const rows = await queryRows(`${paymentSelect} WHERE p.id=:id AND p.deleted_at IS NULL`, { id: identifier(paymentId) });
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
     const row = rows[0];
-    const lineage = await loadPaymentLineage(pool, row.id);
-    const amountLeft = moneyCents(String(row.amount)) - moneyCents(String(row.refunded_amount ?? '0.00'));
-    row.refundable_amount_lineage = moneyDecimal(lineage ? (lineage.availableCents < amountLeft ? lineage.availableCents : amountLeft) : 0n);
+    if (row.has_transfer_history) {
+      const lineage = await loadPaymentLineage(pool, row.id);
+      const amountLeft = moneyCents(String(row.amount)) - moneyCents(String(row.refunded_amount ?? '0.00'));
+      row.refundable_amount_lineage = moneyDecimal(lineage ? (lineage.availableCents < amountLeft ? lineage.availableCents : amountLeft) : 0n);
+    }
     return mapPayment(row);
   }
   async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = businessDate() } = {}) {

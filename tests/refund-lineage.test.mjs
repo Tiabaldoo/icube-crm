@@ -199,7 +199,7 @@ function transferredRefundFixture() {
       if (sql.includes('FROM payments p JOIN children')) {
         const cents = state.refunds.reduce((sum, item) => sum + BigInt(item.amount.replace('.', '')), 0n);
         return [[{ ...state.payment, child_name: 'Иван', direction_name: 'Робототехника',
-          refunded_amount: `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`, remaining_lessons: '0.00000000' }]];
+          refunded_amount: `${cents / 100n}.${String(cents % 100n).padStart(2, '0')}`, remaining_lessons: '0.00000000', has_transfer_history: 1 }]];
       }
       return query(sql, params);
     },
