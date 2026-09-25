@@ -3,6 +3,7 @@ import { ApiProblem } from './catalog.mjs';
 import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal } from './lesson-rules.mjs';
 import { parseCalendarDate, businessDate } from '../../src/shared/business-time.mjs';
 import { scopedIdempotencyKey } from './idempotency.mjs';
+import { loadPaymentLineage } from './balance-lineage.mjs';
 
 const SCALE = 100000000n;
 const methods = new Set(['cashless', 'cash']);
@@ -67,8 +68,10 @@ const mapPayment = (row) => ({
   paidOn: isoDate(row.paid_on), amount: String(row.amount), priceSnapshot: String(row.price_snapshot),
   lessonsCredit: String(row.lessons_credit), method: row.method, note: row.note,
   refundedAmount: String(row.refunded_amount ?? '0.00'),
-  refundableAmount: refundablePaymentAmount({ paymentAmount: row.amount, refundedAmount: row.refunded_amount ?? '0.00',
-    remainingLessons: row.remaining_lessons ?? '0.00000000', priceSnapshot: row.price_snapshot }),
+  refundableAmount: row.refundable_amount_lineage != null
+    ? String(row.refundable_amount_lineage)
+    : refundablePaymentAmount({ paymentAmount: row.amount, refundedAmount: row.refunded_amount ?? '0.00',
+      remainingLessons: row.remaining_lessons ?? '0.00000000', priceSnapshot: row.price_snapshot }),
 });
 function fundedLessons(credit, balanceBefore) {
   const creditUnits = lessonUnits(credit); const balanceUnits = lessonUnits(balanceBefore ?? '0');
@@ -89,12 +92,22 @@ export function createMysqlPayments(pool) {
     if (filters.childId != null && filters.childId !== '') { conditions.push('p.child_id=:childId'); params.childId = identifier(filters.childId, 'childId'); }
     if (filters.enrollmentId != null && filters.enrollmentId !== '') { conditions.push('p.enrollment_id=:enrollmentId'); params.enrollmentId = identifier(filters.enrollmentId, 'enrollmentId'); }
     if (filters.projectId != null && filters.projectId !== '') { conditions.push('p.project_id_snapshot=:projectId'); params.projectId = identifier(filters.projectId, 'projectId'); }
-    return (await queryRows(`${paymentSelect} WHERE ${conditions.join(' AND ')} ORDER BY p.paid_on DESC,p.id DESC`, params)).map(mapPayment);
+    const rows = await queryRows(`${paymentSelect} WHERE ${conditions.join(' AND ')} ORDER BY p.paid_on DESC,p.id DESC`, params);
+    return Promise.all(rows.map(async (row) => {
+      const lineage = await loadPaymentLineage(pool, row.id);
+      const amountLeft = moneyCents(String(row.amount)) - moneyCents(String(row.refunded_amount ?? '0.00'));
+      row.refundable_amount_lineage = moneyDecimal(lineage ? (lineage.availableCents < amountLeft ? lineage.availableCents : amountLeft) : 0n);
+      return mapPayment(row);
+    }));
   }
   async function get(paymentId) {
     const rows = await queryRows(`${paymentSelect} WHERE p.id=:id AND p.deleted_at IS NULL`, { id: identifier(paymentId) });
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
-    return mapPayment(rows[0]);
+    const row = rows[0];
+    const lineage = await loadPaymentLineage(pool, row.id);
+    const amountLeft = moneyCents(String(row.amount)) - moneyCents(String(row.refunded_amount ?? '0.00'));
+    row.refundable_amount_lineage = moneyDecimal(lineage ? (lineage.availableCents < amountLeft ? lineage.availableCents : amountLeft) : 0n);
+    return mapPayment(row);
   }
   async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = businessDate() } = {}) {
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,

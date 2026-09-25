@@ -1,9 +1,10 @@
 import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
-import { calculateLessonsCredit, normalizeMoney, refundablePaymentAmount } from './payments.mjs';
-import { lessonDecimal, lessonUnits } from './lesson-rules.mjs';
+import { calculateLessonsCredit, normalizeMoney } from './payments.mjs';
+import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal } from './lesson-rules.mjs';
 import { parseCalendarDate } from '../../src/shared/business-time.mjs';
 import { scopedIdempotencyKey } from './idempotency.mjs';
+import { loadPaymentLineage } from './balance-lineage.mjs';
 
 function identifier(value, field = 'id') {
   const result = String(value ?? '').trim();
@@ -50,6 +51,25 @@ export function createMysqlRefunds(pool) {
     if (!rows.length) throw new ApiProblem(404, 'NOT_FOUND', 'Возврат не найден');
     return mapRefund(rows[0]);
   }
+  function refundPlan(lineage, amount) {
+    let left = moneyCents(amount);
+    const items = [];
+    for (const allocation of lineage.allocations) {
+      if (left <= 0n) break;
+      const chunk = allocation.availableCents < left ? allocation.availableCents : left;
+      if (chunk <= 0n) continue;
+      const amountText = moneyDecimal(chunk);
+      const lessons = calculateLessonsCredit(amountText, allocation.unitPrice);
+      if (lessonUnits(lessons) > lessonUnits(allocation.remainingLessons)) {
+        throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Недостаточно остатка в текущей партии для возврата');
+      }
+      items.push({ ...allocation, amount: amountText, lessons });
+      left -= chunk;
+    }
+    if (left > 0n) throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Денежный остаток оплаты не найден в текущих партиях');
+    return items;
+  }
+
   async function create(body, context = {}) {
     try {
       const refundId = await inTransaction(pool, async (connection) => {
@@ -70,23 +90,20 @@ export function createMysqlRefunds(pool) {
             WHERE idempotency_key=:idempotencyKey AND entry_type='refund' LIMIT 1`, { idempotencyKey });
           if (existing.length) return String(existing[0].refund_id);
         }
-        const [enrollments] = await connection.query('SELECT id,balance_lessons FROM child_enrollments WHERE id=:id FOR UPDATE', { id: payment.enrollment_id });
-        if (!enrollments.length) throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Направление оплаты не найдено');
-        const [lots] = await connection.query(`SELECT bl.id,bl.original_lessons,bl.remaining_lessons,bl.unit_price
-          FROM balance_entries be JOIN balance_lots bl ON bl.source_balance_entry_id=be.id
-          WHERE be.payment_id=:paymentId AND be.entry_type='payment' FOR UPDATE`, { paymentId });
-        if (lots.length !== 1) throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Не найдена единственная партия баланса исходной оплаты');
+
         const [totals] = await connection.query(`SELECT COALESCE(SUM(amount),0) refunded_amount FROM refunds
           WHERE payment_id=:paymentId AND deleted_at IS NULL`, { paymentId });
-        const available = refundablePaymentAmount({ paymentAmount: payment.amount, refundedAmount: totals[0].refunded_amount,
-          remainingLessons: lots[0].remaining_lessons, priceSnapshot: payment.price_snapshot });
-        if (BigInt(amount.replace('.', '')) > BigInt(available.replace('.', ''))) {
+        const lineage = await loadPaymentLineage(connection, paymentId, { lock: true, payment });
+        if (!lineage) throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Не удалось восстановить денежную историю оплаты');
+        const paymentLeft = moneyCents(String(payment.amount)) - moneyCents(String(totals[0].refunded_amount));
+        const availableCents = lineage.availableCents < paymentLeft ? lineage.availableCents : paymentLeft;
+        const available = moneyDecimal(availableCents > 0n ? availableCents : 0n);
+        if (moneyCents(amount) > availableCents) {
           throw new ApiProblem(409, 'REFUND_EXCEEDS_AVAILABLE', `Доступно к возврату не более ${available} ₽`);
         }
+
+        const applications = refundPlan(lineage, amount);
         const lessons = calculateLessonsCredit(amount, payment.price_snapshot);
-        if (lessonUnits(lessons) > lessonUnits(String(lots[0].remaining_lessons))) {
-          throw new ApiProblem(409, 'REFUND_EXCEEDS_AVAILABLE', `Доступно к возврату не более ${available} ₽`);
-        }
         const [result] = await connection.query(`INSERT INTO refunds
           (enrollment_id,child_id,direction_id,payment_id,group_id_snapshot,project_id_snapshot,refunded_on,amount,price_snapshot,lessons_debit,reason,created_by_user_id)
           VALUES (:enrollmentId,:childId,:directionId,:paymentId,:groupId,:projectId,:refundedOn,:amount,:price,:lessons,:reason,:actorId)`, {
@@ -95,20 +112,37 @@ export function createMysqlRefunds(pool) {
           price: String(payment.price_snapshot), lessons, reason: body.reason == null || body.reason === '' ? null : String(body.reason).trim(),
           actorId: context.actorUserId ?? null,
         });
-        await connection.query(`INSERT INTO balance_entries
+        const [entry] = await connection.query(`INSERT INTO balance_entries
           (enrollment_id,entry_type,lessons_delta,amount_delta,unit_price_snapshot,refund_id,idempotency_key,occurred_at,created_by_user_id)
           VALUES (:enrollmentId,'refund',:lessons,:amount,:price,:refundId,:idempotencyKey,CONCAT(:refundedOn,' 12:00:00'),:actorId)`, {
           enrollmentId: payment.enrollment_id, lessons: lessonDecimal(-lessonUnits(lessons)), amount: `-${amount}`,
           price: String(payment.price_snapshot), refundId: result.insertId, idempotencyKey,
           refundedOn: date, actorId: context.actorUserId ?? null,
         });
-        await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', { id: lots[0].id, lessons });
-        await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: payment.enrollment_id, lessons });
+
+        const enrollmentDebits = new Map();
+        for (const application of applications) {
+          await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons-:lessons WHERE id=:id', {
+            id: application.lotId, lessons: application.lessons,
+          });
+          await connection.query(`INSERT INTO balance_lot_consumptions (balance_lot_id,balance_entry_id,lessons,amount)
+            VALUES (:lotId,:entryId,:lessons,:amount)`, {
+            lotId: application.lotId, entryId: entry.insertId, lessons: application.lessons, amount: application.amount,
+          });
+          const key = String(application.enrollmentId);
+          enrollmentDebits.set(key, (enrollmentDebits.get(key) ?? 0n) + lessonUnits(application.lessons));
+        }
+        for (const enrollmentId of [...enrollmentDebits.keys()].sort((a, b) => Number(a) - Number(b))) {
+          await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', {
+            id: enrollmentId, lessons: lessonDecimal(enrollmentDebits.get(enrollmentId)),
+          });
+        }
         return String(result.insertId);
       });
       return get(refundId);
     } catch (error) { throw mysqlError(error); }
   }
+
   async function remove(refundId) {
     refundId = identifier(refundId);
     try {
@@ -118,20 +152,52 @@ export function createMysqlRefunds(pool) {
         const refund = refunds[0];
         const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE refund_id=:id AND entry_type='refund' FOR UPDATE`, { id: refundId });
         if (entries.length !== 1) throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Не найдена единственная запись баланса возврата');
-        const [dependencies] = await connection.query(`SELECT 1 FROM balance_entries be
-          LEFT JOIN balance_lot_consumptions blc ON blc.balance_entry_id=be.id
-          WHERE (be.reversal_of_entry_id=:entryId OR blc.balance_entry_id=:entryId) LIMIT 1`, { entryId: entries[0].id });
-        if (dependencies.length) throw new ApiProblem(409, 'REFUND_HAS_HISTORY', 'Возврат связан с последующей финансовой историей');
-        const [lots] = await connection.query(`SELECT bl.id,bl.original_lessons,bl.remaining_lessons FROM balance_entries be
-          JOIN balance_lots bl ON bl.source_balance_entry_id=be.id
-          WHERE be.payment_id=:paymentId AND be.entry_type='payment' FOR UPDATE`, { paymentId: refund.payment_id });
-        if (lots.length !== 1 || lessonUnits(String(lots[0].remaining_lessons)) + lessonUnits(String(refund.lessons_debit)) > lessonUnits(String(lots[0].original_lessons))) {
-          throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Партия исходной оплаты не может быть безопасно восстановлена');
+        const entryId = entries[0].id;
+
+        const [applications] = await connection.query(`SELECT blc.id,blc.balance_lot_id,blc.lessons,blc.amount,
+            bl.enrollment_id,bl.original_lessons,bl.remaining_lessons
+          FROM balance_lot_consumptions blc JOIN balance_lots bl ON bl.id=blc.balance_lot_id
+          WHERE blc.balance_entry_id=:entryId ORDER BY bl.id FOR UPDATE`, { entryId });
+
+        if (applications.length) {
+          const [dependencies] = await connection.query(`SELECT 1 FROM balance_lot_consumptions applied
+            JOIN balance_lot_consumptions later ON later.balance_lot_id=applied.balance_lot_id AND later.id>applied.id
+            WHERE applied.balance_entry_id=:entryId LIMIT 1 FOR UPDATE`, { entryId });
+          if (dependencies.length) throw new ApiProblem(409, 'REFUND_HAS_HISTORY', 'Возврат связан с последующей финансовой историей');
+
+          const enrollmentCredits = new Map();
+          for (const application of applications) {
+            if (lessonUnits(String(application.remaining_lessons)) + lessonUnits(String(application.lessons)) > lessonUnits(String(application.original_lessons))) {
+              throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Партия возврата не может быть безопасно восстановлена');
+            }
+            await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', {
+              id: application.balance_lot_id, lessons: String(application.lessons),
+            });
+            const key = String(application.enrollment_id);
+            enrollmentCredits.set(key, (enrollmentCredits.get(key) ?? 0n) + lessonUnits(String(application.lessons)));
+          }
+          for (const enrollmentId of [...enrollmentCredits.keys()].sort((a, b) => Number(a) - Number(b))) {
+            await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', {
+              id: enrollmentId, lessons: lessonDecimal(enrollmentCredits.get(enrollmentId)),
+            });
+          }
+          await connection.query('DELETE FROM balance_lot_consumptions WHERE balance_entry_id=:entryId', { entryId });
+        } else {
+          const [dependencies] = await connection.query(`SELECT 1 FROM balance_entries be
+            LEFT JOIN balance_lot_consumptions blc ON blc.balance_entry_id=be.id
+            WHERE (be.reversal_of_entry_id=:entryId OR blc.balance_entry_id=:entryId) LIMIT 1`, { entryId });
+          if (dependencies.length) throw new ApiProblem(409, 'REFUND_HAS_HISTORY', 'Возврат связан с последующей финансовой историей');
+          const [lots] = await connection.query(`SELECT bl.id,bl.original_lessons,bl.remaining_lessons FROM balance_entries be
+            JOIN balance_lots bl ON bl.source_balance_entry_id=be.id
+            WHERE be.payment_id=:paymentId AND be.entry_type='payment' FOR UPDATE`, { paymentId: refund.payment_id });
+          if (lots.length !== 1 || lessonUnits(String(lots[0].remaining_lessons)) + lessonUnits(String(refund.lessons_debit)) > lessonUnits(String(lots[0].original_lessons))) {
+            throw new ApiProblem(409, 'REFUND_LEDGER_INCONSISTENT', 'Партия исходной оплаты не может быть безопасно восстановлена');
+          }
+          await connection.query('SELECT id FROM child_enrollments WHERE id=:id FOR UPDATE', { id: refund.enrollment_id });
+          await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: lots[0].id, lessons: String(refund.lessons_debit) });
+          await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: refund.enrollment_id, lessons: String(refund.lessons_debit) });
         }
-        await connection.query('SELECT id FROM child_enrollments WHERE id=:id FOR UPDATE', { id: refund.enrollment_id });
-        await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: lots[0].id, lessons: String(refund.lessons_debit) });
-        await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: refund.enrollment_id, lessons: String(refund.lessons_debit) });
-        await connection.query('DELETE FROM balance_entries WHERE id=:id', { id: entries[0].id });
+        await connection.query('DELETE FROM balance_entries WHERE id=:id', { id: entryId });
         await connection.query('DELETE FROM refunds WHERE id=:id', { id: refundId });
       });
       return null;
