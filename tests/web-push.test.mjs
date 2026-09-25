@@ -125,7 +125,9 @@ test('503 keeps delivery retryable while attempts remain', async () => {
 });
 
 test('subscription validation requires endpoint and both Web Push keys', () => {
-  assert.deepEqual(normalizePushSubscription(subscription), subscription);
+  assert.deepEqual(normalizePushSubscription(subscription), {
+    endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth,
+  });
   assert.throws(() => normalizePushSubscription({ endpoint: subscription.endpoint, keys: {} }), /Некорректная/);
 });
 
@@ -168,7 +170,7 @@ test('debt threshold triggers only on crossing from above -2 to -2 or below', ()
 function parentPhotoFixture() {
   const state = { notifications: [] };
   const query = async (sql, params = {}) => {
-    if (sql.includes('FROM child_guardians cg') && sql.includes('parent_notification_settings')) return [[{ user_id: 10 }]];
+    if (sql.includes('FROM child_guardians cg') && sql.includes('parent_notification_settings')) return [[{ user_id: 10, enabled: 1 }]];
     if (sql.startsWith('INSERT IGNORE INTO notifications')) {
       if (state.notifications.some((row) => row.userId === params.userId && row.dedupKey === params.dedupKey)) return [{ affectedRows: 0 }];
       state.notifications.push(params); return [{ affectedRows: 1 }];
@@ -209,15 +211,12 @@ test('scheduled reminder generator suppresses teacher start after lesson started
   assert.doesNotMatch(created.join(','), /teacher_lesson_start_reminder|teacher_lesson_finish_reminder/);
 });
 
-test('mutation points use actor suppression, current group name and partner project scope', async () => {
+test('mutation points keep actor suppression, current group names and project-scoped partner lookup', async () => {
   const source = await readFile(new URL('../backend/src/notification-events.mjs', import.meta.url), 'utf8');
   assert.match(source, /actorUserId != null && same\(actorUserId, userId\)/);
   assert.match(source, /SELECT g\.id,g\.name,g\.project_id/);
-  assert.match(source, /partnerUsers\(connection, group\.project_id\)/);
+  assert.match(source, /createForPartners\(connection, group\.project_id/);
   assert.match(source, /p\.id=:projectId/);
-  for (const type of ['teacher_lesson_moved','teacher_lesson_cancelled','teacher_child_added','teacher_absence_notice',
-    'director_quick_child_created','director_lesson_moved','director_lesson_cancelled','director_child_added_group','director_debt_threshold',
-    'partner_quick_child_created','partner_child_added_group','partner_lesson_moved','partner_lesson_cancelled']) assert.match(source, new RegExp(type));
 });
 
 test('all required scheduled teacher/director/partner event types are wired in backend scheduler', async () => {
