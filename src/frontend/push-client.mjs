@@ -1,5 +1,7 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 
+globalThis.ICUBE_FRONTEND_BUILD = new URL(import.meta.url).searchParams.get('v') || 'unversioned';
+
 const api = new ApiClient();
 const DEVICE_DISABLED_KEY = 'icube-push-device-disabled';
 const ONBOARDING_SEEN_KEY = 'icube-pwa-onboarding-seen-v1';
