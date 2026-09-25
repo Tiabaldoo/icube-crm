@@ -213,9 +213,21 @@ export function createBalanceTransfers(pool) {
     const transferId = identifier(rawTransferId);
     try {
       await inTransaction(pool, async (connection) => {
-        const [transfers] = await connection.query('SELECT * FROM balance_transfers WHERE id=:id FOR UPDATE', { id: transferId });
+        const [transfers] = await connection.query(`SELECT bt.*,
+          EXISTS (
+            SELECT 1 FROM enrollment_status_history esh
+            WHERE esh.enrollment_id=bt.source_enrollment_id
+              AND esh.old_status IN ('active','paused') AND esh.new_status='finished'
+              AND esh.changed_by_user_id <=> bt.created_by_user_id
+              AND esh.changed_at BETWEEN bt.transferred_at - INTERVAL 5 SECOND AND bt.transferred_at
+          ) automatic_change_direction
+          FROM balance_transfers bt WHERE bt.id=:id FOR UPDATE`, { id: transferId });
         if (!transfers.length) throw new ApiProblem(404, 'NOT_FOUND', 'Перенос не найден или уже отменён');
         const transfer = transfers[0];
+        if (transfer.automatic_change_direction) {
+          throw new ApiProblem(409, 'AUTOMATIC_TRANSFER_NOT_REVERSIBLE',
+            'Этот перенос создан автоматически при изменении направления или цены и отдельно не отменяется.');
+        }
         await connection.query('SELECT id FROM child_enrollments WHERE id IN (:sourceId,:targetId) ORDER BY id FOR UPDATE', {
           sourceId: transfer.source_enrollment_id, targetId: transfer.target_enrollment_id,
         });

@@ -146,7 +146,7 @@ test('router подключает preview и POST переноса к реаль
   assert.doesNotMatch(routes, /notImplemented\('balance-transfers'\)/);
 });
 
-function reversalFixture({ sourceBalance = '0.00000000', sourceDebit = '-3.00000000', targetBalance = '2.73333333', sourceLots, targetRemaining = '2.73333333', targetCurrentRemaining = targetRemaining, targetUsed = false } = {}) {
+function reversalFixture({ sourceBalance = '0.00000000', sourceDebit = '-3.00000000', targetBalance = '2.73333333', sourceLots, targetRemaining = '2.73333333', targetCurrentRemaining = targetRemaining, targetUsed = false, automatic = false } = {}) {
   const state = {
     transfer: { id: 70, source_enrollment_id: 9, target_enrollment_id: 10 },
     balances: { 9: sourceBalance, 10: targetBalance },
@@ -162,7 +162,7 @@ function reversalFixture({ sourceBalance = '0.00000000', sourceDebit = '-3.00000
     { transfer_id: 70, balance_lot_id: 61, change_type: 'target_created', lessons_delta: '2.73333333', remaining_before: '0.00000000', ...state.targetLot, remaining_after: targetRemaining },
   ];
   const query = async (sql, params = {}) => {
-    if (sql === 'SELECT * FROM balance_transfers WHERE id=:id FOR UPDATE') return [state.transfer ? [state.transfer] : []];
+    if (sql.startsWith('SELECT bt.*') && sql.includes('FROM balance_transfers bt WHERE bt.id=:id FOR UPDATE')) return [state.transfer ? [{ ...state.transfer, automatic_change_direction: automatic ? 1 : 0 }] : []];
     if (sql.startsWith('SELECT id,enrollment_id,entry_type,lessons_delta FROM balance_entries')) return [[
       { id: 80, enrollment_id: 9, entry_type: 'transfer_out', lessons_delta: sourceDebit },
       { id: 81, enrollment_id: 10, entry_type: 'transfer_in', lessons_delta: '2.73333333' },
@@ -192,6 +192,17 @@ test('отмена transfer точно восстанавливает balances, 
   assert.equal(state.balances[9], '3.00000000'); assert.equal(state.balances[10], '0.00000000');
   assert.equal(state.lots[0].remaining_lessons, '3.00000000'); assert.equal(state.targetLot, null);
   assert.equal(state.deletedConsumptions, true); assert.equal(state.transfer, null);
+});
+
+test('автоматический change-direction transfer нельзя отменить отдельно', async () => {
+  const { state, service } = reversalFixture({ automatic: true });
+  await assert.rejects(service.remove(70), (error) => error.status === 409
+    && error.code === 'AUTOMATIC_TRANSFER_NOT_REVERSIBLE'
+    && error.message === 'Этот перенос создан автоматически при изменении направления или цены и отдельно не отменяется.');
+  assert.equal(state.balances[9], '0.00000000');
+  assert.equal(state.balances[10], '2.73333333');
+  assert.notEqual(state.transfer, null);
+  assert.notEqual(state.targetLot, null);
 });
 
 test('mixed historical lots и поглощённый source debt восстанавливаются фактическими lot changes', async () => {

@@ -862,7 +862,7 @@ function paymentForm(childId, direction, paymentId) {
     <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.childId}">${html(existing.childName)}</option>` : legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Направление</label><select class="select" id="pf-enrollment" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.enrollmentId}">${html(existing.direction)}</option>` : ''}</select></div>
     <div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" min="0.01" step="0.01" value="${html(existing?.amount ?? '4100')}" oninput="icubeApi.updatePaymentCalc()"></div>
-    <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" ${existing ? '' : 'readonly'} data-price-edited="false" oninput="this.dataset.priceEdited='true';icubeApi.updatePaymentCalc()"></div>
+    <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" readonly></div>
     <div class="field"><label>Способ оплаты</label><select class="select" id="pf-method"><option value="cashless"${(existing?.methodCode ?? 'cashless') === 'cashless' ? ' selected' : ''}>Безналичный расчёт</option><option value="cash"${existing?.methodCode === 'cash' ? ' selected' : ''}>Наличные</option></select></div>
     </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="pf-submit" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
   legacy.render();
@@ -884,7 +884,7 @@ function updatePaymentPrice(paymentId) {
   const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
   const enrollment = paymentEnrollment(value('#pf-child'), value('#pf-enrollment'));
   const priceInput = element('#pf-price');
-  if (priceInput && (!existing || existing.enrollmentId !== enrollment?.id)) priceInput.value = enrollment ? String(enrollment.currentPrice ?? legacy.effectivePrice(enrollment) ?? '') : '';
+  if (priceInput && !existing) priceInput.value = enrollment ? String(enrollment.currentPrice ?? legacy.effectivePrice(enrollment) ?? '') : '';
   updatePaymentCalc();
 }
 
@@ -902,8 +902,9 @@ async function savePayment(paymentId) {
   const submit = element('#pf-submit'); const originalText = submit?.textContent;
   if (submit) { submit.disabled = true; submit.textContent = 'Сохраняем…'; }
   try {
+    const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
     const body = { enrollmentId: value('#pf-enrollment'), paidOn: value('#pf-date'), amount: value('#pf-amount'), method: value('#pf-method') };
-    if (paymentId && element('#pf-price')?.dataset.priceEdited === 'true') body.priceSnapshot = value('#pf-price');
+    if (existing) body.priceSnapshot = String(existing.price);
     const saved = paymentId ? await api.update('payments', paymentId, body) : await api.create('payments', body, paymentCreateKey);
     await reload({ render: false });
     legacy.state.selectedChild = Number(saved.childId); legacy.state.childTab = 'payments'; legacy.state.modal = null;

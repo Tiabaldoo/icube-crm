@@ -8392,9 +8392,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     let subtitle='';
     if(extra){
+      const sameGroup=(c.enrollments||[]).some(function(enrollment){return Number(enrollment.groupId)===Number(l.groupId);});
       subtitle=ex?.createdByTeacher || c.createdByTeacher
         ? '<div class="muted mini lesson-student-subtitle">добавлен преподавателем</div>'
-        : '<div class="muted mini lesson-student-subtitle">из другой группы</div>';
+        : sameGroup ? '' : '<div class="muted mini lesson-student-subtitle">из другой группы</div>';
     }
 
     const trialControl=showTrial

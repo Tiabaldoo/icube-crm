@@ -141,6 +141,13 @@ test('единый frontend загружается и рендерит все т
   assert.doesNotMatch(context.teacherLesson(), /Не будет/, 'teacher prestart не показывает метку без notice');
   assert.doesNotMatch(context.studentCheck(context.__crmProbe.state.children[0], { ...context.__crmProbe.state.lessons[0], started: true }, false), /Не будет/,
     'teacher attendance row не показывает отменённую отметку');
+  const extraVisit = { childId: 8, present: true, trial: false };
+  assert.doesNotMatch(context.studentCheck(context.__crmProbe.state.children[0], { ...context.__crmProbe.state.lessons[0], started: true }, true, extraVisit), /из другой группы/,
+    'extra-ребёнок из текущей группы не получает ложную подпись');
+  context.__crmProbe.state.children[0].enrollments[0].groupId = 99;
+  assert.match(context.studentCheck(context.__crmProbe.state.children[0], { ...context.__crmProbe.state.lessons[0], started: true }, true, extraVisit), /из другой группы/,
+    'extra-ребёнок из другой группы сохраняет подпись');
+  context.__crmProbe.state.children[0].enrollments[0].groupId = 4;
   Object.assign(context.__crmProbe.state, savedLessonState);
 
   const savedChildState = {
@@ -603,5 +610,51 @@ test('автоматический перенос скрывает отмену,
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
     globalThis.fetch = originalFetch;
+  }
+});
+
+
+test('редактирование оплаты сохраняет историческую цену readonly и считает сумму по ней', async () => {
+  const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
+  const formSource = source.slice(source.indexOf('function paymentForm'), source.indexOf('function refreshPaymentDirections'));
+  const priceSource = source.slice(source.indexOf('function updatePaymentPrice'), source.indexOf('function updatePaymentCalc'));
+  const saveSource = source.slice(source.indexOf('async function savePayment'), source.indexOf('function deletePaymentPrompt'));
+  assert.match(formSource, /id="pf-price"[^>]*value="\$\{html\(existing\?\.price \?\? ''\)\}" readonly/);
+  assert.doesNotMatch(formSource, /data-price-edited|priceEdited/);
+  assert.match(priceSource, /priceInput && !existing/);
+  assert.match(saveSource, /if \(existing\) body\.priceSnapshot = String\(existing\.price\)/);
+
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  const originalMutationObserver = globalThis.MutationObserver;
+  const state = {
+    role: 'director', sites: [], teachers: [], groups: [], lessons: [], refunds: [], balanceTransfers: [], notifications: [],
+    children: [{ id: 8, name: 'Иван', enrollments: [{ id: 9, direction: 'Робототехника', currentPrice: 1125, editable: true }] }],
+    payments: [{ id: 5, enrollmentId: 9, childId: 8, price: 1025, amount: 4100, paidOn: '2026-09-01', methodCode: 'cashless' }],
+  };
+  const controls = {
+    '#pf-child': { value: '8' },
+    '#pf-enrollment': { value: '9' },
+    '#pf-price': { value: '1025' },
+    '#pf-amount': { value: '2050' },
+    '#pf-calc': { innerHTML: '' },
+  };
+  globalThis.window = { icubeLegacy: { state, render() {}, effectivePrice: (enrollment) => enrollment.currentPrice }, alert() {}, addEventListener() {} };
+  globalThis.document = { querySelector(selector) { return controls[selector] ?? null; }, querySelectorAll() { return []; } };
+  globalThis.MutationObserver = class { observe() {} disconnect() {} };
+  globalThis.fetch = async () => ({ ok: true, status: 200, async json() { return { data: [] }; } });
+  try {
+    await import(`../src/frontend/api-sync.mjs?historical-payment-price=${Date.now()}-${Math.random()}`);
+    globalThis.window.icubeApi.updatePaymentPrice(5);
+    assert.equal(controls['#pf-price'].value, '1025', 'текущая цена направления не заменяет snapshot оплаты');
+    globalThis.window.icubeApi.updatePaymentCalc();
+    assert.match(controls['#pf-calc'].innerHTML, /Цена операции: <b>1025 ₽<\/b>/);
+    assert.match(controls['#pf-calc'].innerHTML, /будет начислено <b>2 занятия<\/b>/);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+    globalThis.MutationObserver = originalMutationObserver;
   }
 });
