@@ -278,3 +278,237 @@ test('push migration and worker are durable, per-device and atomically claimed',
   assert.match(pushSource, /status === 429 \|\| status >= 500/);
   assert.match(pushSource, /n\.user_id=s\.user_id/);
 });
+
+
+function notificationEventFixture({ directors = [10, 11], partnersByProject = { 1: [31], 2: [30] }, settings = {} } = {}) {
+  const state = { notifications: [], nextId: 1 };
+  const groups = {
+    4: { id: 4, name: 'Школа №1 · Пн · 16:00', project_id: 2, default_teacher_id: 7 },
+    5: { id: 5, name: 'Чужой проект', project_id: 1, default_teacher_id: 8 },
+  };
+  const teacherUsers = { 7: 20, 8: 21 };
+  async function query(sql, params = {}) {
+    if (sql.startsWith('SELECT enabled FROM user_notification_settings')) {
+      const key = String(params.userId) + ':' + params.type;
+      return [Object.hasOwn(settings, key) ? [{ enabled: settings[key] ? 1 : 0 }] : []];
+    }
+    if (sql.startsWith('SELECT g.id,g.name,g.project_id,g.default_teacher_id,c.full_name child_name')) {
+      const group = groups[Number(params.groupId)];
+      return [[group ? { ...group, child_name: 'Ребёнок ' + params.childId } : undefined].filter(Boolean)];
+    }
+    if (sql.startsWith('SELECT g.id,g.name,g.project_id,g.default_teacher_id')) {
+      const group = groups[Number(params.groupId)];
+      return [[group].filter(Boolean)];
+    }
+    if (sql.startsWith('SELECT u.id user_id FROM teachers')) {
+      const userId = teacherUsers[Number(params.teacherId)];
+      return [[userId ? { user_id: userId } : undefined].filter(Boolean)];
+    }
+    if (sql.startsWith('SELECT DISTINCT u.id user_id FROM users u')) {
+      return [params.role === 'director' ? directors.map((user_id) => ({ user_id })) : []];
+    }
+    if (sql.startsWith('SELECT DISTINCT u.id user_id FROM projects p')) {
+      return [(partnersByProject[Number(params.projectId)] ?? []).map((user_id) => ({ user_id }))];
+    }
+    if (sql.startsWith('SELECT e.id,e.child_id,c.full_name FROM child_enrollments')) {
+      return [[{ id: Number(params.enrollmentId), child_id: 77, full_name: 'Иван Иванов' }]];
+    }
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) {
+      const duplicate = state.notifications.find((row) => String(row.userId) === String(params.userId) && row.dedupKey === params.dedupKey);
+      if (duplicate) return [{ affectedRows: 0, insertId: 0 }];
+      const row = { id: state.nextId++, ...params };
+      state.notifications.push(row);
+      return [{ affectedRows: 1, insertId: row.id }];
+    }
+    if (sql.startsWith('SELECT id FROM notifications')) {
+      const row = state.notifications.find((item) => String(item.userId) === String(params.userId) && item.dedupKey === params.dedupKey);
+      return [[row ? { id: row.id } : undefined].filter(Boolean)];
+    }
+    if (sql.startsWith('INSERT IGNORE INTO push_deliveries')) return [{ affectedRows: 0 }];
+    throw new Error('Unexpected notification-event SQL: ' + sql);
+  }
+  return { state, connection: { query }, pool: { query } };
+}
+
+test('lesson move suppresses the actor but still notifies teacher, another director and only the partner of the lesson project', async () => {
+  const fixture = notificationEventFixture();
+  const events = createNotificationEvents(fixture.pool);
+  await events.lessonMoved(fixture.connection, {
+    lesson: { id: 90, group_id: 4, planned_teacher_id: 7, actual_teacher_id: null, starts_at: '2026-09-28 16:00:00' },
+    previousStartsAt: '2026-09-28 15:00:00', actorUserId: 10,
+  });
+  const recipients = fixture.state.notifications.map((row) => [row.type, Number(row.userId), row.projectId == null ? null : Number(row.projectId)]);
+  assert.deepEqual(recipients, [
+    ['teacher_lesson_moved', 20, 2],
+    ['director_lesson_moved', 11, null],
+    ['partner_lesson_moved', 30, 2],
+  ]);
+  assert.ok(fixture.state.notifications.every((row) => row.body.includes('Школа №1 · Пн · 16:00')));
+  assert.equal(fixture.state.notifications.some((row) => Number(row.userId) === 10), false);
+  assert.equal(fixture.state.notifications.some((row) => Number(row.userId) === 31), false);
+});
+
+test('all immediate partner event families stay inside the group project', async () => {
+  const fixture = notificationEventFixture({ directors: [] });
+  const events = createNotificationEvents(fixture.pool);
+  const lesson = { id: 90, group_id: 4, planned_teacher_id: 7, actual_teacher_id: null, starts_at: '2026-09-28 16:00:00' };
+  await events.quickChildCreated(fixture.connection, { lesson, childId: 77, childName: 'Иван Иванов', actorUserId: 99 });
+  await events.childAddedToGroup(fixture.connection, { groupId: 4, childId: 77, actorUserId: 99, causeKey: 'membership-1' });
+  await events.lessonMoved(fixture.connection, { lesson, previousStartsAt: '2026-09-28 15:00:00', actorUserId: 99 });
+  await events.lessonCancelled(fixture.connection, { lesson, actorUserId: 99 });
+  const partnerRows = fixture.state.notifications.filter((row) => String(row.roleCode) === 'partner');
+  assert.deepEqual(partnerRows.map((row) => row.type).sort(), [
+    'partner_child_added_group', 'partner_lesson_cancelled', 'partner_lesson_moved', 'partner_quick_child_created',
+  ]);
+  assert.ok(partnerRows.every((row) => Number(row.userId) === 30 && Number(row.projectId) === 2));
+  assert.equal(partnerRows.some((row) => Number(row.userId) === 31), false);
+});
+
+test('debt threshold can notify again only after balance recovered above -2 and crosses the threshold again', async () => {
+  const fixture = notificationEventFixture({ directors: [10], partnersByProject: {} });
+  const events = createNotificationEvents(fixture.pool);
+  await events.debtThreshold(fixture.connection, { enrollmentId: 55, before: -1, after: -2, causeKey: 'attendance-1', actorUserId: 99 });
+  await events.debtThreshold(fixture.connection, { enrollmentId: 55, before: -2, after: -3, causeKey: 'attendance-2', actorUserId: 99 });
+  await events.debtThreshold(fixture.connection, { enrollmentId: 55, before: -3, after: 0, causeKey: 'payment-1', actorUserId: 99 });
+  await events.debtThreshold(fixture.connection, { enrollmentId: 55, before: 0, after: -2, causeKey: 'attendance-3', actorUserId: 99 });
+  const rows = fixture.state.notifications.filter((row) => row.type === 'director_debt_threshold');
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((row) => row.dedupKey), [
+    'director:debt:55:attendance-1',
+    'director:debt:55:attendance-3',
+  ]);
+});
+
+test('generic saved false suppresses the logical notification before outbox delivery is created', async () => {
+  const fixture = notificationEventFixture({ directors: [], settings: { '20:teacher_lesson_moved': false } });
+  const events = createNotificationEvents(fixture.pool);
+  await events.lessonMoved(fixture.connection, {
+    lesson: { id: 90, group_id: 4, planned_teacher_id: 7, starts_at: '2026-09-28 16:00:00' },
+    previousStartsAt: '2026-09-28 15:00:00', actorUserId: 99,
+  });
+  assert.equal(fixture.state.notifications.some((row) => row.type === 'teacher_lesson_moved'), false);
+});
+
+function schedulerFixture(rows, { directors = [{ user_id: 10 }], partnersByProject = { 2: [{ user_id: 30 }] } } = {}) {
+  const created = [];
+  const notificationEvents = {
+    roleUsers: async (_connection, role) => role === 'director' ? directors : [],
+    teacherUser: async (_connection, teacherId) => teacherId == null ? null : ({ user_id: 100 + Number(teacherId) }),
+    partnerUsers: async (_connection, projectId) => partnersByProject[Number(projectId)] ?? [],
+    createUser: async (_connection, payload) => { created.push(payload); return String(created.length); },
+  };
+  const connection = { query: async (sql) => {
+    if (sql.includes('JOIN child_enrollments')) return [[]];
+    if (sql.includes('FROM lessons l JOIN study_groups g')) return [rows];
+    return [[]];
+  } };
+  return { created, notificationEvents, connection };
+}
+
+test('scheduler enforces soon/start/overdue-start/finish/overdue-finish conditions from current lesson status', async () => {
+  const rows = [
+    { id: 1, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      starts_at: '2026-09-25 16:59:00', ends_at: '2026-09-25 18:00:00', status: 'scheduled', group_name: 'G1' },
+    { id: 2, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      starts_at: '2026-09-25 16:00:00', ends_at: '2026-09-25 17:00:00', status: 'scheduled', group_name: 'G2' },
+    { id: 3, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      starts_at: '2026-09-25 15:44:00', ends_at: '2026-09-25 17:00:00', status: 'scheduled', group_name: 'G3' },
+    { id: 4, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: 7, default_teacher_id: 7,
+      starts_at: '2026-09-25 15:00:00', ends_at: '2026-09-25 16:00:00', status: 'in_progress', group_name: 'G4' },
+    { id: 5, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: 7, default_teacher_id: 7,
+      starts_at: '2026-09-25 14:00:00', ends_at: '2026-09-25 15:29:00', status: 'in_progress', group_name: 'G5' },
+    { id: 6, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: 7, default_teacher_id: 7,
+      starts_at: '2026-09-25 14:00:00', ends_at: '2026-09-25 15:00:00', status: 'completed', group_name: 'G6' },
+    { id: 7, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      starts_at: '2026-09-25 14:00:00', ends_at: '2026-09-25 15:00:00', status: 'cancelled', group_name: 'G7' },
+  ];
+  const fixture = schedulerFixture(rows);
+  const scheduler = createPushScheduler({ query: async () => [[]] }, { notificationEvents: fixture.notificationEvents });
+  await scheduler.generateLessons(fixture.connection, { day: '2026-09-25', time: '16:00:00', sql: '2026-09-25 16:00:00' });
+  const byLesson = (id) => fixture.created.filter((item) => Number(item.entityId) === id).map((item) => item.type).sort();
+  assert.deepEqual(byLesson(1), ['teacher_lesson_soon']);
+  assert.deepEqual(byLesson(2), ['teacher_lesson_start_reminder']);
+  assert.deepEqual(byLesson(3), ['director_lesson_not_started', 'partner_lesson_not_started']);
+  assert.deepEqual(byLesson(4), ['teacher_lesson_finish_reminder']);
+  assert.deepEqual(byLesson(5), ['director_lesson_not_finished', 'partner_lesson_not_finished']);
+  assert.deepEqual(byLesson(6), []);
+  assert.deepEqual(byLesson(7), []);
+});
+
+test('scheduler partner overdue events use the lesson project when selecting recipients', async () => {
+  const rows = [
+    { id: 8, project_id_snapshot: 1, planned_teacher_id: 8, actual_teacher_id: null, default_teacher_id: 8,
+      starts_at: '2026-09-25 15:40:00', ends_at: '2026-09-25 17:00:00', status: 'scheduled', group_name: 'P1' },
+    { id: 9, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: 7, default_teacher_id: 7,
+      starts_at: '2026-09-25 14:00:00', ends_at: '2026-09-25 15:20:00', status: 'in_progress', group_name: 'P2' },
+  ];
+  const fixture = schedulerFixture(rows, { directors: [], partnersByProject: { 1: [{ user_id: 31 }], 2: [{ user_id: 30 }] } });
+  const scheduler = createPushScheduler({ query: async () => [[]] }, { notificationEvents: fixture.notificationEvents });
+  await scheduler.generateLessons(fixture.connection, { day: '2026-09-25', time: '16:00:00', sql: '2026-09-25 16:00:00' });
+  const partner = fixture.created.filter((item) => item.roleCode === 'partner');
+  assert.deepEqual(partner.map((item) => [item.type, Number(item.userId), Number(item.projectId)]).sort(), [
+    ['partner_lesson_not_finished', 30, 2],
+    ['partner_lesson_not_started', 31, 1],
+  ]);
+});
+
+test('scheduler birthday creates one teacher notification per child/day even with two lessons', async () => {
+  const created = [];
+  const notificationEvents = {
+    teacherUser: async () => ({ user_id: 107 }),
+    createUser: async (_connection, payload) => { created.push(payload); return String(created.length); },
+  };
+  const scheduler = createPushScheduler({ query: async () => [[]] }, { notificationEvents });
+  const connection = { query: async () => [[
+    { lesson_id: 1, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      child_id: 77, full_name: 'Иван Иванов', birth_date: '2018-09-25' },
+    { lesson_id: 2, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      child_id: 77, full_name: 'Иван Иванов', birth_date: '2018-09-25' },
+    { lesson_id: 3, project_id_snapshot: 2, planned_teacher_id: 7, actual_teacher_id: null, default_teacher_id: 7,
+      child_id: 78, full_name: 'Не именинник', birth_date: '2018-09-24' },
+  ]] };
+  await scheduler.generateBirthdays(connection, { day: '2026-09-25', time: '15:00:00', sql: '2026-09-25 15:00:00' });
+  assert.equal(created.length, 1);
+  assert.equal(created[0].type, 'teacher_child_birthday');
+  assert.equal(created[0].dedupKey, 'teacher:birthday:7:77:2026-09-25');
+});
+
+test('scheduler calls configurable parent day-before generation only from the configured Sakhalin time onward', async () => {
+  function poolFixture() {
+    const connection = { query: async () => [[]], beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+    return { query: connection.query, getConnection: async () => connection };
+  }
+  const calls = [];
+  const notificationEvents = {
+    roleUsers: async () => [], teacherUser: async () => null, partnerUsers: async () => [], createUser: async () => null,
+  };
+  const before = createPushScheduler(poolFixture(), {
+    notificationEvents, parentNotifications: { generateDayBefore: async (day) => { calls.push(day); return { created: 0 }; } },
+    reminderTime: '19:00', now: () => new Date('2026-09-25T07:59:00Z'),
+  });
+  await before.generate();
+  assert.deepEqual(calls, []);
+  const atTime = createPushScheduler(poolFixture(), {
+    notificationEvents, parentNotifications: { generateDayBefore: async (day) => { calls.push(day); return { created: 0 }; } },
+    reminderTime: '19:00', now: () => new Date('2026-09-25T08:00:00Z'),
+  });
+  await atTime.generate();
+  assert.deepEqual(calls, ['2026-09-26']);
+});
+
+test('frontend logout unbinds current endpoint before session logout and login rebind does not request permission automatically', async () => {
+  const apiSource = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
+  const pushSource = await readFile(new URL('../src/frontend/push-client.mjs', import.meta.url), 'utf8');
+  const logoutStart = apiSource.indexOf('async function logout()');
+  const logoutEnd = apiSource.indexOf('function temporaryTeacherParentRole()', logoutStart);
+  const logout = apiSource.slice(logoutStart, logoutEnd);
+  assert.ok(logout.indexOf('icubePush.unbind()') >= 0);
+  assert.ok(logout.indexOf('icubePush.unbind()') < logout.indexOf("api.request('/auth/logout'"));
+  const rebindStart = pushSource.indexOf('export async function rebindPush');
+  const rebindEnd = pushSource.indexOf('export async function unbindPush', rebindStart);
+  const rebind = pushSource.slice(rebindStart, rebindEnd);
+  assert.match(rebind, /Notification\.permission !== 'granted'/);
+  assert.match(rebind, /getSubscription\(\)/);
+  assert.match(rebind, /bind\(subscription\)/);
+  assert.doesNotMatch(rebind, /requestPermission/);
+});

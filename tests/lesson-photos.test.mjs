@@ -70,7 +70,7 @@ async function fixture(options = {}) {
   const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-photos-'));
   const pool = memoryPool(options);
   const service = createLessonPhotoService(pool, { storageDir, maxUploadBytes: 1024, retentionDays: 30,
-    now: () => new Date('2026-09-19T12:00:00Z') });
+    now: () => new Date('2026-09-19T12:00:00Z'), parentNotifications: options.parentNotifications ?? null });
   return { storageDir, pool, service, async close() { await rm(storageDir, { recursive: true, force: true }); } };
 }
 
@@ -154,6 +154,19 @@ test('offline photo captured after finish uploads idempotently after completion'
   const first = await f.service.upload(10, input, teacher);
   const repeated = await f.service.upload(10, input, teacher);
   assert.equal(repeated.id, first.id); assert.equal(f.pool.state.photos.length, 1);
+});
+
+test('parent photo notification hook runs only after a real successful server upload and not on idempotent replay', async (t) => {
+  const calls = [];
+  const f = await fixture({ parentNotifications: {
+    async photoAvailable(_connection, lesson, childId) { calls.push({ lessonId: String(lesson.id), childId: String(childId) }); },
+  } }); t.after(f.close);
+  assert.deepEqual(calls, []);
+  const input = uploadInput({ clientUploadId: 'push-photo-upload-1' });
+  await f.service.upload(10, input, teacher);
+  assert.deepEqual(calls, [{ lessonId: '10', childId: '20' }]);
+  await f.service.upload(10, input, teacher);
+  assert.deepEqual(calls, [{ lessonId: '10', childId: '20' }]);
 });
 
 test('download checks access and returns the stored file', async (t) => {
