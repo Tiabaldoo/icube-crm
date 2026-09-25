@@ -701,10 +701,11 @@ test('первое открытие календаря не падает из-з
 
 test('подпись extra использует текущий active enrollment, а не старый finished', async () => {
   const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+  const app={innerHTML:''};
   const document = {
     body: { style:{}, classList:{ add(){}, remove(){}, contains(){return false;} } },
-    documentElement:{style:{}}, head:{appendChild(){}}, getElementById(){return null;},
-    createElement(){return {style:{},appendChild(){}};}, querySelector(){return null;}, querySelectorAll(){return [];}, addEventListener(){},
+    documentElement:{style:{}}, head:{appendChild(){}}, getElementById(id){return id==='app'?app:null;},
+    createElement(){return {style:{},appendChild(){}};}, querySelector(selector){return selector==='#app'?app:null;}, querySelectorAll(){return [];}, addEventListener(){},
   };
   const context = vm.createContext({
     console, document, alert(){}, requestAnimationFrame:(fn)=>fn(), setTimeout:()=>0, clearTimeout(){},
