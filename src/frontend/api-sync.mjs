@@ -1599,12 +1599,13 @@ function installAuthenticatedShells() {
     const parentRole = temporaryTeacherParentRole();
     const right = parentRole
       ? '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>'
-      : '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubePush?.openSettings()">Уведомления</button><button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>';
+      : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
+    const teacherPushButton = parentRole ? '' : '<button class="btn" onclick="icubePush?.openSettings()">Уведомления</button>';
     const offline = legacy.state.offlineBootstrap || globalThis.navigator?.onLine === false;
     const offlineNotice = offline
       ? '<div class="notice" style="max-width:680px;margin:12px auto 0">Офлайн · изменения будут отправлены после подключения</div>'
       : '';
-    return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>${html(teacherNameForShell())}</b></div><div>${right}</div></div>
+    return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>${html(teacherNameForShell())}</b></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">${teacherPushButton}${right}</div></div>
       <div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn ${legacy.state.page === 'teacherToday' ? 'soft' : ''}" onclick="state.page='teacherToday';render()">Сегодня</button><button class="btn ${legacy.state.page === 'teacherCalendar' ? 'soft' : ''}" onclick="state.page='teacherCalendar';render()">Календарь</button></div>${offlineNotice}</div>
       <div class="teacher-content">${content}</div></div>`;
   };
