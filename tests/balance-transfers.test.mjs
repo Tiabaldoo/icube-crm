@@ -187,7 +187,7 @@ function reversalFixture({ sourceBalance = '0.00000000', sourceDebit = '-3.00000
     throw new Error(`Неожиданный SQL: ${sql}`);
   };
   const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
-  return { state, service: createBalanceTransfers({ query, getConnection: async () => connection }) };
+  return { state, service: createBalanceTransfers({ query, getConnection: async () => connection }, { notificationEvents }) };
 }
 
 test('отмена transfer точно восстанавливает balances, source lots и удаляет target lot', async () => {
