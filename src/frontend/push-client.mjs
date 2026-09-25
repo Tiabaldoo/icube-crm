@@ -421,8 +421,6 @@ async function togglePushPanel(anchor, inbox = false) {
   if (!anchor) return;
   if (pushPanel && pushPanelAnchor === anchor) { closePushPanel(); return; }
   closePushPanel();
-  await refreshPushState();
-  syncBellIcons();
   pushPanelAnchor = anchor;
   pushPanelInbox = Boolean(inbox);
   pushPanel = document.createElement('div');
@@ -430,6 +428,11 @@ async function togglePushPanel(anchor, inbox = false) {
   pushPanel.setAttribute('role', 'dialog');
   pushPanel.setAttribute('aria-label', 'Системные уведомления');
   document.body.appendChild(pushPanel);
+  renderPushPanel();
+
+  await refreshPushState();
+  if (!pushPanel || pushPanelAnchor !== anchor) return;
+  syncBellIcons();
   renderPushPanel();
 }
 
