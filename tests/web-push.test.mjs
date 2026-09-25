@@ -353,6 +353,47 @@ test('service worker runtime parses push payload, shows tagged notification and 
   assert.equal(target.searchParams.get('entityId'), '456');
 });
 
+test('test notification uses the backend delivery pipeline and real Web Push sender hook', async () => {
+  const state = { sent: 0, markedSent: 0 };
+  const claimed = {
+    id: 1, attempts: 1, notification_id: 99, notification_type: 'push_test',
+    title: 'Тестовое уведомление', body: 'Уведомления iCube работают.', destination: 'home',
+    entity_type: null, entity_id: null, created_at: '2026-09-25 18:00:00.000000',
+    subscription_id: 5, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth,
+  };
+  const query = async (sql) => {
+    if (sql.includes('SELECT pd.id FROM push_deliveries')) return [[{ id: 1 }]];
+    if (sql.startsWith("UPDATE push_deliveries SET status='sending'")) return [{ affectedRows: 1 }];
+    if (sql.includes('FROM push_deliveries pd JOIN notifications n')) return [[claimed]];
+    if (sql.startsWith("UPDATE push_deliveries SET status='sent'")) { state.markedSent += 1; return [{ affectedRows: 1 }]; }
+    throw new Error('Unexpected test-push SQL: ' + sql);
+  };
+  const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
+  const pool = { query, getConnection: async () => connection };
+  const notificationEvents = {
+    async createUser(_connection, payload) {
+      assert.equal(payload.type, 'push_test');
+      assert.equal(payload.userId, 20);
+      assert.equal(payload.respectSettings, false);
+      return '99';
+    },
+  };
+  const sender = { async sendNotification(_subscription, payload) {
+    state.sent += 1;
+    const parsed = JSON.parse(payload);
+    assert.equal(parsed.notificationId, '99');
+    assert.equal(parsed.type, 'push_test');
+    assert.equal(parsed.title, 'Тестовое уведомление');
+  } };
+  const service = createWebPushService(pool, {
+    config: pushConfig, notificationEvents, sender, now: () => new Date('2026-09-25T08:05:00Z'),
+  });
+  const result = await service.createTestNotification({ userId: 20, roles: ['teacher'] });
+  assert.equal(result.notificationId, '99');
+  assert.equal(state.sent, 1);
+  assert.equal(state.markedSent, 1);
+});
+
 test('push frontend uses capability detection, explicit permission button and backend test path', async () => {
   const source = await readFile(new URL('../src/frontend/push-client.mjs', import.meta.url), 'utf8');
   assert.match(source, /navigator\?\.serviceWorker.*PushManager.*Notification/s);
@@ -418,6 +459,25 @@ test('one logical notification enqueues one delivery per active device and dedup
     { notificationId: 1, subscriptionId: 1 },
     { notificationId: 1, subscriptionId: 2 },
   ]);
+});
+
+test('push worker is a separate persistent minute job and normal API server does not depend on starting it', async () => {
+  const [worker, service, timer, pkg, server] = await Promise.all([
+    readFile(new URL('../backend/src/push-worker.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../deploy/icube-crm-push.service', import.meta.url), 'utf8'),
+    readFile(new URL('../deploy/icube-crm-push.timer', import.meta.url), 'utf8'),
+    readFile(new URL('../package.json', import.meta.url), 'utf8'),
+    readFile(new URL('../backend/src/server.mjs', import.meta.url), 'utf8'),
+  ]);
+  assert.match(worker, /export async function runPushWorker/);
+  assert.match(worker, /scheduler\.generate\(\)/);
+  assert.match(worker, /push\.processPending/);
+  assert.match(service, /Type=oneshot/);
+  assert.match(service, /npm run push:worker/);
+  assert.match(timer, /OnCalendar=\*-\*-\* \*:\*:00/);
+  assert.match(timer, /Persistent=true/);
+  assert.equal(JSON.parse(pkg).scripts['push:worker'], 'node backend/src/push-worker.mjs');
+  assert.doesNotMatch(server, /push-worker\.mjs|runPushWorker/);
 });
 
 test('push migration and worker are durable, per-device and atomically claimed', async () => {
