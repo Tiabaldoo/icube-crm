@@ -180,7 +180,7 @@ export async function testPush() {
 function controlsMarkup() {
   const status = state.status;
   const actions = [];
-  if (['available', 'disabled', 'blocked'].includes(status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
+  if (['available', 'disabled', 'blocked'].includes(status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Разрешить уведомления</button>');
   if (status === 'enabled') actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления</button>');
   return `<div class="push-device-card"><h3 style="margin:0 0 8px">Системные уведомления</h3>
     <div class="muted" style="margin-bottom:12px">${esc(pushStatusText())}</div>
