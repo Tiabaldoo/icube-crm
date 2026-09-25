@@ -358,7 +358,7 @@ test('test notification uses the backend delivery pipeline and real Web Push sen
   const claimed = {
     id: 1, attempts: 1, notification_id: 99, notification_type: 'push_test',
     title: 'Тестовое уведомление', body: 'Уведомления iCube работают.', destination: 'home',
-    entity_type: null, entity_id: null, created_at: '2026-09-25 18:00:00.000000',
+    entity_type: null, entity_id: null, created_at: '2026-09-25 18:55:00.000000',
     subscription_id: 5, endpoint: subscription.endpoint, p256dh: subscription.keys.p256dh, auth: subscription.keys.auth,
   };
   const query = async (sql) => {
