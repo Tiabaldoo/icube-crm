@@ -2,11 +2,15 @@ import { ApiClient, ApiError } from '../data/api-client.mjs';
 
 const api = new ApiClient();
 const DEVICE_DISABLED_KEY = 'icube-push-device-disabled';
+const ONBOARDING_SEEN_KEY = 'icube-pwa-onboarding-seen-v1';
 const state = { config: null, status: 'loading', message: 'Проверяем…', subscription: null };
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 let pushPanel = null;
 let pushPanelAnchor = null;
 let pushPanelInbox = false;
+let onboardingModal = null;
+let onboardingView = null;
+let onboardingAutoHandled = false;
 
 function bellIcon() {
   return state.status === 'enabled' ? '🔔' : '🔕';
@@ -33,6 +37,20 @@ function installedStandalone() {
 }
 function iosLike() {
   return /iPhone|iPad|iPod/i.test(globalThis.navigator?.userAgent ?? '');
+}
+function onboardingPlatform() {
+  const nav = globalThis.navigator ?? {};
+  const platform = String(nav.userAgentData?.platform ?? nav.platform ?? '');
+  const userAgent = String(nav.userAgent ?? '');
+  if (/iPhone|iPad|iPod/i.test(userAgent) || (/Mac/i.test(platform) && Number(nav.maxTouchPoints) > 1)) return 'ios';
+  if (/Android/i.test(platform) || /Android/i.test(userAgent)) return 'android';
+  return 'other';
+}
+function onboardingSeen() {
+  try { return localStorage.getItem(ONBOARDING_SEEN_KEY) === '1'; } catch { return false; }
+}
+function markOnboardingSeen() {
+  try { localStorage.setItem(ONBOARDING_SEEN_KEY, '1'); } catch { /* ignore */ }
 }
 function deviceDisabled() {
   try { return localStorage.getItem(DEVICE_DISABLED_KEY) === '1'; } catch { return false; }
@@ -200,6 +218,161 @@ async function rerenderMounted(refresh = true) {
   }
 }
 
+function removeOnboardingModal() {
+  onboardingModal?.remove();
+  onboardingModal = null;
+  onboardingView = null;
+}
+
+function showOnboardingHint() {
+  document.querySelector('.pwa-onboarding-toast')?.remove();
+  const toast = document.createElement('div');
+  toast.className = 'pwa-onboarding-toast';
+  toast.textContent = 'Инструкцию можно открыть позже в разделе уведомлений.';
+  document.body.appendChild(toast);
+  window.setTimeout(() => toast.remove(), 4500);
+}
+
+function deferOnboarding() {
+  removeOnboardingModal();
+  showOnboardingHint();
+}
+
+function onboardingNotificationMarkup() {
+  const actions = [];
+  if (['available', 'disabled'].includes(state.status)) {
+    actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
+  }
+  const done = state.status === 'enabled';
+  return `<div class="pwa-onboarding-push ${done ? 'done' : ''}">
+    <div class="pwa-onboarding-push-icon">${done ? '✅' : '🔔'}</div>
+    <div class="pwa-onboarding-push-copy"><b>${done ? 'Уведомления включены' : 'Системные уведомления'}</b>
+      <span>${esc(done ? 'Этот шаг уже выполнен.' : pushStatusText())}</span></div>
+    ${actions.join('')}
+  </div>`;
+}
+
+function onboardingSteps() {
+  const notificationStep = state.status === 'enabled'
+    ? 'Системные уведомления уже включены — этот шаг выполнен.'
+    : 'Откройте уведомления в CRM и нажмите «Включить уведомления».';
+  if (onboardingPlatform() === 'ios') return [
+    'Откройте iCube CRM в Safari.',
+    'Нажмите кнопку «Поделиться» в Safari.',
+    'Выберите «На экран Домой».',
+    'Подтвердите добавление приложения.',
+    'Закройте Safari и откройте iCube CRM с нового значка на экране Домой.',
+    notificationStep,
+  ];
+  if (onboardingPlatform() === 'android') return [
+    'Откройте iCube CRM в браузере, например Chrome.',
+    'Откройте меню браузера ⋮.',
+    'Выберите «Установить приложение» или «Добавить на главный экран».',
+    'Подтвердите установку.',
+    'Откройте iCube CRM с нового значка на главном экране.',
+    notificationStep,
+  ];
+  return [
+    'Откройте меню вашего браузера.',
+    'Найдите пункт «Установить приложение» или «Добавить на главный экран», если браузер его предлагает.',
+    'Подтвердите установку и откройте iCube CRM с нового значка.',
+    notificationStep,
+  ];
+}
+
+function onboardingPromptMarkup() {
+  return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>Настроить приложение?</h2></div>
+    <button class="pwa-onboarding-close" type="button" onclick="icubePush.deferOnboarding()" aria-label="Закрыть">×</button></div>
+    <p class="pwa-onboarding-intro">Можно установить iCube CRM на главный экран телефона и включить уведомления, чтобы быстрее открывать кабинет и не пропускать важные события.</p>
+    <div class="pwa-onboarding-actions">
+      <button class="btn primary" type="button" onclick="icubePush.openOnboarding()">Настроить сейчас</button>
+      <button class="btn" type="button" onclick="icubePush.deferOnboarding()">Позже</button>
+    </div>`;
+}
+
+function onboardingGuideMarkup() {
+  if (installedStandalone()) {
+    if (state.status === 'enabled') {
+      return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>Приложение настроено</h2></div>
+        <button class="pwa-onboarding-close" type="button" onclick="icubePush.closeOnboarding()" aria-label="Закрыть">×</button></div>
+        <p class="pwa-onboarding-intro">iCube CRM уже открыта как установленное приложение.</p>
+        ${onboardingNotificationMarkup()}
+        <div class="pwa-onboarding-actions"><button class="btn primary" type="button" onclick="icubePush.closeOnboarding()">Готово</button></div>`;
+    }
+    return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>Осталось включить уведомления</h2></div>
+      <button class="pwa-onboarding-close" type="button" onclick="icubePush.closeOnboarding()" aria-label="Закрыть">×</button></div>
+      <p class="pwa-onboarding-intro">Приложение уже установлено. Настройка главного экрана больше не требуется.</p>
+      ${onboardingNotificationMarkup()}
+      <div class="pwa-onboarding-actions"><button class="btn" type="button" onclick="icubePush.closeOnboarding()">Закрыть</button></div>`;
+  }
+
+  const steps = onboardingSteps().map((text, index) => `<div class="pwa-onboarding-step">
+    <span class="pwa-onboarding-step-number">${index + 1}</span>
+    <div><b>Шаг ${index + 1}</b><p>${esc(text)}</p></div>
+  </div>`).join('');
+  const title = onboardingPlatform() === 'ios'
+    ? 'Установка на iPhone / iPad'
+    : onboardingPlatform() === 'android'
+      ? 'Установка на Android'
+      : 'Установка приложения';
+  return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>${title}</h2></div>
+    <button class="pwa-onboarding-close" type="button" onclick="icubePush.closeOnboarding()" aria-label="Закрыть">×</button></div>
+    <p class="pwa-onboarding-intro">Установите CRM на главный экран, а затем включите системные уведомления.</p>
+    <div class="pwa-onboarding-steps">${steps}</div>
+    ${onboardingNotificationMarkup()}
+    <div class="pwa-onboarding-actions"><button class="btn primary" type="button" onclick="icubePush.closeOnboarding()">Готово</button></div>`;
+}
+
+function renderOnboarding() {
+  if (!onboardingModal) return;
+  const dialog = onboardingModal.querySelector('.pwa-onboarding-dialog');
+  if (!dialog) return;
+  dialog.innerHTML = onboardingView === 'prompt' ? onboardingPromptMarkup() : onboardingGuideMarkup();
+}
+
+function ensureOnboardingModal() {
+  if (onboardingModal) return onboardingModal;
+  onboardingModal = document.createElement('div');
+  onboardingModal.className = 'pwa-onboarding-backdrop';
+  onboardingModal.innerHTML = '<div class="pwa-onboarding-dialog" role="dialog" aria-modal="true"></div>';
+  document.body.appendChild(onboardingModal);
+  return onboardingModal;
+}
+
+function showOnboardingPrompt() {
+  markOnboardingSeen();
+  onboardingView = 'prompt';
+  ensureOnboardingModal();
+  renderOnboarding();
+}
+
+async function openOnboarding() {
+  closePushPanel();
+  await refreshPushState();
+  syncBellIcons();
+  onboardingView = 'guide';
+  ensureOnboardingModal();
+  renderOnboarding();
+}
+
+function closeOnboarding() {
+  removeOnboardingModal();
+}
+
+function maybeShowOnboarding() {
+  if (onboardingAutoHandled || onboardingSeen()) return;
+  onboardingAutoHandled = true;
+  if (installedStandalone() && state.status === 'enabled') return;
+  markOnboardingSeen();
+  if (installedStandalone()) {
+    onboardingView = 'guide';
+    ensureOnboardingModal();
+    renderOnboarding();
+    return;
+  }
+  showOnboardingPrompt();
+}
+
 function closePushPanel() {
   pushPanel?.remove();
   pushPanel = null;
@@ -231,6 +404,7 @@ function pushPanelMarkup() {
   else if (['available', 'disabled', 'blocked'].includes(state.status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
   if (pushPanelInbox) actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotifications?.()">Открыть уведомления</button>');
   else actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();icubePush.openSettings()">Типы уведомлений</button>');
+  actions.push('<button class="btn" type="button" onclick="icubePush.openOnboarding()">Как установить приложение</button>');
   return `<div class="push-popover-head"><b>Системные уведомления</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
     <div class="push-popover-status">${esc(pushStatusText())}</div>
     <div class="push-popover-actions">${actions.join('')}</div>`;
@@ -265,6 +439,7 @@ async function runAction(action, refresh = true) {
     await rerenderMounted(refresh);
     syncBellIcons();
     renderPushPanel();
+    renderOnboarding();
   } catch (error) { window.alert(error?.message ?? 'Не удалось выполнить действие с уведомлениями.'); }
 }
 
@@ -293,6 +468,7 @@ window.icubePush = {
   enable: () => runAction(enablePush, false), disable: () => runAction(disablePush),
   test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
   icon: bellIcon, syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
+  openOnboarding, closeOnboarding, deferOnboarding,
   openSettings, setting: saveSetting,
 };
 
@@ -308,5 +484,6 @@ window.icubeAuthReady?.then(async (profile) => {
   await rebindPush(profile).catch(console.error);
   await refreshPushState();
   syncBellIcons();
+  maybeShowOnboarding();
   if (window.icubeHandlePushDeepLink) await window.icubeHandlePushDeepLink(profile).catch(console.error);
 });
