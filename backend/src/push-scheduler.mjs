@@ -7,9 +7,9 @@ function businessParts(now = new Date()) {
     timeZone: BUSINESS_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
   }).formatToParts(now).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
-  return { day: ${parts.year}-${parts.month}-${parts.day},
-    time: ${parts.hour}:${parts.minute}:${parts.second},
-    sql: ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} };
+  return { day: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}:${parts.second}`,
+    sql: `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}` };
 }
 
 export function createPushScheduler(pool, {
@@ -116,7 +116,7 @@ export function createPushScheduler(pool, {
     for (const row of rows) {
       if (!birthdayMatchesDate(row.birth_date, parts.day)) continue;
       const teacherId = row.actual_teacher_id ?? row.planned_teacher_id ?? row.default_teacher_id;
-      const key = ${teacherId}:${row.child_id}:${parts.day}; if (seen.has(key)) continue; seen.add(key);
+      const key = `${teacherId}:${row.child_id}:${parts.day}`; if (seen.has(key)) continue; seen.add(key);
       const teacher = await notificationEvents.teacherUser(connection, teacherId); if (!teacher) continue;
       created += Number(Boolean(await notificationEvents.createUser(connection, {
         userId: teacher.user_id, roleCode: 'teacher', projectId: row.project_id_snapshot,

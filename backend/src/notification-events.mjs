@@ -4,11 +4,11 @@ const same = (left, right) => String(left ?? '') === String(right ?? '');
 const displayDate = (value) => {
   const text = String(value ?? '').slice(0, 10);
   const [year, month, day] = text.split('-');
-  return year && month && day ? ${day}.${month}.${year} : text;
+  return year && month && day ? `${day}.${month}.${year}` : text;
 };
 const displayTime = (value) => String(value ?? '').slice(11, 16);
 const moveTarget = (oldValue, newValue) => String(oldValue ?? '').slice(0, 10) === String(newValue ?? '').slice(0, 10)
-  ? displayTime(newValue) : ${displayDate(newValue)}, ${displayTime(newValue)};
+  ? displayTime(newValue) : `${displayDate(newValue)}, ${displayTime(newValue)}`;
 
 export function crossedDebtThreshold(before, after) {
   return Number(before) > -2 && Number(after) <= -2;

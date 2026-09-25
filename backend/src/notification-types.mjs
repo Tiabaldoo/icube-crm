@@ -47,5 +47,5 @@ export function settingsForRole(role) {
 export function notificationTag(type, entityType, entityId, notificationId) {
   const base = String(type ?? 'notification').replace(/^(teacher|director|partner)_/, '').replace(/_/g, '-');
   const entity = entityId == null ? notificationId : entityId;
-  return ${base}-${entity}.slice(0, 96);
+  return `${base}-${entity}`.slice(0, 96);
 }
