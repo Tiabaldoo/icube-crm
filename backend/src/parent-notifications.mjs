@@ -6,6 +6,7 @@ const timestamp = (value) => value instanceof Date ? value.toISOString().replace
 const clock = (value) => timestamp(value).slice(11, 16);
 const dateRu = (value) => timestamp(value).slice(0, 10).split('-').reverse().join('.');
 const eventStamp = (value) => (value instanceof Date ? value.toISOString() : String(value)).replace(/\D/g, '').slice(0, 14);
+const money = (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(Number(value ?? 0));
 
 export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
   reminder_day_before: ({ startsAt }) => ({
@@ -37,6 +38,11 @@ export const PARENT_NOTIFICATION_TEMPLATES = Object.freeze({
     title: 'Как прошло занятие',
     body: 'В личном кабинете доступны новые фотографии с занятия.',
     destination: 'photos',
+  }),
+  payment_confirmed: ({ childName, directionName, amount }) => ({
+    title: 'Оплата подтверждена',
+    body: `${childName} · ${directionName} · ${money(amount)} ₽`,
+    destination: 'payments',
   }),
 });
 
@@ -78,6 +84,30 @@ export function createParentNotifications(pool, { notificationEvents = null } = 
       }
     }
     return created;
+  }
+
+  async function createForGuardian(connection, { guardianId, childId, type, data = {}, referenceType, referenceId, dedupKey }) {
+    const template = PARENT_NOTIFICATION_TEMPLATES[type];
+    if (!template) throw new Error(`Unknown parent notification type: ${type}`);
+    const [rows] = await connection.query(`SELECT u.id user_id,COALESCE(s.enabled,:defaultEnabled) enabled
+      FROM guardians g JOIN users u ON u.id=g.user_id AND u.status='active' AND u.deleted_at IS NULL
+      LEFT JOIN parent_notification_settings s ON s.guardian_id=g.id AND s.notification_type=:type
+      WHERE g.id=:guardianId LIMIT 1`, { guardianId, type, defaultEnabled: defaults.get(type) ? 1 : 0 });
+    const recipient = rows[0];
+    if (!recipient || !Boolean(recipient.enabled)) return 0;
+    const message = template(data);
+    if (notificationEvents) return Number(Boolean(await notificationEvents.createUser(connection, {
+      userId: recipient.user_id, roleCode: 'parent', childId, type, title: message.title, body: message.body,
+      entityType: referenceType, entityId: referenceId, destination: message.destination, dedupKey,
+      referenceType, referenceId, respectSettings: false,
+    })));
+    const [result] = await connection.query(`INSERT IGNORE INTO notifications
+      (user_id,role_code,child_id,notification_type,title,body,entity_type,entity_id,destination,dedup_key,reference_type,reference_id)
+      VALUES (:userId,'parent',:childId,:type,:title,:body,:referenceType,:referenceId,:destination,:dedupKey,:referenceType,:referenceId)`, {
+      userId: recipient.user_id, childId, type, title: message.title, body: message.body,
+      referenceType, referenceId, destination: message.destination, dedupKey,
+    });
+    return Number(result.affectedRows ?? 0);
   }
 
   async function lessonChildren(connection, lesson) {
@@ -157,5 +187,5 @@ export function createParentNotifications(pool, { notificationEvents = null } = 
     return { targetDate, candidates: rows.length, created };
   }
 
-  return { createForChild, lessonMoved, lessonCancelled, lessonFinished, photoAvailable, generateDayBefore };
+  return { createForChild, createForGuardian, lessonMoved, lessonCancelled, lessonFinished, photoAvailable, generateDayBefore };
 }

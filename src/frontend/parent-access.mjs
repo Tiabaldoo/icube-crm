@@ -31,7 +31,7 @@ function showCredentials(credentials, title) {
   backdrop.querySelector('[data-value="password"]').textContent = credentials.password;
   backdrop.addEventListener('click', async (event) => {
     const button = event.target.closest('button');
-    if (button?.hasAttribute('data-close')) { backdrop.remove(); return; }
+    if (button?.hasAttribute('data-close')) { backdrop.remove(); legacy.render(); return; }
     const kind = button?.dataset.copy; if (!kind) return;
     const value = kind === 'all' ? `Логин: ${credentials.login}\nПароль: ${credentials.password}` : credentials[kind];
     await copyText(value); const label = button.textContent; button.textContent = 'Скопировано';
@@ -53,7 +53,7 @@ function accessBlock(childId) {
   if (!result) { queueMicrotask(() => load(childId)); return '<div class="card pad"><h2>Родительский доступ</h2><div class="muted">Загрузка…</div></div>'; }
   if (result.error) return `<div class="card pad"><h2>Родительский доступ</h2><div class="notice">${escapeHtml(result.error)}</div></div>`;
   const accounts = result;
-  const rows = accounts.map((account) => `<div class="kpi-line"><div><b>${escapeHtml(account.name || 'Родитель')}</b><div class="muted mini">${escapeHtml(account.login)} · ${account.status === 'active' ? 'Активен' : 'Отключён'}</div><div class="muted mini">Дети: ${escapeHtml(account.linkedChildren.join(', ') || '—')}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeResetParentPassword(${childId},${account.id})">Сбросить пароль</button><button class="btn" onclick="icubeSetParentStatus(${childId},${account.id},${account.status !== 'active'})">${account.status === 'active' ? 'Отключить' : 'Включить'}</button><button class="btn danger" onclick="icubeUnlinkParent(${childId},${account.id})">Отвязать</button></div></div>`).join('');
+  const rows = accounts.map((account) => `<div class="kpi-line"><div><b>Родитель: ${escapeHtml(account.name || 'Не указан')}</b><div class="muted mini">${escapeHtml(account.login)} · ${account.status === 'active' ? 'Активен' : 'Отключён'}</div><div class="muted mini">Дети: ${escapeHtml(account.linkedChildren.join(', ') || '—')}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeResetParentPassword(${childId},${account.id})">Сбросить пароль</button><button class="btn" onclick="icubeSetParentStatus(${childId},${account.id},${account.status !== 'active'})">${account.status === 'active' ? 'Отключить' : 'Включить'}</button><button class="btn danger" onclick="icubeUnlinkParent(${childId},${account.id})">Отвязать</button></div></div>`).join('');
   return `<div class="card pad" style="margin-top:16px"><div class="section-title"><div><h2>Родительский доступ</h2><div class="muted mini">Один аккаунт можно связать с несколькими детьми</div></div>${accounts.length ? '' : `<button class="btn primary" onclick="icubeCreateParentAccess(${childId})">Создать доступ</button>`}</div>${rows || '<div class="empty">Доступ ещё не создан.</div>'}<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">${accounts.length ? `<button class="btn primary" onclick="icubeCreateParentAccess(${childId})">Создать ещё аккаунт</button>` : ''}<button class="btn soft" onclick="icubeShowParentSearch(${childId})">Привязать существующего родителя</button></div>${accounts.length ? '<div class="muted mini" style="margin-top:8px">Создать ещё аккаунт — отдельный доступ для второго родителя или законного представителя.</div>' : ''}<div id="parent-access-search"></div></div>`;
 }
 
@@ -82,7 +82,7 @@ window.icubeSearchParentAccess = async (childId) => {
   try {
     const rows = await api.request(`/parent-access/search?q=${encodeURIComponent(query)}`);
     const target = document.querySelector('#parent-access-results'); if (!target) return;
-    target.innerHTML = rows.length ? rows.map((row) => `<div class="kpi-line"><div><b>${escapeHtml(row.name || 'Родитель')}</b><div class="muted mini">${escapeHtml(row.login)} · ${escapeHtml(row.linkedChildren.join(', ') || 'нет связанных детей')}</div></div><button class="btn soft" onclick="icubeLinkParent(${childId},${row.id})">Привязать</button></div>`).join('') : '<div class="empty" style="margin-top:10px">Ничего не найдено.</div>';
+    target.innerHTML = rows.length ? rows.map((row) => `<div class="kpi-line"><div><b>Родитель: ${escapeHtml(row.name || 'Не указан')}</b><div class="muted mini">${escapeHtml(row.login)} · ${escapeHtml(row.linkedChildren.join(', ') || 'нет связанных детей')}</div></div><button class="btn soft" onclick="icubeLinkParent(${childId},${row.id})">Привязать</button></div>`).join('') : '<div class="empty" style="margin-top:10px">Ничего не найдено.</div>';
   } catch (error) { window.alert(message(error)); }
 };
 window.icubeLinkParent = async (childId, guardianId) => {

@@ -177,12 +177,13 @@ test('subscription validation requires endpoint and both Web Push keys', () => {
   assert.throws(() => normalizePushSubscription({ endpoint: subscription.endpoint, keys: {} }), /Некорректная/);
 });
 
-test('all six parent notification types default true and generic role defaults match product rules', () => {
-  assert.equal(PARENT_NOTIFICATION_TYPES.length, 6);
+test('all seven parent notification types default true and generic role defaults match product rules', () => {
+  assert.equal(PARENT_NOTIFICATION_TYPES.length, 7);
   assert.ok(PARENT_NOTIFICATION_TYPES.every((item) => item.defaultEnabled === true));
   const teacher = settingsForRole('teacher'); const director = settingsForRole('director'); const partner = settingsForRole('partner');
   assert.equal(teacher.length, 8); assert.ok(teacher.every((item) => item.defaultEnabled));
-  assert.equal(director.length, 7); assert.ok(director.every((item) => item.defaultEnabled));
+  assert.equal(director.length, 9); assert.ok(director.every((item) => item.defaultEnabled));
+  assert.equal(partner.length, 7);
   assert.equal(partner.find((item) => item.type === 'partner_lesson_not_started').defaultEnabled, false);
   assert.equal(partner.find((item) => item.type === 'partner_lesson_not_finished').defaultEnabled, false);
   assert.ok(partner.filter((item) => !['partner_lesson_not_started', 'partner_lesson_not_finished'].includes(item.type)).every((item) => item.defaultEnabled));

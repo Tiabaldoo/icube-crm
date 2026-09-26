@@ -59,6 +59,10 @@ export function loadConfig(env = process.env) {
       retentionDays: positiveNumber('PHOTO_RETENTION_DAYS', env.PHOTO_RETENTION_DAYS ?? 30),
       maxUploadBytes: positiveNumber('PHOTO_MAX_UPLOAD_MB', env.PHOTO_MAX_UPLOAD_MB ?? 5) * 1024 * 1024,
     },
+    receipts: {
+      storageDir: env.PAYMENT_RECEIPT_STORAGE_DIR,
+      maxUploadBytes: positiveNumber('PAYMENT_RECEIPT_MAX_UPLOAD_MB', env.PAYMENT_RECEIPT_MAX_UPLOAD_MB ?? 10) * 1024 * 1024,
+    },
     parent: {
       timeZone: env.APP_TIME_ZONE ?? 'Asia/Sakhalin',
       maxUrl: env.PARENT_MAX_URL ?? null,

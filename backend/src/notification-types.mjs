@@ -15,6 +15,8 @@ export const USER_NOTIFICATION_TYPES = Object.freeze({
   director_lesson_cancelled: { role: 'director', label: 'Отмена занятия', defaultEnabled: true, ttl: 2 * 24 * 60 * 60 },
   director_child_added_group: { role: 'director', label: 'Ребёнок добавлен в группу', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
   director_debt_threshold: { role: 'director', label: 'Задолженность 2 занятия', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
+  director_payment_receipt: { role: 'director', label: 'Новый чек на проверку', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
+  director_partner_payment_confirmed: { role: 'director', label: 'Оплата подтверждена партнёром', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
 
   partner_quick_child_created: { role: 'partner', label: 'Новый ребёнок от преподавателя', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
   partner_child_added_group: { role: 'partner', label: 'Ребёнок добавлен в группу', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
@@ -22,6 +24,7 @@ export const USER_NOTIFICATION_TYPES = Object.freeze({
   partner_lesson_not_finished: { role: 'partner', label: 'Занятие не завершено', defaultEnabled: false, ttl: 8 * 60 * 60 },
   partner_lesson_moved: { role: 'partner', label: 'Перенос занятия', defaultEnabled: true, ttl: 2 * 24 * 60 * 60 },
   partner_lesson_cancelled: { role: 'partner', label: 'Отмена занятия', defaultEnabled: true, ttl: 2 * 24 * 60 * 60 },
+  partner_payment_receipt: { role: 'partner', label: 'Новый чек на проверку', defaultEnabled: true, ttl: 7 * 24 * 60 * 60 },
 });
 
 export const PARENT_PUSH_TYPES = Object.freeze({
@@ -32,6 +35,7 @@ export const PARENT_PUSH_TYPES = Object.freeze({
   payment_reminder: { ttl: 18 * 60 * 60 },
   lesson_finished: { ttl: 7 * 24 * 60 * 60 },
   push_test: { ttl: 60 * 60 },
+  payment_confirmed: { ttl: 7 * 24 * 60 * 60 },
 });
 
 export function notificationTypeConfig(type) {

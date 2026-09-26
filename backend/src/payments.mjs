@@ -68,6 +68,7 @@ const mapPayment = (row) => ({
   paidOn: isoDate(row.paid_on), amount: String(row.amount), priceSnapshot: String(row.price_snapshot),
   lessonsCredit: String(row.lessons_credit), method: row.method, note: row.note,
   refundedAmount: String(row.refunded_amount ?? '0.00'),
+  receiptIds: String(row.receipt_ids ?? '').split(',').filter(Boolean),
   refundableAmount: row.refundable_amount_lineage != null
     ? String(row.refundable_amount_lineage)
     : refundablePaymentAmount({ paymentAmount: row.amount, refundedAmount: row.refunded_amount ?? '0.00',
@@ -85,6 +86,8 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
     (SELECT COALESCE(SUM(r.amount),0) FROM refunds r WHERE r.payment_id=p.id AND r.deleted_at IS NULL) refunded_amount,
     (SELECT bl.remaining_lessons FROM balance_entries be JOIN balance_lots bl ON bl.source_balance_entry_id=be.id
       WHERE be.payment_id=p.id AND be.entry_type='payment' LIMIT 1) remaining_lessons,
+    (SELECT GROUP_CONCAT(rp.receipt_id ORDER BY rp.receipt_id) FROM payment_receipt_payments rp
+      WHERE rp.payment_id=p.id) receipt_ids,
     EXISTS(SELECT 1 FROM balance_entries pbe
       JOIN balance_lots pbl ON pbl.source_balance_entry_id=pbe.id
       JOIN balance_lot_consumptions blc ON blc.balance_lot_id=pbl.id
@@ -175,6 +178,11 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
           enrollmentId: enrollment.id, entryId: entryResult.insertId, lessons, remainingLessons: lotLessons, price,
         });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: enrollment.id, lessons });
+        if (context.afterCreate) await context.afterCreate(connection, {
+          id: String(result.insertId), enrollmentId: String(enrollment.id), childId: String(enrollment.child_id),
+          directionId: String(enrollment.direction_id), projectId: String(enrollment.project_id), amount, priceSnapshot: price,
+          lessonsCredit: lessons, paidOn: date, method,
+        });
         return String(result.insertId);
       });
       return get(paymentId);
@@ -291,5 +299,12 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
     return rows.map((row) => ({ enrollmentId: String(row.enrollment_id), childId: String(row.child_id), childName: row.child_name,
       directionId: String(row.direction_id), directionName: row.direction_name, balanceLessons: String(row.balance_lessons) }));
   }
-  return { list, get, create, update, remove, balances };
+  async function quote(enrollmentId, priceDate = businessDate()) {
+    return inTransaction(pool, async (connection) => {
+      const enrollment = await lockEnrollment(connection, enrollmentId, { priceDate });
+      const currentPrice = normalizeMoney(enrollment.current_price, 'priceSnapshot');
+      return { currentPrice, subscriptionAmount: moneyDecimal(moneyCents(currentPrice) * 4n) };
+    });
+  }
+  return { list, get, create, update, remove, balances, quote };
 }

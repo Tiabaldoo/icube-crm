@@ -7,13 +7,18 @@ const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
   ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['about', 'О ребёнке'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, payment: null, lessonInfo: null, scheduleCursor: null, menuOpen: false, touchX: null };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, lessonInfo: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '' };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
 const money = (value) => `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(value ?? 0))} ₽`;
 const lessonCount = (value) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 }).format(Number(value ?? 0));
 const selectedChild = () => state.profile?.children?.find((child) => String(child.id) === String(state.childId));
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value);
+  const input = document.createElement('textarea'); input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
+  document.body.append(input); input.select(); document.execCommand('copy'); input.remove();
+}
 
 export function parentScheduleStatus(lesson) {
   if (lesson.status === 'cancelled') return 'Отменено';
@@ -87,7 +92,7 @@ function shell(content) {
     ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
     <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span>${unread ? `<i>${unread}</i>` : ''}</button></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
-    ${viewerHtml()}${paymentModalHtml()}${lessonInfoHtml()}
+    ${viewerHtml()}${lessonInfoHtml()}
   </div>`;
 }
 
@@ -98,9 +103,7 @@ export function parentHomeHtml(data) {
   const nextAbsence = absenceAction ? `<div class="parent-next-actions">${next.absenceNotice ? '<span class="badge amber parent-next-absence-status">Ребёнка не будет</span>' : ''}<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${next.id}" data-origin="home">${absenceAction.label}</button></div>` : '';
   const enrollmentCards = data.enrollments.map((item) => {
     const balance = parentBalancePresentation(item.balanceLessons);
-    const pay = decimalUnits(item.balanceLessons) <= 0n && item.subscriptionPrice != null
-      ? `<button class="parent-primary parent-balance-pay" data-action="pay" data-amount="${escapeHtml(item.subscriptionPrice)}" data-direction="${escapeHtml(item.direction)}">Оплатить</button>` : '';
-    return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong>${pay}</article>`;
+    return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong></article>`;
   }).join('');
   return `<section class="parent-title"><h1>${escapeHtml(child.name)}</h1></section>
     <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<button type="button" class="parent-next parent-next-open" data-action="home-next-lesson" data-lesson="${next.id}" data-starts="${escapeHtml(next.startsAt)}"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></button>${nextAbsence}` : empty('Нет будущих занятий.')}</article>
@@ -160,10 +163,20 @@ function attendanceHtml(rows) {
   return `<section class="parent-title"><h1>Посещения</h1><span>Фактически посещённые занятия</span></section>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${dateRu(row.startsAt)}</b><span>${escapeHtml(row.direction)} · ${escapeHtml(row.group)}</span></div>${row.trial ? '<em>Ознакомительное</em>' : ''}</article>`).join('')}</div>` : empty('Посещений пока нет.')}`;
 }
 
-function paymentsHtml(data) {
+export function paymentsHtml(data) {
   const rows = data?.rows ?? [];
-  const enrollments = data?.home?.enrollments?.filter((item) => item.subscriptionPrice != null) ?? [];
-  return `<section class="parent-title"><h1>Оплаты</h1></section>${enrollments.length ? `<div class="parent-pay-actions">${enrollments.map((item) => `<article class="parent-card parent-subscription"><b>${escapeHtml(item.direction)}</b><span>Текущая стоимость абонемента: <strong>${money(item.subscriptionPrice)}</strong></span><button class="parent-primary" data-action="pay" data-amount="${escapeHtml(item.subscriptionPrice)}" data-direction="${escapeHtml(item.direction)}">Оплатить</button></article>`).join('')}</div>` : ''}${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong></article>`).join('')}</div>` : empty('Оплат пока нет.')}`;
+  const homes = data?.homes ?? [];
+  const receipts = data?.receipts ?? [];
+  const prices = homes.map((home) => {
+    const enrollments = (home.enrollments ?? []).filter((item) => item.subscriptionPrice != null);
+    if (!enrollments.length) return '';
+    return `<div class="parent-payment-child"><b>${escapeHtml(home.child?.name ?? 'Ребёнок')}</b>${enrollments.map((item) => `<span>${escapeHtml(item.direction)} — <strong>${money(item.subscriptionPrice)}</strong> / 4 занятия</span>`).join('')}</div>`;
+  }).join('');
+  const receiptHistory = receipts.length ? `<div class="parent-receipt-history">${receipts.map((receipt) => `<article class="parent-card parent-row"><div><b>Чек от ${dateRu(receipt.uploadedAt)}</b><span>${receipt.status === 'confirmed' ? 'Подтверждено' : 'Ожидает подтверждения'}</span></div><a class="parent-secondary" href="${escapeHtml(receipt.fileUrl)}" target="_blank" rel="noopener">Посмотреть чек</a></article>`).join('')}</div>` : empty('Загруженных чеков пока нет.');
+  return `<section class="parent-title"><h1>Оплаты</h1></section>
+    <article class="parent-card parent-payment-instructions"><h2>Оплата занятий</h2><p>Переведите оплату по номеру телефона:</p><div class="parent-payment-phone"><strong>+7 (999) 454-15-06</strong><span>Сбербанк</span><button class="parent-secondary" data-action="copy-payment-phone">Скопировать номер</button></div><h3>Текущая стоимость занятий:</h3>${prices || empty('Нет активных направлений с настроенной ценой.')}<p>Можно оплатить другую сумму или сразу несколько абонементов. После перевода загрузите чек. После проверки оплата появится в вашем кабинете, а баланс занятий обновится.</p><div class="parent-receipt-upload"><label>Загрузить чек<input type="file" data-receipt-file accept="image/jpeg,image/png,application/pdf"></label><button class="parent-primary" data-action="upload-receipt">Отправить чек</button><span data-receipt-message>${escapeHtml(state.receiptMessage)}</span></div></article>
+    <section class="parent-payment-section"><h2>Загруженные чеки</h2>${receiptHistory}</section>
+    <section class="parent-payment-section"><h2>История оплат</h2>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><div class="parent-payment-value"><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong>${row.type === 'payment' && row.receiptIds?.length ? `<a href="/api/v1/parent/payment-receipts/${row.receiptIds[0]}/file" target="_blank" rel="noopener">Посмотреть чек</a>` : ''}</div></article>`).join('')}</div>` : empty('Оплат пока нет.')}</section>`;
 }
 
 function aboutHtml(data) {
@@ -204,12 +217,6 @@ function viewerHtml() {
   return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть"></button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><a class="parent-viewer-download" href="${escapeHtml(photo.fileUrl)}" download="icube-photo-${escapeHtml(photo.id)}.jpg" data-action="viewer-download">Скачать</a><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
 }
 
-function paymentModalHtml() {
-  if (!state.payment) return '';
-  const qr = state.profile.contact?.paymentQrUrl;
-  return `<div class="parent-payment-modal"><article class="parent-card"><button data-action="pay-close" aria-label="Закрыть">×</button><h2>Оплата абонемента</h2><span>${escapeHtml(state.payment.direction)}</span><strong>${money(state.payment.amount)}</strong>${qr ? `<img src="${escapeHtml(qr)}" alt="QR для оплаты">` : '<div class="parent-empty">QR будет добавлен администратором.</div>'}<p>После оплаты зачисление появится после подтверждения администратором.</p></article></div>`;
-}
-
 function lessonInfoHtml() {
   const lesson = state.lessonInfo;
   if (!lesson) return '';
@@ -237,8 +244,12 @@ async function loadTab() {
       const [profile, settings, docs] = await Promise.all([api.request('/parent/profile'), api.request('/parent/notification-settings'), api.request('/parent/documents')]);
       data = { profile, settings, documents: docs.documents };
     } else if (tab === 'payments') {
-      const [rows, home] = await Promise.all([api.request(`/parent/children/${childId}/payments`), api.request(`/parent/children/${childId}/home`)]);
-      data = { rows, home };
+      const [rows, homes, receipts] = await Promise.all([
+        api.request(`/parent/children/${childId}/payments`),
+        Promise.all(state.profile.children.map((child) => api.request(`/parent/children/${child.id}/home`))),
+        api.request('/parent/payment-receipts'),
+      ]);
+      data = { rows, homes, receipts };
     } else data = await api.request(`/parent/children/${childId}/${tab}`);
     const notifications = await api.request('/parent/notifications').catch(() => state.notifications);
     if (version !== state.loadVersion) return;
@@ -256,7 +267,7 @@ function render() {
   if (state.tab === 'home') return shell(parentHomeHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [], nextLesson: null, latestPhoto: null }));
   if (state.tab === 'schedule') return shell(scheduleHtml(state.data ?? []));
   if (state.tab === 'attendance') return shell(attendanceHtml(state.data ?? []));
-  if (state.tab === 'payments') return shell(paymentsHtml(state.data ?? { rows: [], home: null }));
+  if (state.tab === 'payments') return shell(paymentsHtml(state.data ?? { rows: [], homes: [], receipts: [] }));
   if (state.tab === 'about') return shell(aboutHtml(state.data ?? { child: selectedChild() ?? {}, enrollments: [] }));
   if (state.tab === 'photos') return shell(photosHtml(state.data ?? []));
   return shell(settingsHtml(state.data ?? { profile: {}, settings: [], documents: [] }));
@@ -316,10 +327,25 @@ app?.addEventListener('click', async (event) => {
   else if (action === 'viewer-download') event.stopPropagation();
   else if (action === 'accept') { await api.request(`/parent/documents/${target.dataset.id}/accept`, { method: 'POST' }); await start(); }
   else if (action === 'logout') window.icubeAuthLogout?.();
-  else if (action === 'pay') {
-    state.payment = { amount: target.dataset.amount, direction: target.dataset.direction }; render();
+  else if (action === 'copy-payment-phone') {
+    await copyText('+79994541506');
+    target.textContent = 'Скопировано';
   }
-  else if (action === 'pay-close') { state.payment = null; render(); }
+  else if (action === 'upload-receipt') {
+    const file = app.querySelector('[data-receipt-file]')?.files?.[0];
+    if (!file) throw new ApiError('Выберите JPG, PNG или PDF');
+    target.disabled = true;
+    const message = app.querySelector('[data-receipt-message]');
+    try {
+      await api.requestRaw('/parent/payment-receipts', { body: file, headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'X-Original-Filename': encodeURIComponent(file.name),
+      } });
+      state.receiptMessage = 'Чек отправлен на проверку.';
+      if (message) message.textContent = state.receiptMessage;
+      await loadTab();
+    } finally { target.disabled = false; }
+  }
   else if (action === 'schedule-prev' || action === 'schedule-next') {
     const cursor = parseIsoDate(state.scheduleCursor); cursor.setUTCMonth(cursor.getUTCMonth() + (action === 'schedule-prev' ? -1 : 1), 1);
     state.scheduleCursor = localIsoDate(cursor); state.data = null; await loadTab();
@@ -356,6 +382,13 @@ async function openNotifications() {
   await loadTab();
 }
 
+async function openNotificationSettings() {
+  state.tab = 'settings';
+  state.data = null;
+  state.menuOpen = false;
+  await loadTab();
+}
+
 async function openPushDestination({ notificationId, destination, entityType, entityId } = {}) {
   const rows = await api.request('/parent/notifications').catch(() => []);
   const item = rows.find((row) => String(row.id) === String(notificationId)) ?? null;
@@ -369,4 +402,4 @@ async function openPushDestination({ notificationId, destination, entityType, en
   return { destination: state.tab, entityType: item?.entityType ?? entityType ?? null, entityId: item?.entityId ?? entityId ?? null };
 }
 
-if (globalThis.window) window.icubeParentPortal = { start, reload: loadTab, openNotifications, openPushDestination };
+if (globalThis.window) window.icubeParentPortal = { start, reload: loadTab, openNotifications, openNotificationSettings, openPushDestination };

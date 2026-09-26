@@ -208,6 +208,14 @@ test('director creates one-time credentials, links a second child and reset revo
   assert.deepEqual((await fixture.service.listAccess(11, director)), []);
 });
 
+test('missing guardian name stays nullable and never copies child name into parent identity', async () => {
+  const fixture = adminFixture(); fixture.state.guardians[0].full_name = null;
+  await fixture.service.createAccess(10, {}, { userId: '1', roles: ['director'] });
+  assert.equal(fixture.state.guardians[0].full_name, null);
+  assert.equal(fixture.state.users[0].display_name, 'Родитель');
+  assert.notEqual(fixture.state.users[0].display_name, 'Петя');
+});
+
 function notificationFixture({ disabled = new Set(), balance = '0.00000000' } = {}) {
   const state = { notifications: [], balance };
   async function query(sql, params = {}) {
@@ -464,7 +472,7 @@ test('parent next-lesson click loads schedule then opens exact lesson and quick 
   assert.doesNotMatch(source, /home-absence|quick-absence|absence-notice\/home/);
 });
 
-test('home payment action appears only for zero or debt balance with a subscription price', () => {
+test('home balance cards no longer expose the obsolete payment action', () => {
   const base = { child: { name: 'Петя' }, nextLesson: null, latestPhoto: null };
   const html = parentHomeHtml({ ...base, enrollments: [
     { direction: 'Робототехника', balanceLessons: '1.00000000', subscriptionPrice: '4100.00' },
@@ -472,9 +480,8 @@ test('home payment action appears only for zero or debt balance with a subscript
     { direction: 'Индивидуально', balanceLessons: '-1.50000000', subscriptionPrice: '2900.00' },
     { direction: 'Без цены', balanceLessons: '-1.00000000', subscriptionPrice: null },
   ] });
-  assert.equal((html.match(/data-action="pay"/g) ?? []).length, 2);
-  assert.match(html, /data-amount="4500\.00" data-direction="Программирование"/);
-  assert.match(html, /data-amount="2900\.00" data-direction="Индивидуально"/);
+  assert.equal((html.match(/data-action="pay"/g) ?? []).length, 0);
+  assert.doesNotMatch(html, />Оплатить</);
   assert.match(html, /Фото с последнего занятия/);
 });
 
@@ -521,7 +528,10 @@ test('parent UI moves price and child data to their sections and removes email a
   const home = portal.slice(portal.indexOf('function parentHomeHtml'), portal.indexOf('function scheduleEventHtml'));
   const payments = portal.slice(portal.indexOf('function paymentsHtml'), portal.indexOf('function aboutHtml'));
   assert.doesNotMatch(home, /Стоимость абонемента|Здравствуйте/);
-  assert.match(payments, /Текущая стоимость абонемента/);
+  assert.match(payments, /Текущая стоимость занятий/);
+  assert.match(payments, /\/ 4 занятия/);
+  assert.match(payments, /Загрузить чек/);
+  assert.doesNotMatch(payments, /data-action="pay"|QR/);
   assert.match(portal, /О ребёнке/); assert.match(portal, /data-action="child-about"/);
   assert.doesNotMatch(portal, /name="email"/);
   assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить: \$\{escapeHtml\(contact\.phone\)\}/);
@@ -533,6 +543,8 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.match(css, /\.parent-actions a\.parent-contact-button\.primary\{background:#175cd3;color:#fff!important;-webkit-text-fill-color:#fff\}/);
   assert.doesNotMatch(access, /prompt\(/);
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
+  assert.match(access, /Родитель: \$\{escapeHtml\(account\.name \|\| 'Не указан'\)\}/);
+  assert.match(access, /backdrop\.remove\(\); legacy\.render\(\); return/);
 });
 
 test('parent access create and reset share a selectable one-time credentials dialog', async () => {

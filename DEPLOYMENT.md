@@ -181,10 +181,11 @@ PARTNER_PASSWORD='сильный-временный-пароль' npm run create
 APP_TIME_ZONE=Asia/Sakhalin
 PARENT_MAX_URL=https://max.ru/example
 PARENT_CONTACT_PHONE=+70000000000
-PARENT_PAYMENT_QR_URL=https://example.invalid/payment-qr.png
+PAYMENT_RECEIPT_STORAGE_DIR=/var/lib/icube-crm/payment-receipts
+PAYMENT_RECEIPT_MAX_UPLOAD_MB=10
 ```
 
-URL QR пока является статической заглушкой и не создаёт оплату. До production замените три seeded документа `draft-2026-09` юридически проверенными версиями: создайте новые строки `parent_documents`, деактивируйте черновые только после проверки и не редактируйте уже принятую версию задним числом.
+До production замените три seeded документа `draft-2026-09` юридически проверенными версиями: создайте новые строки `parent_documents`, деактивируйте черновые только после проверки и не редактируйте уже принятую версию задним числом.
 
 Напоминания накануне и адресные уведомления о днях рождения создаёт oneshot-задача `npm run parent-notifications:daily`. Она материализует только занятия следующего локального дня, проверяет текущий серверный баланс, вычисляет дни рождения по текущей дате `Asia/Sakhalin` и использует уникальные dedup key. Units рассчитаны на `/opt/icube-crm`, пользователя `icube` и Сахалинское время:
 

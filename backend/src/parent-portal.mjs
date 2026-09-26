@@ -13,6 +13,7 @@ export const PARENT_NOTIFICATION_TYPES = Object.freeze([
   { type: 'last_paid_lesson', label: 'Абонемент закончился', defaultEnabled: true },
   { type: 'payment_reminder', label: 'Напомнить об оплате перед следующим занятием', defaultEnabled: true },
   { type: 'lesson_finished', label: 'Новые фотографии с занятия', defaultEnabled: true },
+  { type: 'payment_confirmed', label: 'Подтверждение оплаты', defaultEnabled: true },
 ]);
 
 const typeMap = new Map(PARENT_NOTIFICATION_TYPES.map((item) => [item.type, item]));
@@ -301,11 +302,13 @@ export function createParentPortal(pool, {
 
   async function payments(childId, context = {}) {
     await assertConsents(context); const child = await assertChild(context, childId);
-    const [rows] = await pool.query(`SELECT id,paid_on operation_date,amount,'payment' operation_type FROM payments
+    const [rows] = await pool.query(`SELECT id,paid_on operation_date,amount,'payment' operation_type,
+      (SELECT GROUP_CONCAT(rp.receipt_id ORDER BY rp.receipt_id) FROM payment_receipt_payments rp WHERE rp.payment_id=payments.id) receipt_ids FROM payments
       WHERE child_id=:childId AND deleted_at IS NULL UNION ALL
-      SELECT id,refunded_on operation_date,amount,'refund' operation_type FROM refunds WHERE child_id=:childId
+      SELECT id,refunded_on operation_date,amount,'refund' operation_type,NULL receipt_ids FROM refunds WHERE child_id=:childId
       ORDER BY operation_date DESC,id DESC`, { childId: child.id });
-    return rows.map((row) => ({ id: String(row.id), date: isoDate(row.operation_date), amount: String(row.amount), type: row.operation_type }));
+    return rows.map((row) => ({ id: String(row.id), date: isoDate(row.operation_date), amount: String(row.amount), type: row.operation_type,
+      receiptIds: String(row.receipt_ids ?? '').split(',').filter(Boolean) }));
   }
 
   async function photos(childId, context = {}) {
@@ -411,7 +414,8 @@ export function createParentPortal(pool, {
       const child = await assertManagedChild(context, childId, connection);
       const [primary] = await connection.query(`SELECT g.id,g.user_id,g.full_name FROM guardians g JOIN child_guardians cg ON cg.guardian_id=g.id
         WHERE cg.child_id=:childId AND cg.is_primary=TRUE LIMIT 1 FOR UPDATE`, { childId });
-      const displayName = nullable(primary[0]?.full_name) ?? `Родитель: ${child.full_name}`;
+      const guardianName = nullable(primary[0]?.full_name);
+      const displayName = guardianName ?? 'Родитель';
       for (let attempt = 0; attempt < 5; attempt += 1) {
         login = makeLogin();
         const [duplicate] = await connection.query('SELECT id FROM users WHERE LOWER(email)=LOWER(:login) LIMIT 1', { login });
@@ -426,9 +430,9 @@ export function createParentPortal(pool, {
       await connection.query('INSERT INTO user_roles (user_id,role_id,granted_by_user_id) VALUES (:userId,:roleId,:actorId)', { userId: created.insertId, roleId: role[0].id, actorId });
       if (primary[0] && primary[0].user_id == null) {
         guardianId = primary[0].id;
-        await connection.query('UPDATE guardians SET user_id=:userId,full_name=COALESCE(full_name,:name) WHERE id=:guardianId', { userId: created.insertId, name: displayName, guardianId });
+        await connection.query('UPDATE guardians SET user_id=:userId WHERE id=:guardianId', { userId: created.insertId, guardianId });
       } else {
-        const [guardian] = await connection.query('INSERT INTO guardians (user_id,full_name) VALUES (:userId,:name)', { userId: created.insertId, name: displayName });
+        const [guardian] = await connection.query('INSERT INTO guardians (user_id,full_name) VALUES (:userId,:name)', { userId: created.insertId, name: guardianName });
         guardianId = guardian.insertId;
         await connection.query(`INSERT INTO child_guardians (child_id,guardian_id,is_primary,can_receive_notifications)
           VALUES (:childId,:guardianId,:isPrimary,TRUE)`, { childId, guardianId, isPrimary: primary.length === 0 });

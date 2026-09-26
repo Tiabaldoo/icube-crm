@@ -47,6 +47,17 @@ test('double payment возвращает одну операцию без дв�
   assert.equal(repeated.id, first.id); assert.equal(f.state.payments.length, 1); assert.equal(f.state.entries.length, 1);
 });
 
+test('payment receipt link hook runs inside the normal payment transaction exactly once', async () => {
+  const f = paymentFixture(); const linked = [];
+  const body = { enrollmentId: 10, paidOn: '2026-09-20', amount: '4100', method: 'cashless' };
+  const context = { actorUserId: 4, idempotencyKey: 'receipt-payment-1', afterCreate: async (_connection, payment) => linked.push(payment) };
+  const first = await f.service.create(body, context);
+  const repeated = await f.service.create(body, context);
+  assert.equal(first.id, repeated.id); assert.equal(linked.length, 1);
+  assert.equal(linked[0].method, 'cashless'); assert.equal(linked[0].paidOn, '2026-09-20');
+  assert.equal(linked[0].amount, '4100.00'); assert.equal(linked[0].lessonsCredit, '4.00000000');
+});
+
 test('scoped keys различают пользователей, типы и сущности', () => {
   const base = { key: 'same-browser-key', actorUserId: 4, operation: 'payment', projectId: 2, entity: 10 };
   const value = scopedIdempotencyKey(base);

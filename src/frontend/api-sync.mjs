@@ -442,6 +442,7 @@ async function reload({ render = true } = {}) {
     method: paymentMethodLabel[payment.method] ?? payment.method, methodCode: payment.method,
     groupId: payment.groupId == null ? null : Number(payment.groupId), projectId: payment.projectId == null ? null : Number(payment.projectId),
     refundedAmount: Number(payment.refundedAmount), refundableAmount: Number(payment.refundableAmount),
+    receiptIds: (payment.receiptIds ?? []).map(Number),
   }));
   legacy.state.refunds = refunds.map((refund) => ({
     id: Number(refund.id), paymentId: Number(refund.paymentId), enrollmentId: Number(refund.enrollmentId), childId: Number(refund.childId), childName: refund.childName,
@@ -865,15 +866,16 @@ function paymentForm(childId, direction, paymentId) {
   paymentCreateKey = existing ? null : operationKey(); paymentSavePending = false;
   legacy.state.modal = `<h3>${existing ? 'Редактировать оплату' : 'Новая оплата'}</h3><div class="form-grid">
     <div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="${html(existing?.paidOn ?? todayIso)}"></div>
-    <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.childId}">${html(existing.childName)}</option>` : legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'});window.icubePaymentReceipts?.refreshCandidates?.()" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.childId}">${html(existing.childName)}</option>` : legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Направление</label><select class="select" id="pf-enrollment" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.enrollmentId}">${html(existing.direction)}</option>` : ''}</select></div>
     <div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" min="0.01" step="0.01" value="${html(existing?.amount ?? '4100')}" oninput="icubeApi.updatePaymentCalc()"></div>
     <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" readonly></div>
     <div class="field"><label>Способ оплаты</label><select class="select" id="pf-method"><option value="cashless"${(existing?.methodCode ?? 'cashless') === 'cashless' ? ' selected' : ''}>Безналичный расчёт</option><option value="cash"${existing?.methodCode === 'cash' ? ' selected' : ''}>Наличные</option></select></div>
+    ${existing ? '' : '<div class="field span-2" id="pf-receipt-field"></div>'}
     </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="pf-submit" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
   legacy.render();
   if (historical) setTimeout(updatePaymentCalc, 0);
-  else setTimeout(() => refreshPaymentDirections(existing?.id ?? null, preferred), 0);
+  else setTimeout(() => { refreshPaymentDirections(existing?.id ?? null, preferred); window.icubePaymentReceipts?.refreshCandidates?.(); }, 0);
 }
 
 function refreshPaymentDirections(paymentId, preferredEnrollmentId) {
@@ -910,6 +912,7 @@ async function savePayment(paymentId) {
   try {
     const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
     const body = { enrollmentId: value('#pf-enrollment'), paidOn: value('#pf-date'), amount: value('#pf-amount'), method: value('#pf-method') };
+    if (!existing && value('#pf-receipt')) body.receiptId = value('#pf-receipt');
     if (existing) body.priceSnapshot = String(existing.price);
     const saved = paymentId ? await api.update('payments', paymentId, body) : await api.create('payments', body, paymentCreateKey);
     await reload({ render: false });
@@ -1521,6 +1524,10 @@ async function handlePushDeepLink(profile = authProfile) {
   } else if ((link.destination === 'group' || link.entityType === 'group') && id
     && legacy.state.groups.some((item) => Number(item.id) === id)) {
     legacy.state.selectedGroup = id; legacy.state.page = 'group';
+  } else if ((link.destination === 'payment-receipt' || link.entityType === 'payment_receipt') && id) {
+    legacy.state.page = 'payments';
+    legacy.render();
+    await window.icubePaymentReceipts?.open?.(id);
   } else if (legacy.state.role === 'teacher') legacy.state.page = 'teacherToday';
   else legacy.state.page = 'dashboard';
 

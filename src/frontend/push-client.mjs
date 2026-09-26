@@ -443,8 +443,10 @@ function pushPanelMarkup() {
   const actions = [];
   if (state.status === 'enabled') actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления</button>');
   else if (['available', 'disabled', 'blocked'].includes(state.status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
-  if (pushPanelInbox) actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotifications?.()">Открыть уведомления</button>');
-  else actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();icubePush.openSettings()">Типы уведомлений</button>');
+  if (pushPanelInbox) {
+    actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotifications?.()">Открыть уведомления</button>');
+    actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotificationSettings?.()">Типы уведомлений</button>');
+  } else actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();icubePush.openSettings()">Типы уведомлений</button>');
   actions.push('<button class="btn" type="button" onclick="icubePush.openOnboarding()">Как установить приложение</button>');
   return `<div class="push-popover-head"><b>Системные уведомления</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
     <div class="push-popover-status">${esc(pushStatusText())}</div>

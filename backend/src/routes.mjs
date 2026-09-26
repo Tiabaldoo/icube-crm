@@ -25,6 +25,7 @@ import { createLoginRateLimiter } from './login-rate-limit.mjs';
 import { requireIdempotencyKey } from './idempotency.mjs';
 import { createNotificationEvents } from './notification-events.mjs';
 import { createWebPushService } from './web-push.mjs';
+import { createPaymentReceiptService } from './payment-receipts.mjs';
 
 function notImplemented(resource) {
   return (_request, response) => response.status(501).json({ error: { code: 'NOT_IMPLEMENTED', message: `${resource}: контракт подготовлен, серверная операция ещё не реализована` } });
@@ -45,6 +46,7 @@ export function createApiRouter(pool, {
   salaryRateVersions = createSalaryRateVersions(pool),
   partnerAgreementVersions = createPartnerAgreementVersions(pool),
   parentNotifications = createParentNotifications(pool, { notificationEvents }),
+  paymentReceipts = createPaymentReceiptService(pool, { payments, notificationEvents, parentNotifications }),
   lessonPhotos = createLessonPhotoService(pool, { parentNotifications }),
   lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications, notificationEvents }),
   parentPortal = createParentPortal(pool, { materializeLessons: lessons.materialize, notificationEvents }),
@@ -111,6 +113,23 @@ export function createApiRouter(pool, {
   router.patch('/parent/children/:id/about', requirePermission('own-children:read'), run((request) => parentPortal.updateAbout(request.params.id, request.body, request.auth)));
   router.get('/parent/children/:id/attendance', requirePermission('own-attendance:read'), run((request) => parentPortal.attendance(request.params.id, request.auth)));
   router.get('/parent/children/:id/payments', requirePermission('own-payments:read'), run((request) => parentPortal.payments(request.params.id, request.auth)));
+  router.get('/parent/payment-receipts', requirePermission('own-payments:read'), run((request) => paymentReceipts.listParent(request.auth)));
+  router.post('/parent/payment-receipts', requirePermission('own-payments:read'),
+    express.raw({ type: () => true, limit: paymentReceipts.maxUploadBytes }),
+    run((request) => paymentReceipts.upload({
+      buffer: request.body, mimeType: request.get('content-type')?.split(';')[0],
+      originalFilename: request.get('x-original-filename'),
+    }, request.auth), 201));
+  router.get('/parent/payment-receipts/:id/file', requirePermission('own-payments:read'), async (request, response, next) => {
+    try {
+      const result = await paymentReceipts.file(request.params.id, request.auth, { parent: true });
+      response.set('Content-Type', result.mimeType);
+      response.set('Content-Length', String(result.data.length));
+      response.set('Cache-Control', 'private, no-store');
+      response.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+      response.send(result.data);
+    } catch (error) { next(error); }
+  });
   router.get('/parent/children/:id/photos', requirePermission('own-children:read'), run((request) => parentPortal.photos(request.params.id, request.auth)));
   router.get('/parent/profile', requirePermission('own-children:read'), run((request) => parentPortal.profile(request.auth)));
   router.patch('/parent/profile', requirePermission('own-children:read'), run((request) => parentPortal.updateProfile(request.body, request.auth)));
@@ -203,12 +222,34 @@ export function createApiRouter(pool, {
   }));
 
   const projectFilters = (request) => ({ ...request.query, ...(partnerProjectId(request.auth) ? { projectId: partnerProjectId(request.auth) } : {}) });
+  router.get('/payment-receipts', requirePermission('payments:read'), run((request) => paymentReceipts.listStaff(request.query, request.auth)));
+  router.get('/payment-receipts/:id', requirePermission('payments:read'), run((request) => paymentReceipts.getStaff(request.params.id, request.auth)));
+  router.get('/payment-receipts/:id/file', requirePermission('payments:read'), async (request, response, next) => {
+    try {
+      const result = await paymentReceipts.file(request.params.id, request.auth);
+      response.set('Content-Type', result.mimeType);
+      response.set('Content-Length', String(result.data.length));
+      response.set('Cache-Control', 'private, no-store');
+      response.set('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+      response.send(result.data);
+    } catch (error) { next(error); }
+  });
+  router.post('/payment-receipts/:id/apply-subscription', requirePermission('payments:write'), run((request) => paymentReceipts.applySubscription(
+    request.params.id, request.body.enrollmentId, {
+      ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+    },
+  ), 201));
+  router.post('/payment-receipts/:id/close', requirePermission('payments:write'), run((request) => paymentReceipts.close(request.params.id, request.auth), 204));
   router.get('/payments', requirePermission('payments:read'), run((request) => payments.list(projectFilters(request))));
   router.get('/payments/:id', requirePermission('payments:read'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.get(request.params.id); }));
-  router.post('/payments', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.create(request.body, {
-    actorUserId: request.auth?.userId ?? null,
-    idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
-  }); }, 201));
+  router.post('/payments', requirePermission('payments:write'), run(async (request) => {
+    await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth);
+    return payments.create(request.body, {
+      actorUserId: request.auth?.userId ?? null,
+      idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+      afterCreate: paymentReceipts.linkAfterCreate(request.body.receiptId, request.auth),
+    });
+  }, 201));
   router.patch('/payments/:id', requirePermission('payments:write'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); if (request.body.enrollmentId) await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth); return payments.update(request.params.id, request.body, {
     actorUserId: request.auth?.userId ?? null,
   }); }));
