@@ -167,7 +167,7 @@ test('pending local photo deletion also requires confirmation first', () => {
   state.selectedLesson = 10; state.modal = null;
   window.icubePhotos.remove(null, 'local-1');
   assert.match(state.modal, /Удалить фотографию\?/);
-  assert.match(state.modal, /ещё не была загружена в CRM/);
+  assert.match(state.modal, /ещё не была загружена в систему/);
   assert.match(state.modal, /confirmRemove\(null,'local-1'\)/);
   assert.equal(fetchCalls.length, 0);
 });
