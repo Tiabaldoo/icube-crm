@@ -7,7 +7,7 @@ const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
   ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['about', 'О ребёнке'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, lessonInfo: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '' };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '' };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
@@ -90,9 +90,9 @@ function shell(content) {
   app.innerHTML = `<div class="parent-app">
     <aside class="parent-sidebar ${state.menuOpen ? 'open' : ''}"><div class="parent-brand"><b>АйКуб</b><span>Родитель</span></div><nav>${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav></aside>
     ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
-    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span>${unread ? `<i>${unread}</i>` : ''}</button></header>
+    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
-    ${viewerHtml()}${lessonInfoHtml()}
+    ${viewerHtml()}${lessonInfoHtml()}${notificationMessageHtml()}
   </div>`;
 }
 
@@ -103,7 +103,9 @@ export function parentHomeHtml(data) {
   const nextAbsence = absenceAction ? `<div class="parent-next-actions">${next.absenceNotice ? '<span class="badge amber parent-next-absence-status">Ребёнка не будет</span>' : ''}<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${next.id}" data-origin="home">${absenceAction.label}</button></div>` : '';
   const enrollmentCards = data.enrollments.map((item) => {
     const balance = parentBalancePresentation(item.balanceLessons);
-    return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong></article>`;
+    const paymentAction = decimalUnits(item.balanceLessons) <= 0n
+      ? '<button class="parent-primary parent-balance-pay" data-action="tab" data-tab="payments">Перейти к оплате</button>' : '';
+    return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong>${paymentAction}</article>`;
   }).join('');
   return `<section class="parent-title"><h1>${escapeHtml(child.name)}</h1></section>
     <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<button type="button" class="parent-next parent-next-open" data-action="home-next-lesson" data-lesson="${next.id}" data-starts="${escapeHtml(next.startsAt)}"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></button>${nextAbsence}` : empty('Нет будущих занятий.')}</article>
@@ -176,7 +178,7 @@ export function paymentsHtml(data) {
   return `<section class="parent-title"><h1>Оплаты</h1></section>
     <article class="parent-card parent-payment-instructions"><h2>Оплата занятий</h2><p>Переведите оплату по номеру телефона:</p><div class="parent-payment-phone"><strong>+7 (999) 454-15-06</strong><span>Сбербанк</span><button class="parent-secondary" data-action="copy-payment-phone">Скопировать номер</button></div><h3>Текущая стоимость занятий:</h3>${prices || empty('Нет активных направлений с настроенной ценой.')}<p>Можно оплатить другую сумму или сразу несколько абонементов. После перевода загрузите чек. После проверки оплата появится в вашем кабинете, а баланс занятий обновится.</p><div class="parent-receipt-upload"><label>Загрузить чек<input type="file" data-receipt-file accept="image/jpeg,image/png,application/pdf"></label><button class="parent-primary" data-action="upload-receipt">Отправить чек</button><span data-receipt-message>${escapeHtml(state.receiptMessage)}</span></div></article>
     <section class="parent-payment-section"><h2>Загруженные чеки</h2>${receiptHistory}</section>
-    <section class="parent-payment-section"><h2>История оплат</h2>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><div class="parent-payment-value"><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong>${row.type === 'payment' && row.receiptIds?.length ? `<a href="/api/v1/parent/payment-receipts/${row.receiptIds[0]}/file" target="_blank" rel="noopener">Посмотреть чек</a>` : ''}</div></article>`).join('')}</div>` : empty('Оплат пока нет.')}</section>`;
+    <section class="parent-payment-section"><h2>История оплат</h2>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><div class="parent-payment-value"><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong>${row.type === 'payment' && row.receiptIds?.length ? `<a class="parent-payment-receipt-link" href="/api/v1/parent/payment-receipts/${row.receiptIds[0]}/file" target="_blank" rel="noopener" title="Посмотреть чек" aria-label="Посмотреть чек">📎 <span>Чек</span></a>` : ''}</div></article>`).join('')}</div>` : empty('Оплат пока нет.')}</section>`;
 }
 
 function aboutHtml(data) {
@@ -198,8 +200,10 @@ function photosHtml(rows) {
 
 function settingsHtml(data) {
   const contact = state.profile.contact ?? {};
+  queueMicrotask(() => window.icubePush?.mount?.('[data-parent-push-controls]'));
   return `<section class="parent-title"><h1>Настройки</h1></section>
     <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
+    <article class="parent-card"><h2>Уведомления и приложение</h2><div data-parent-push-controls data-push-controls></div><button class="parent-secondary parent-install-help" data-action="install-help">Как установить приложение</button></article>
     <article class="parent-card"><h2>Типы уведомлений</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
     <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
@@ -223,6 +227,12 @@ function lessonInfoHtml() {
   const status = parentScheduleStatus(lesson) || 'Запланировано';
   const absenceAction = parentAbsenceAction(lesson);
   return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div>${absenceAction ? `<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${lesson.id}">${absenceAction.label}</button>` : ''}</article></div>`;
+}
+
+function notificationMessageHtml() {
+  const item = state.notificationMessage;
+  if (!item) return '';
+  return `<div class="parent-notification-modal"><article class="parent-card"><h2>${escapeHtml(item.title || 'Оплата подтверждена')}</h2><p>${escapeHtml(item.body || 'Оплата подтверждена и добавлена в историю.')}</p><p>Оплата добавлена, баланс занятий обновлён.</p><button class="parent-primary" data-action="notification-message-close">Хорошо</button></article></div>`;
 }
 
 function consentHtml(documents) {
@@ -319,7 +329,7 @@ app?.addEventListener('click', async (event) => {
   if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; state.menuOpen = false; await loadTab(); }
   else if (action === 'retry') await loadTab();
   else if (action === 'notifications') window.icubePush?.togglePanel?.(target, true);
-  else if (action === 'notification') { await api.request(`/parent/notifications/${target.dataset.id}/read`, { method: 'POST' }); if (state.profile.children.some((child) => String(child.id) === target.dataset.child)) state.childId = target.dataset.child; state.tab = target.dataset.destination || 'home'; await loadTab(); }
+  else if (action === 'notification') await openPushDestination({ notificationId: target.dataset.id, destination: target.dataset.destination });
   else if (action === 'photo') { const rows = state.data ?? []; state.viewer = { photos: rows, index: Math.max(0, rows.findIndex((item) => String(item.id) === target.dataset.photo)) }; render(); }
   else if (action === 'viewer-close' && (event.target === target || event.target.tagName === 'BUTTON')) { state.viewer = null; render(); }
   else if (action === 'viewer-prev') setViewer(-1);
@@ -327,6 +337,8 @@ app?.addEventListener('click', async (event) => {
   else if (action === 'viewer-download') event.stopPropagation();
   else if (action === 'accept') { await api.request(`/parent/documents/${target.dataset.id}/accept`, { method: 'POST' }); await start(); }
   else if (action === 'logout') window.icubeAuthLogout?.();
+  else if (action === 'install-help') await window.icubePush?.openOnboarding?.();
+  else if (action === 'notification-message-close') { state.notificationMessage = null; render(); }
   else if (action === 'copy-payment-phone') {
     await copyText('+79994541506');
     target.textContent = 'Скопировано';
@@ -392,13 +404,15 @@ async function openNotificationSettings() {
 async function openPushDestination({ notificationId, destination, entityType, entityId } = {}) {
   const rows = await api.request('/parent/notifications').catch(() => []);
   const item = rows.find((row) => String(row.id) === String(notificationId)) ?? null;
+  if (notificationId) await api.request(`/parent/notifications/${notificationId}/read`, { method: 'POST', body: {} }).catch(() => {});
+  if (item) item.readAt = item.readAt ?? new Date().toISOString();
   const childId = item?.childId ?? null;
   if (childId && state.profile?.children?.some((child) => String(child.id) === String(childId))) state.childId = String(childId);
   const target = item?.destination ?? destination ?? 'home';
   state.tab = ['home', 'schedule', 'payments', 'photos'].includes(target) ? target : 'home';
-  state.lessonInfo = null;
+  state.lessonInfo = null; state.notificationMessage = null;
   await loadTab();
-  if (notificationId) await api.request(`/parent/notifications/${notificationId}/read`, { method: 'POST', body: {} }).catch(() => {});
+  if (item?.type === 'payment_confirmed') { state.notificationMessage = item; render(); }
   return { destination: state.tab, entityType: item?.entityType ?? entityType ?? null, entityId: item?.entityId ?? entityId ?? null };
 }
 

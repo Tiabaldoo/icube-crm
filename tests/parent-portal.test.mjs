@@ -66,6 +66,7 @@ function portalFixture() {
     if (sql.includes('SELECT ph.id,ph.lesson_id,ph.uploaded_at')) return [[{ id: Number(params.childId) * 10, lesson_id: 90, starts_at: '2026-09-12 17:00:00', uploaded_at: '2026-09-12 18:00:00', expires_at: '2026-10-12 18:00:00' }]];
     if (sql.startsWith('SELECT notification_type,enabled')) return [[]];
     if (sql.includes('FROM notifications n LEFT JOIN children')) return [[]];
+    if (sql.startsWith('UPDATE notifications SET read_at=COALESCE') && sql.includes('read_at IS NULL')) return [{ affectedRows: 2 }];
     throw new Error(`Unexpected parent portal SQL: ${sql}`);
   }
   const connection = { query, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
@@ -96,6 +97,15 @@ test('parent scope rejects direct child id substitution and keeps two children i
   assert.deepEqual((await fixture.service.attendance(11, parent)).map((row) => row.lessonId), ['110']);
   assert.deepEqual((await fixture.service.payments(10, parent)).map((row) => row.id), ['100', '101']);
   assert.deepEqual((await fixture.service.photos(11, parent)).map((row) => row.id), ['110']);
+});
+
+test('parent mark-all preserves notification rows and only fills unread read_at', async () => {
+  const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  assert.deepEqual(await fixture.service.markAllNotificationsRead(parent), { read: 2 });
+  const sql = fixture.state.sql.find((value) => value.startsWith('UPDATE notifications SET read_at=COALESCE'));
+  assert.match(sql, /user_id=:userId/);
+  assert.match(sql, /read_at IS NULL/);
+  assert.doesNotMatch(sql, /DELETE|dismissed_at=NOW/);
 });
 
 test('parent schedule materializes only linked current group and exposes no future status label', async () => {
@@ -472,7 +482,7 @@ test('parent next-lesson click loads schedule then opens exact lesson and quick 
   assert.doesNotMatch(source, /home-absence|quick-absence|absence-notice\/home/);
 });
 
-test('home balance cards no longer expose the obsolete payment action', () => {
+test('home balance cards send zero and negative balances to the Payments tab', () => {
   const base = { child: { name: 'Петя' }, nextLesson: null, latestPhoto: null };
   const html = parentHomeHtml({ ...base, enrollments: [
     { direction: 'Робототехника', balanceLessons: '1.00000000', subscriptionPrice: '4100.00' },
@@ -480,8 +490,8 @@ test('home balance cards no longer expose the obsolete payment action', () => {
     { direction: 'Индивидуально', balanceLessons: '-1.50000000', subscriptionPrice: '2900.00' },
     { direction: 'Без цены', balanceLessons: '-1.00000000', subscriptionPrice: null },
   ] });
-  assert.equal((html.match(/data-action="pay"/g) ?? []).length, 0);
-  assert.doesNotMatch(html, />Оплатить</);
+  assert.equal((html.match(/data-action="tab" data-tab="payments"/g) ?? []).length, 3);
+  assert.equal((html.match(/>Перейти к оплате</g) ?? []).length, 3);
   assert.match(html, /Фото с последнего занятия/);
 });
 
@@ -532,6 +542,9 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.match(payments, /\/ 4 занятия/);
   assert.match(payments, /Загрузить чек/);
   assert.doesNotMatch(payments, /data-action="pay"|QR/);
+  assert.match(payments, /parent-payment-receipt-link/);
+  assert.match(portal, /data-parent-push-controls/); assert.match(portal, /Как установить приложение/);
+  assert.match(portal, /item\?\.type === 'payment_confirmed'/); assert.match(portal, /Оплата добавлена, баланс занятий обновлён/);
   assert.match(portal, /О ребёнке/); assert.match(portal, /data-action="child-about"/);
   assert.doesNotMatch(portal, /name="email"/);
   assert.match(portal, /Написать в MAX/); assert.match(portal, /Позвонить: \$\{escapeHtml\(contact\.phone\)\}/);

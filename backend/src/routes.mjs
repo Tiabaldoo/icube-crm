@@ -136,6 +136,7 @@ export function createApiRouter(pool, {
   router.get('/parent/notification-settings', requirePermission('own-children:read'), run((request) => parentPortal.notificationSettings(request.auth)));
   router.patch('/parent/notification-settings', requirePermission('own-children:read'), run((request) => parentPortal.updateNotificationSettings(request.body, request.auth)));
   router.get('/parent/notifications', requirePermission('own-children:read'), run((request) => parentPortal.notifications(request.auth)));
+  router.post('/parent/notifications/read-all', requirePermission('own-children:read'), run((request) => parentPortal.markAllNotificationsRead(request.auth)));
   router.post('/parent/notifications/:id/read', requirePermission('own-children:read'), run((request) => parentPortal.markNotificationRead(request.params.id, request.auth)));
   router.get('/parent/documents', requirePermission('own-children:read'), run((request) => parentPortal.documents(request.auth)));
   router.post('/parent/documents/:id/accept', requirePermission('own-children:read'), run((request) => parentPortal.acceptDocument(request.params.id, request.auth, {
@@ -235,9 +236,7 @@ export function createApiRouter(pool, {
     } catch (error) { next(error); }
   });
   router.post('/payment-receipts/:id/apply-subscription', requirePermission('payments:write'), run((request) => paymentReceipts.applySubscription(
-    request.params.id, request.body.enrollmentId, {
-      ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
-    },
+    request.params.id, request.body.enrollmentId, request.body.amount, request.auth,
   ), 201));
   router.post('/payment-receipts/:id/close', requirePermission('payments:write'), run((request) => paymentReceipts.close(request.params.id, request.auth), 204));
   router.get('/payments', requirePermission('payments:read'), run((request) => payments.list(projectFilters(request))));
@@ -336,5 +335,6 @@ export function createApiRouter(pool, {
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), run((request) => statistics.get(request.query)));
   router.post('/notifications/:id/read', requirePermission('notifications:read'), run((request) => notifications.markRead(request.params.id, request.auth)));
+  router.post('/notifications/read-all', requirePermission('notifications:read'), run((request) => notifications.markAllRead(request.auth)));
   return router;
 }

@@ -204,15 +204,23 @@ export function createPaymentReceiptService(pool, {
   async function options(receipt, context) {
     const projectId = staffProject(context);
     const [rows] = await pool.query(`SELECT DISTINCT c.id child_id,c.full_name child_name,e.id enrollment_id,e.project_id,
-      e.direction_id,d.name direction_name FROM child_guardians cg JOIN children c ON c.id=cg.child_id AND c.deleted_at IS NULL
+      e.direction_id,d.name direction_name,
+      (SELECT COUNT(*) FROM payment_receipt_payments rp JOIN payments linked_payment
+        ON linked_payment.id=rp.payment_id AND linked_payment.deleted_at IS NULL
+        WHERE rp.receipt_id=:receiptId AND linked_payment.enrollment_id=e.id) linked_payment_count,
+      (SELECT COALESCE(SUM(linked_payment.amount),0) FROM payment_receipt_payments rp JOIN payments linked_payment
+        ON linked_payment.id=rp.payment_id AND linked_payment.deleted_at IS NULL
+        WHERE rp.receipt_id=:receiptId AND linked_payment.enrollment_id=e.id) linked_amount
+      FROM child_guardians cg JOIN children c ON c.id=cg.child_id AND c.deleted_at IS NULL
       JOIN child_enrollments e ON e.child_id=c.id AND e.superseded_at IS NULL AND e.status='active'
       JOIN directions d ON d.id=e.direction_id WHERE cg.guardian_id=:guardianId
         AND (:projectId IS NULL OR e.project_id=:projectId) ORDER BY c.full_name,d.name,e.id`, {
-      guardianId: receipt.guardian_id, projectId,
+      receiptId: receipt.id, guardianId: receipt.guardian_id, projectId,
     });
     return Promise.all(rows.map(async (row) => ({
       childId: String(row.child_id), childName: row.child_name, enrollmentId: String(row.enrollment_id),
       projectId: String(row.project_id), directionId: String(row.direction_id), directionName: row.direction_name,
+      linkedPayments: Number(row.linked_payment_count ?? 0), linkedAmount: String(row.linked_amount ?? '0.00'),
       ...(await payments.quote(row.enrollment_id)),
     })));
   }
@@ -258,7 +266,8 @@ export function createPaymentReceiptService(pool, {
   const linkAfterCreate = (receiptId, context) => receiptId == null || receiptId === '' ? null
     : (connection, payment) => linkPayment(connection, identifier(receiptId, 'receiptId'), payment, context);
 
-  async function applySubscription(receiptId, enrollmentId, context = {}) {
+  async function applySubscription(receiptId, enrollmentId, amount, context = {}) {
+    if (amount && typeof amount === 'object' && !Array.isArray(amount)) { context = amount; amount = null; }
     const receipt = await receiptForAccess(pool, receiptId, context);
     const available = await options(receipt, context);
     const selected = available.find((item) => item.enrollmentId === identifier(enrollmentId, 'enrollmentId'));
@@ -266,9 +275,11 @@ export function createPaymentReceiptService(pool, {
     const receiptDate = receipt.uploaded_at instanceof Date ? businessDate(receipt.uploaded_at) : String(receipt.uploaded_at).slice(0, 10);
     return payments.create({
       enrollmentId: selected.enrollmentId, paidOn: receiptDate,
-      amount: selected.subscriptionAmount, method: 'cashless', note: 'Зачислено по чеку родителя',
+      amount: amount == null || amount === '' ? selected.subscriptionAmount : amount,
+      method: 'cashless', note: 'Внесено по чеку родителя',
     }, {
-      actorUserId: context.userId, idempotencyKey: context.idempotencyKey,
+      actorUserId: context.userId, idempotencyActorUserId: 'payment-receipt',
+      idempotencyKey: `receipt:${receipt.id}:enrollment:${selected.enrollmentId}`,
       afterCreate: linkAfterCreate(receipt.id, context),
     });
   }

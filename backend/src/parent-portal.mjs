@@ -374,6 +374,13 @@ export function createParentPortal(pool, {
     return { id, read: true };
   }
 
+  async function markAllNotificationsRead(context = {}) {
+    await assertConsents(context); const userId = parentOnly(context);
+    const [result] = await pool.query(`UPDATE notifications SET read_at=COALESCE(read_at,NOW(6))
+      WHERE user_id=:userId AND dismissed_at IS NULL AND read_at IS NULL`, { userId });
+    return { read: Number(result.affectedRows ?? 0) };
+  }
+
   async function documentsForMe(context = {}) { return { documents: await documents(context), consentRequired: await consentRequired(context) }; }
 
   async function listAccess(childId, context = {}) {
@@ -495,7 +502,7 @@ export function createParentPortal(pool, {
   }
 
   return { me, children, home, schedule, attendance, payments, photos, about, updateAbout, setAbsenceNotice, cancelAbsenceNotice, profile, updateProfile,
-    notificationSettings, updateNotificationSettings, notifications, markNotificationRead,
+    notificationSettings, updateNotificationSettings, notifications, markNotificationRead, markAllNotificationsRead,
     documents: documentsForMe, acceptDocument, assertChild, assertConsents,
     listAccess, searchAccess, createAccess, linkAccess, unlinkAccess, resetPassword, setAccessStatus };
 }

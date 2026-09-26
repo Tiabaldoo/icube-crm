@@ -5,25 +5,47 @@ globalThis.ICUBE_FRONTEND_BUILD = new URL(import.meta.url).searchParams.get('v')
 const api = new ApiClient();
 const DEVICE_DISABLED_KEY = 'icube-push-device-disabled';
 const ONBOARDING_SEEN_KEY = 'icube-pwa-onboarding-seen-v1';
-const state = { config: null, status: 'loading', message: 'Проверяем…', subscription: null };
+const state = { config: null, status: 'loading', message: 'Проверяем…', subscription: null, notifications: [], inboxLoading: false, history: false };
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 let pushPanel = null;
 let pushPanelAnchor = null;
-let pushPanelInbox = false;
 let onboardingModal = null;
 let onboardingView = null;
 let onboardingAutoHandled = false;
 
 function bellIcon() {
-  return state.status === 'enabled' ? '🔔' : '🔕';
+  return '🔔';
 }
 function syncBellIcons() {
   document.querySelectorAll('[data-push-bell-icon]').forEach((element) => { element.textContent = bellIcon(); });
+  const unread = state.notifications.filter((item) => !item.readAt).length;
+  document.querySelectorAll('[data-notification-badge]').forEach((element) => {
+    element.textContent = unread > 99 ? '99+' : String(unread);
+    element.hidden = unread === 0;
+  });
 }
 function pushStatusText() {
   if (state.status === 'enabled') return 'Уведомления включены';
   if (['available', 'disabled'].includes(state.status)) return 'Уведомления выключены';
   return state.message;
+}
+
+function parentInbox() { return window.icubeLegacy?.state?.role === 'parent'; }
+function inboxBase() { return parentInbox() ? '/parent/notifications' : '/notifications'; }
+function notificationDate(value) {
+  if (!value) return '';
+  const text = String(value); const date = text.slice(0, 10).split('-').reverse().join('.');
+  return `${date} ${text.slice(11, 16)}`.trim();
+}
+async function refreshInbox() {
+  state.inboxLoading = true;
+  try {
+    state.notifications = await api.request(inboxBase());
+    if (!parentInbox() && window.icubeLegacy?.state) window.icubeLegacy.state.notifications = state.notifications;
+  } finally {
+    state.inboxLoading = false; syncBellIcons(); renderPushPanel();
+  }
+  return state.notifications;
 }
 
 function supported() {
@@ -230,7 +252,7 @@ function showOnboardingHint() {
   document.querySelector('.pwa-onboarding-toast')?.remove();
   const toast = document.createElement('div');
   toast.className = 'pwa-onboarding-toast';
-  toast.textContent = 'Инструкцию можно открыть позже в разделе уведомлений.';
+  toast.textContent = 'Инструкцию можно открыть позже в настройках.';
   document.body.appendChild(toast);
   window.setTimeout(() => toast.remove(), 4500);
 }
@@ -386,7 +408,7 @@ function closePushPanel() {
   pushPanel?.remove();
   pushPanel = null;
   pushPanelAnchor = null;
-  pushPanelInbox = false;
+  state.history = false;
 }
 
 function positionPushPanel() {
@@ -439,18 +461,21 @@ function positionPushPanel() {
   pushPanel.style.top = `${top}px`;
 }
 
+function notificationItemMarkup(item) {
+  return `<button class="notification-inbox-item ${item.readAt ? '' : 'unread'}" type="button" onclick="icubePush.openNotification('${esc(item.id)}')">
+    <b>${esc(item.title)}</b><span>${esc(item.body)}</span><small>${esc(notificationDate(item.createdAt))}</small></button>`;
+}
+
 function pushPanelMarkup() {
-  const actions = [];
-  if (state.status === 'enabled') actions.push('<button class="btn danger" type="button" onclick="icubePush.disable()">Отключить уведомления</button>');
-  else if (['available', 'disabled', 'blocked'].includes(state.status)) actions.push('<button class="btn primary" type="button" onclick="icubePush.enable()">Включить уведомления</button>');
-  if (pushPanelInbox) {
-    actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotifications?.()">Открыть уведомления</button>');
-    actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();window.icubeParentPortal?.openNotificationSettings?.()">Типы уведомлений</button>');
-  } else actions.push('<button class="btn" type="button" onclick="icubePush.closePanel();icubePush.openSettings()">Типы уведомлений</button>');
-  actions.push('<button class="btn" type="button" onclick="icubePush.openOnboarding()">Как установить приложение</button>');
-  return `<div class="push-popover-head"><b>Системные уведомления</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
-    <div class="push-popover-status">${esc(pushStatusText())}</div>
-    <div class="push-popover-actions">${actions.join('')}</div>`;
+  const unread = state.notifications.filter((item) => !item.readAt);
+  const rows = state.history ? state.notifications.filter((item) => item.readAt) : unread;
+  const title = state.history ? 'История уведомлений' : 'Уведомления';
+  const empty = state.inboxLoading ? 'Загрузка…' : state.history ? 'Прочитанных уведомлений пока нет' : 'Новых уведомлений нет';
+  return `<div class="push-popover-head"><b>${title}</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
+    <div class="notification-inbox-list">${rows.length ? rows.map(notificationItemMarkup).join('') : `<div class="push-popover-status">${empty}</div>`}</div>
+    <div class="push-popover-actions">${state.history
+      ? '<button class="btn" type="button" onclick="icubePush.showUnread()">Непрочитанные</button>'
+      : `${unread.length ? '<button class="btn" type="button" onclick="icubePush.markAllRead()">Прочитать все</button>' : ''}<button class="btn" type="button" onclick="icubePush.showHistory()">История уведомлений</button>`}</div>`;
 }
 
 function renderPushPanel() {
@@ -460,23 +485,47 @@ function renderPushPanel() {
   positionPushPanel();
 }
 
-async function togglePushPanel(anchor, inbox = false) {
+async function togglePushPanel(anchor) {
   if (!anchor) return;
   if (pushPanel && pushPanelAnchor === anchor) { closePushPanel(); return; }
   closePushPanel();
   pushPanelAnchor = anchor;
-  pushPanelInbox = Boolean(inbox);
   pushPanel = document.createElement('div');
   pushPanel.className = 'push-popover';
   pushPanel.setAttribute('role', 'dialog');
-  pushPanel.setAttribute('aria-label', 'Системные уведомления');
+  pushPanel.setAttribute('aria-label', 'Уведомления');
   document.body.appendChild(pushPanel);
   renderPushPanel();
-
-  await refreshPushState();
+  await refreshInbox().catch((error) => {
+    state.inboxLoading = false;
+    state.notifications = [];
+    if (pushPanel) pushPanel.innerHTML = `<div class="push-popover-head"><b>Уведомления</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div><div class="push-popover-status">${esc(error?.message ?? 'Не удалось загрузить уведомления.')}</div>`;
+  });
   if (!pushPanel || pushPanelAnchor !== anchor) return;
   syncBellIcons();
   renderPushPanel();
+}
+
+async function markAllRead() {
+  try {
+    await api.request(`${inboxBase()}/read-all`, { method: 'POST', body: {} });
+    const now = new Date().toISOString();
+    state.notifications = state.notifications.map((item) => item.readAt ? item : { ...item, readAt: now });
+    syncBellIcons(); renderPushPanel();
+  } catch (error) { window.alert(error?.message ?? 'Не удалось отметить уведомления прочитанными.'); }
+}
+
+async function openNotification(notificationId) {
+  const item = state.notifications.find((row) => String(row.id) === String(notificationId));
+  if (!item) return;
+  try {
+    if (!item.readAt) await api.request(`${inboxBase()}/${encodeURIComponent(item.id)}/read`, { method: 'POST', body: {} });
+    item.readAt = item.readAt ?? new Date().toISOString();
+    syncBellIcons(); closePushPanel();
+    const link = { notificationId: item.id, destination: item.destination, entityType: item.entityType, entityId: item.entityId };
+    if (parentInbox()) await window.icubeParentPortal?.openPushDestination?.(link);
+    else await window.icubeOpenNotification?.(link);
+  } catch (error) { window.alert(error?.message ?? 'Не удалось открыть уведомление.'); }
 }
 
 async function runAction(action, refresh = true) {
@@ -494,11 +543,12 @@ async function openSettings() {
   try {
     const settings = await api.request('/notification-settings');
     await refreshPushState();
-    legacy.state.modal = `<h3>Типы уведомлений</h3>
+    legacy.state.modal = `<h3>Уведомления и приложение</h3>${controlsMarkup()}
+      <h3 style="margin-top:18px">Типы уведомлений</h3>
       <div style="margin-top:8px">
       ${settings.map((item) => `<label class="parent-toggle" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0">
         <span>${esc(item.label)}</span><input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="icubePush.setting('${esc(item.type)}',this.checked)">
-      </label>`).join('')}</div>
+      </label>`).join('')}</div><button class="btn" type="button" style="width:100%;margin-top:16px" onclick="icubePush.openOnboarding()">Как установить приложение</button>
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
     legacy.render();
   } catch (error) { window.alert(error?.message ?? 'Не удалось загрузить настройки уведомлений.'); }
@@ -513,7 +563,11 @@ window.icubePush = {
   refresh: refreshPushState, mount: mountPushControls, rebind: rebindPush, unbind: unbindPush,
   enable: () => runAction(enablePush, false), disable: () => runAction(disablePush),
   test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
-  icon: bellIcon, syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
+  icon: bellIcon, unread: () => state.notifications.filter((item) => !item.readAt).length,
+  syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
+  refreshInbox, openNotification, markAllRead,
+  showHistory: () => { state.history = true; renderPushPanel(); },
+  showUnread: () => { state.history = false; renderPushPanel(); },
   openOnboarding, closeOnboarding, deferOnboarding,
   maybeShowOnboardingAfterLogin,
   openSettings, setting: saveSetting,
@@ -530,6 +584,7 @@ window.icubeAuthReady?.then(async (profile) => {
   if (!profile) return;
   await rebindPush(profile).catch(console.error);
   await refreshPushState();
+  await refreshInbox().catch(console.error);
   syncBellIcons();
   if (window.icubeHandlePushDeepLink) await window.icubeHandlePushDeepLink(profile).catch(console.error);
 });

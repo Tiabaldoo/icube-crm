@@ -1496,15 +1496,16 @@ function clearPushLinkParams() {
   history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
-async function handlePushDeepLink(profile = authProfile) {
-  const link = pushLinkParams();
+async function openNotificationDestination(link, profile = authProfile, { clearUrl = false } = {}) {
   if (!link || !profile) return false;
   const parentOnly = profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role));
   if (parentOnly) {
     await window.icubeParentPortal?.openPushDestination?.(link);
-    clearPushLinkParams();
+    if (clearUrl) clearPushLinkParams();
     return true;
   }
+
+  if (link.notificationId) await api.request(`/notifications/${encodeURIComponent(link.notificationId)}/read`, { method: 'POST', body: {} }).catch(() => {});
 
   const id = link.entityId == null ? null : Number(link.entityId);
   if ((link.destination === 'lesson' || link.entityType === 'lesson') && id) {
@@ -1532,9 +1533,12 @@ async function handlePushDeepLink(profile = authProfile) {
   else legacy.state.page = 'dashboard';
 
   legacy.render();
-  await api.request(`/notifications/${encodeURIComponent(link.notificationId)}/read`, { method: 'POST', body: {} }).catch(() => {});
-  clearPushLinkParams();
+  if (clearUrl) clearPushLinkParams();
   return true;
+}
+
+async function handlePushDeepLink(profile = authProfile) {
+  return openNotificationDestination(pushLinkParams(), profile, { clearUrl: true });
 }
 
 async function afterAuthenticatedLoad(profile) {
@@ -1593,7 +1597,7 @@ function teacherNameForShell() {
 }
 
 function installAuthenticatedShells() {
-  const pushBell = () => `<button class="push-bell-button" type="button" data-push-bell onclick="window.icubePush?.togglePanel(this)" aria-label="Системные уведомления" title="Системные уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span></button>`;
+  const pushBell = () => { const unread = window.icubePush?.unread?.() ?? 0; return `<span class="notification-header-actions"><button class="push-bell-button" type="button" data-push-bell onclick="window.icubePush?.togglePanel(this)" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button><button class="push-settings-button" type="button" onclick="window.icubePush?.openSettings()" aria-label="Уведомления и приложение" title="Уведомления и приложение">⚙</button></span>`; };
   const originalShell = window.shell;
   if (typeof originalShell === 'function') {
     window.shell = function (...args) {
@@ -1858,6 +1862,7 @@ window.icubeSalaryDefaultPeriod = salaryDefaultPeriod;
 window.icubeAuthLogin = loginFromForm;
 window.icubeAuthLogout = logout;
 window.icubeHandlePushDeepLink = handlePushDeepLink;
+window.icubeOpenNotification = (link) => openNotificationDestination(link, authProfile);
 window.icubeReturnToHome = returnFromTemporaryTeacherView;
 window.icubeReturnToDirector = returnFromTemporaryTeacherView;
 window.icubeCreateTeacherAccess = createTeacherAccess;

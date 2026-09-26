@@ -10,9 +10,9 @@ const director = { userId: '1', roles: ['director'] };
 const partner = { userId: '2', roles: ['partner'], projectIds: ['7'] };
 const foreignPartner = { userId: '3', roles: ['partner'], projectIds: ['8'] };
 
-function fixture(storageDir, { projects = [{ project_id: 1, partner_id: null }, { project_id: 7, partner_id: 70 }] } = {}) {
-  const state = { receipts: [], links: [], payments: [], balance: '0.00000000', staffNotifications: [], parentNotifications: [], projects, sql: [] };
-  const options = [
+function fixture(storageDir, { projects = [{ project_id: 1, partner_id: null }, { project_id: 7, partner_id: 70 }], receiptOptions = null } = {}) {
+  const state = { receipts: [], links: [], payments: [], paymentKeys: new Map(), balance: '0.00000000', staffNotifications: [], parentNotifications: [], projects, sql: [] };
+  const options = receiptOptions ?? [
     { child_id: 10, child_name: 'Иван Иванов', enrollment_id: 100, project_id: 7, direction_id: 1, direction_name: 'Робототехника' },
     { child_id: 11, child_name: 'Мария Иванова', enrollment_id: 101, project_id: 7, direction_id: 2, direction_name: 'Программирование' },
   ];
@@ -43,7 +43,12 @@ function fixture(storageDir, { projects = [{ project_id: 1, partner_id: null }, 
       return [rows];
     }
     if (sql.startsWith('SELECT DISTINCT c.id child_id')) {
-      return [options.filter((item) => params.projectId == null || String(item.project_id) === String(params.projectId))];
+      return [options.filter((item) => params.projectId == null || String(item.project_id) === String(params.projectId)).map((item) => {
+        const linked = state.links.flatMap((link) => String(link.receiptId) === String(params.receiptId)
+          ? state.payments.filter((payment) => String(payment.id) === String(link.paymentId) && String(payment.enrollmentId) === String(item.enrollment_id)) : []);
+        return { ...item, linked_payment_count: linked.length,
+          linked_amount: linked.reduce((sum, payment) => sum + Number(payment.amount), 0).toFixed(2) };
+      })];
     }
     if (sql.startsWith('SELECT c.full_name child_name')) {
       const selected = options.find((item) => String(item.child_id) === String(params.childId) && String(item.direction_id) === String(params.directionId));
@@ -68,13 +73,17 @@ function fixture(storageDir, { projects = [{ project_id: 1, partner_id: null }, 
   };
   const parentNotifications = { createForGuardian: async (_connection, value) => state.parentNotifications.push(value) };
   const payments = {
-    quote: async (enrollmentId) => ({ currentPrice: String(enrollmentId) === '100' ? '1025.00' : '1125.00',
-      subscriptionAmount: String(enrollmentId) === '100' ? '4100.00' : '4500.00' }),
+    quote: async (enrollmentId) => { const option = options.find((item) => String(item.enrollment_id) === String(enrollmentId)); return {
+      currentPrice: option?.current_price ?? (String(enrollmentId) === '100' ? '1025.00' : '1125.00'),
+      subscriptionAmount: option?.subscription_amount ?? (String(enrollmentId) === '100' ? '4100.00' : '4500.00'),
+    }; },
     create: async (body, context) => {
+      if (state.paymentKeys.has(context.idempotencyKey)) return state.paymentKeys.get(context.idempotencyKey);
       const option = options.find((item) => String(item.enrollment_id) === String(body.enrollmentId));
       const payment = { id: String(state.payments.length + 20), enrollmentId: String(option.enrollment_id), childId: String(option.child_id),
         directionId: String(option.direction_id), projectId: String(option.project_id), amount: body.amount, paidOn: body.paidOn, method: body.method };
-      state.payments.push(payment); state.balance = String(Number(state.balance) + 4);
+      state.payments.push(payment); state.paymentKeys.set(context.idempotencyKey, payment);
+      state.balance = String(Number(state.balance) + Number(body.amount) / Number((await payments.quote(body.enrollmentId)).currentPrice));
       await context.afterCreate(connection, payment);
       return payment;
     },
@@ -130,6 +139,43 @@ test('receipt upload is non-financial, protected by owner/project scope, and one
   } finally { await rm(storageDir, { recursive: true, force: true }); }
 });
 
+test('automatic receipt payment accepts amount once per receipt enrollment and leaves other targets open', async () => {
+  const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-receipt-automatic-'));
+  try {
+    const { state, service } = fixture(storageDir);
+    const receipt = await service.upload({ buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mimeType: 'image/jpeg' }, parent);
+    const first = await service.applySubscription(receipt.id, 100, '4100', director);
+    const repeated = await service.applySubscription(receipt.id, 100, '8200', { ...director, userId: '9' });
+    assert.equal(repeated.id, first.id);
+    assert.equal(state.payments.length, 1);
+    assert.equal(state.links.length, 1);
+    assert.equal(state.payments[0].amount, '4100');
+    const detail = await service.getStaff(receipt.id, director);
+    assert.deepEqual(detail.options.map((item) => ({ enrollmentId: item.enrollmentId, linked: item.linkedPayments })), [
+      { enrollmentId: '100', linked: 1 }, { enrollmentId: '101', linked: 0 },
+    ]);
+    assert.equal(detail.options[0].linkedAmount, '4100.00');
+    await assert.rejects(service.applySubscription(receipt.id, 100, '4100', foreignPartner), { status: 403, code: 'FORBIDDEN' });
+  } finally { await rm(storageDir, { recursive: true, force: true }); }
+});
+
+test('receipt details expose a separate target for two children in two directions', async () => {
+  const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-receipt-four-targets-'));
+  const receiptOptions = [
+    { child_id: 10, child_name: 'Иван', enrollment_id: 100, project_id: 7, direction_id: 1, direction_name: 'Робототехника', subscription_amount: '4100.00' },
+    { child_id: 10, child_name: 'Иван', enrollment_id: 101, project_id: 7, direction_id: 2, direction_name: 'Программирование', subscription_amount: '4500.00' },
+    { child_id: 11, child_name: 'Мария', enrollment_id: 102, project_id: 7, direction_id: 1, direction_name: 'Робототехника', subscription_amount: '4100.00' },
+    { child_id: 11, child_name: 'Мария', enrollment_id: 103, project_id: 7, direction_id: 2, direction_name: 'Программирование', subscription_amount: '4500.00' },
+  ];
+  try {
+    const { service } = fixture(storageDir, { receiptOptions });
+    const receipt = await service.upload({ buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mimeType: 'image/jpeg' }, parent);
+    const detail = await service.getStaff(receipt.id, partner);
+    assert.equal(detail.options.length, 4);
+    assert.deepEqual(detail.options.map((item) => `${item.childId}:${item.directionId}`), ['10:1', '10:2', '11:1', '11:2']);
+  } finally { await rm(storageDir, { recursive: true, force: true }); }
+});
+
 test('confirmed and closed receipt remains a manual candidate and links to another payment', async () => {
   const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-receipt-manual-'));
   try {
@@ -167,10 +213,12 @@ test('receipt migration and UI preserve explicit links, protected files and focu
   assert.match(migration, /PRIMARY KEY \(receipt_id,payment_id\)/); assert.doesNotMatch(migration, /DROP DATABASE|TRUNCATE/i);
   assert.match(parentUi, /Переведите оплату по номеру телефона/); assert.match(parentUi, /image\/jpeg,image\/png,application\/pdf/);
   assert.match(parentUi, /Ожидает подтверждения/); assert.match(parentUi, /Подтверждено/); assert.doesNotMatch(parentUi, /Оплата абонемента|QR для оплаты/);
-  assert.match(staffUi, /Чеки на проверке/); assert.match(staffUi, /Зачислить абонемент/); assert.match(staffUi, /Закрыть без автоматического зачисления/);
+  assert.match(staffUi, /Чеки на проверке/); assert.match(staffUi, /Внести оплату/); assert.match(staffUi, /Не все оплаты по этому чеку внесены/);
+  assert.match(staffUi, /Закрыть без внесения/); assert.match(staffUi, /linkedPayments/); assert.match(staffUi, /button\.disabled = true/);
   assert.doesNotMatch(staffUi, /filter\(\(item\) => item\.status === 'pending'\)/);
   assert.match(apiSync, /body\.receiptId = value\('#pf-receipt'\)/); assert.match(apiSync, /receiptIds: \(payment\.receiptIds \?\? \[\]\)\.map\(Number\)/);
-  assert.match(pushUi, /Открыть уведомления/); assert.match(pushUi, /openNotificationSettings/); assert.match(pushUi, /Как установить приложение/);
+  assert.match(pushUi, /Новых уведомлений нет/); assert.match(pushUi, /Прочитать все/); assert.match(pushUi, /История уведомлений/);
+  assert.doesNotMatch(pushUi.slice(pushUi.indexOf('function pushPanelMarkup'), pushUi.indexOf('function renderPushPanel')), /Включить уведомления|Отключить уведомления|Как установить приложение/);
   assert.match(accessUi, /Родитель: \$\{escapeHtml\(account\.name \|\| 'Не указан'\)\}/);
   assert.match(accessUi, /backdrop\.remove\(\); legacy\.render\(\); return/);
 });

@@ -58,6 +58,19 @@ test('payment receipt link hook runs inside the normal payment transaction exact
   assert.equal(linked[0].amount, '4100.00'); assert.equal(linked[0].lessonsCredit, '4.00000000');
 });
 
+test('receipt payment idempotency scope is stable across staff retries', async () => {
+  const f = paymentFixture(); const linked = [];
+  const body = { enrollmentId: 10, paidOn: '2026-09-20', amount: '4100', method: 'cashless' };
+  const common = { idempotencyActorUserId: 'payment-receipt', idempotencyKey: 'receipt:7:enrollment:10',
+    afterCreate: async (_connection, payment) => linked.push(payment) };
+  const first = await f.service.create(body, { ...common, actorUserId: 4 });
+  const lostResponseRetry = await f.service.create(body, { ...common, actorUserId: 9 });
+  assert.equal(lostResponseRetry.id, first.id);
+  assert.equal(f.state.payments.length, 1);
+  assert.equal(f.state.entries.length, 1);
+  assert.equal(linked.length, 1);
+});
+
 test('scoped keys различают пользователей, типы и сущности', () => {
   const base = { key: 'same-browser-key', actorUserId: 4, operation: 'payment', projectId: 2, entity: 10 };
   const value = scopedIdempotencyKey(base);

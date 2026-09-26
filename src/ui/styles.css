@@ -1417,9 +1417,10 @@ body.context-help-open{overflow:hidden}
 
 
 /* Compact Web Push control */
-.push-bell-button{appearance:none;-webkit-appearance:none;width:42px;height:42px;min-width:42px;min-height:42px;max-width:42px;max-height:42px;padding:0;margin:0;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--text);display:inline-grid;place-items:center;font:inherit;font-size:20px;line-height:1;cursor:pointer;flex:0 0 42px;box-sizing:border-box}
+.notification-header-actions{display:inline-flex;align-items:center;gap:7px}.push-bell-button{position:relative;appearance:none;-webkit-appearance:none;width:42px;height:42px;min-width:42px;min-height:42px;max-width:42px;max-height:42px;padding:0;margin:0;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--text);display:inline-grid;place-items:center;font:inherit;font-size:20px;line-height:1;cursor:pointer;flex:0 0 42px;box-sizing:border-box}
 .push-bell-button:hover{background:#f9fafb}
 .push-bell-button [data-push-bell-icon]{display:block;line-height:1}
+.push-bell-button [data-notification-badge]{position:absolute;right:-5px;top:-6px;display:grid;place-items:center;min-width:19px;height:19px;padding:0 4px;border-radius:12px;background:#f04438;color:#fff;font:700 11px/1 system-ui;font-style:normal}.push-bell-button [data-notification-badge][hidden]{display:none}.push-settings-button{width:36px;height:36px;padding:0;border:1px solid var(--line);border-radius:10px;background:#fff;color:var(--muted);font-size:18px;cursor:pointer}.push-settings-button:hover{background:#f9fafb;color:var(--text)}
 .push-popover{position:fixed;z-index:120;box-sizing:border-box;max-width:calc(100vw - 24px);max-height:min(70vh,420px);overflow:auto;-webkit-overflow-scrolling:touch;padding:14px;border:1px solid var(--line);border-radius:14px;background:#fff;color:var(--text);box-shadow:0 16px 40px rgba(16,24,40,.18);isolation:isolate}
 .push-popover-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .push-popover-close{width:32px;height:32px;padding:0;border:0;border-radius:9px;background:transparent;color:var(--muted);font-size:24px;line-height:1;cursor:pointer}
@@ -1427,11 +1428,14 @@ body.context-help-open{overflow:hidden}
 .push-popover-status{margin-top:8px;color:var(--muted);font-size:14px;line-height:1.4}
 .push-popover-actions{display:grid;gap:8px;margin-top:14px}
 .push-popover-actions .btn{width:100%;min-height:42px;white-space:normal;text-align:center}
+.notification-inbox-list{display:grid;gap:8px;margin-top:10px}.notification-inbox-item{display:grid;gap:4px;width:100%;padding:11px;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--text);text-align:left;cursor:pointer}.notification-inbox-item.unread{border-left:4px solid var(--accent);background:#f8fbff}.notification-inbox-item span{color:#475467;line-height:1.35}.notification-inbox-item small{color:var(--muted)}
+.payment-main-row>div:last-child,.child-ledger-card .row>div:last-child{min-width:0;flex-wrap:wrap}.payment-receipt-action{white-space:nowrap}.payment-receipt-hint{margin:0 0 12px}.payment-receipt-linked{color:var(--green);text-align:right}.payment-receipt-payment-target{display:grid;gap:4px;margin-bottom:14px}.payment-receipt-payment-target span{color:var(--muted)}
 @media(max-width:760px){
   .push-bell-button{appearance:none!important;-webkit-appearance:none!important;width:42px!important;height:42px!important;min-width:42px!important;min-height:42px!important;max-width:42px!important;max-height:42px!important;padding:0!important;margin:0!important;border:1px solid var(--line)!important;border-radius:12px!important;background:#fff!important;display:inline-grid!important;place-items:center!important;box-sizing:border-box!important}
   .push-popover{position:fixed!important;top:calc(env(safe-area-inset-top,0px) + 64px)!important;left:12px!important;right:12px!important;width:auto!important;max-width:none!important;max-height:calc(100dvh - 88px)!important;padding:14px!important;background:#fff!important;border:1px solid var(--line)!important;border-radius:14px!important;box-shadow:0 16px 40px rgba(16,24,40,.22)!important;overflow-y:auto!important;z-index:120!important}
   .push-popover-actions{display:grid;gap:9px}
   .push-popover-actions .btn{width:100%;min-height:44px}
+  .push-settings-button{width:42px;height:42px}.payment-receipt-action span{display:none}.payment-receipt-action{min-width:42px;padding-left:10px;padding-right:10px}
 }
 
 

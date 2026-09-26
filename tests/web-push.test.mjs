@@ -405,6 +405,19 @@ test('push frontend uses capability detection, explicit permission button and ba
   assert.match(source, /Для уведомлений на iPhone добавьте АйКуб на экран «Домой»/);
 });
 
+test('bell is an internal notification inbox independent from Web Push settings', async () => {
+  const source = await readFile(new URL('../src/frontend/push-client.mjs', import.meta.url), 'utf8');
+  const panel = source.slice(source.indexOf('function pushPanelMarkup'), source.indexOf('function renderPushPanel'));
+  assert.match(panel, /Новых уведомлений нет/);
+  assert.match(panel, /Прочитать все/);
+  assert.match(panel, /История уведомлений/);
+  assert.doesNotMatch(panel, /pushStatusText|Включить уведомления|Отключить уведомления|Как установить приложение/);
+  assert.match(source, /state\.notifications\.filter\(\(item\) => !item\.readAt\)\.length/);
+  assert.match(source, /api\.request\(`\$\{inboxBase\(\)\}\/read-all`/);
+  assert.match(source, /if \(!item\.readAt\) await api\.request/);
+  assert.match(source, /item\.readAt = item\.readAt \?\? new Date\(\)\.toISOString\(\)/);
+});
+
 test('deep-link bridge opens teacher lesson, director child and parent schedule and marks read after navigation', async () => {
   const apiSource = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
   const parentSource = await readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8');

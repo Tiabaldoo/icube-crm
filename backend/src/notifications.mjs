@@ -59,5 +59,14 @@ export function createNotifications(pool) {
     return { id, read: true };
   }
 
-  return { list, markRead };
+  async function markAllRead(context = {}) {
+    const params = scope(context);
+    const [result] = await pool.query(`UPDATE notifications SET read_at=COALESCE(read_at,NOW(6))
+      WHERE (user_id=:userId OR (:allowRoleWide=TRUE AND user_id IS NULL AND role_code=:roleCode))
+        AND (:projectId IS NULL OR recipient_project_id=:projectId)
+        AND dismissed_at IS NULL AND read_at IS NULL`, params);
+    return { read: Number(result.affectedRows ?? 0) };
+  }
+
+  return { list, markRead, markAllRead };
 }

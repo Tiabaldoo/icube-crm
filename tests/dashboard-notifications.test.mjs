@@ -141,6 +141,22 @@ test('partner cannot mark another project notification as read', async () => {
   assert.equal(updates, 1);
 });
 
+test('mark all reads only unread notifications in the authenticated role scope', async () => {
+  const calls = [];
+  const db = pool(async (sql, params = {}) => {
+    calls.push({ sql, params });
+    if (sql.startsWith('UPDATE notifications SET read_at=COALESCE')) return [{ affectedRows: 3 }];
+    throw new Error(`Unexpected SQL: ${sql}`);
+  });
+  assert.deepEqual(await createNotifications(db).markAllRead(partner), { read: 3 });
+  const [{ sql, params }] = calls;
+  assert.match(sql, /read_at IS NULL/);
+  assert.match(sql, /recipient_project_id=:projectId/);
+  assert.equal(params.projectId, '2');
+  assert.equal(params.userId, '17');
+  assert.equal(params.roleCode, 'partner');
+});
+
 test('daily summary remains project-scoped and available for director and partner', async () => {
   const db = pool(async (sql, params = {}) => {
     if (sql.includes('FROM projects WHERE active=TRUE')) {
@@ -159,5 +175,7 @@ test('notification read route is implemented and daily summary route remains pre
   const routes = await readFile(new URL('../backend/src/routes.mjs', import.meta.url), 'utf8');
   assert.match(routes, /router\.get\('\/dashboard\/daily'/);
   assert.match(routes, /router\.post\('\/notifications\/:id\/read',[\s\S]*notifications\.markRead/);
+  assert.match(routes, /router\.post\('\/notifications\/read-all',[\s\S]*notifications\.markAllRead/);
+  assert.match(routes, /router\.post\('\/parent\/notifications\/read-all',[\s\S]*markAllNotificationsRead/);
   assert.doesNotMatch(routes, /router\.post\('\/notifications\/:id\/read',[^\n]*notImplemented/);
 });

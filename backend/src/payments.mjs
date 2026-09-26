@@ -146,7 +146,7 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
         const enrollment = await lockEnrollment(connection, body.enrollmentId, { priceDate: date });
         if (enrollment.superseded_at != null) throw new ApiProblem(409, 'ENROLLMENT_TRANSFERRED', 'Новая оплата должна относиться к текущему проекту направления');
         const idempotencyKey = context.idempotencyKey == null ? null : scopedIdempotencyKey({
-          key: context.idempotencyKey, actorUserId: context.actorUserId, operation: 'payment',
+          key: context.idempotencyKey, actorUserId: context.idempotencyActorUserId ?? context.actorUserId, operation: 'payment',
           projectId: enrollment.project_id, entity: enrollment.id,
         });
         if (idempotencyKey) {
