@@ -1545,6 +1545,7 @@ async function loginFromForm() {
     if (profile.roles.includes('parent') && !profile.roles.some((role) => ['director', 'partner', 'teacher'].includes(role))) await window.icubeParentPortal.start(profile);
     else await reload();
     await afterAuthenticatedLoad(profile);
+    await window.icubePush?.maybeShowOnboardingAfterLogin?.();
     resolveAuthReady?.(profile);
     resolveAuthReady = null;
     return profile;

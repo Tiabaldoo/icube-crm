@@ -376,6 +376,12 @@ function maybeShowOnboarding() {
   showOnboardingPrompt();
 }
 
+async function maybeShowOnboardingAfterLogin() {
+  await refreshPushState();
+  syncBellIcons();
+  maybeShowOnboarding();
+}
+
 function closePushPanel() {
   pushPanel?.remove();
   pushPanel = null;
@@ -507,6 +513,7 @@ window.icubePush = {
   test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
   icon: bellIcon, syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
   openOnboarding, closeOnboarding, deferOnboarding,
+  maybeShowOnboardingAfterLogin,
   openSettings, setting: saveSetting,
 };
 
@@ -522,6 +529,5 @@ window.icubeAuthReady?.then(async (profile) => {
   await rebindPush(profile).catch(console.error);
   await refreshPushState();
   syncBellIcons();
-  maybeShowOnboarding();
   if (window.icubeHandlePushDeepLink) await window.icubeHandlePushDeepLink(profile).catch(console.error);
 });
