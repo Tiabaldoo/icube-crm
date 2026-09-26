@@ -213,8 +213,8 @@ function openFilePicker(childId, replacePhotoId = null) {
     try {
       const optimized = await optimizePhoto(file); const token = id(); const previewUrl = URL.createObjectURL(optimized.blob);
       staged.set(token, { file, optimized, childId, replacePhotoId, previewUrl });
-      legacy.state.modal = `<h3>Фотография</h3><img src="${previewUrl}" alt="Превью" class="lesson-photo-preview"><div class="muted mini" style="margin-top:8px">В CRM будет загружена оптимизированная JPEG-копия без EXIF и геолокации.</div>
-        <div class="modal-actions lesson-photo-actions"><button class="btn" onclick="icubePhotos.retake('${token}')">Переснять</button><button class="btn primary" onclick="icubePhotos.confirm('${token}',false)">Загрузить в CRM</button><button class="btn primary" onclick="icubePhotos.confirm('${token}',true)">Загрузить и сохранить копию</button></div>`;
+      legacy.state.modal = `<h3>Фотография</h3><img src="${previewUrl}" alt="Превью" class="lesson-photo-preview"><div class="muted mini" style="margin-top:8px">В систему будет загружена оптимизированная JPEG-копия без EXIF и геолокации.</div>
+        <div class="modal-actions lesson-photo-actions"><button class="btn" onclick="icubePhotos.retake('${token}')">Переснять</button><button class="btn primary" onclick="icubePhotos.confirm('${token}',false)">Загрузить</button><button class="btn primary" onclick="icubePhotos.confirm('${token}',true)">Загрузить и сохранить копию</button></div>`;
       legacy.render();
     } catch (error) { window.alert(error.message); }
   };
@@ -240,7 +240,7 @@ function removePhoto(photoId, localId = null) {
   const photoArg = photoId == null ? 'null' : `'${String(photoId)}'`;
   const localArg = localId == null ? 'null' : `'${String(localId)}'`;
   legacy.state.modal = `<h3>Удалить фотографию?</h3><div class="notice">${pending
-    ? 'Она ещё не была загружена в CRM. После удаления фотография исчезнет с этого устройства.'
+    ? 'Она ещё не была загружена в систему. После удаления фотография исчезнет с этого устройства.'
     : 'Восстановить её будет нельзя.'}</div>
     <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="icubePhotos.confirmRemove(${photoArg},${localArg})">Удалить</button></div>`;
   legacy.render();
