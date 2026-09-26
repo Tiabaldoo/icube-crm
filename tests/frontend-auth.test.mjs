@@ -99,7 +99,7 @@ test('partner temporary teacher-view возвращается на партнё�
 
 test('auth frontend содержит управление доступом преподавателя и понятную обработку 401/403', async () => {
   const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
-  assert.match(source, /Доступ в CRM/); assert.match(source, /Создать доступ/); assert.match(source, /Сбросить пароль/); assert.match(source, /Отключить доступ/);
+  assert.match(source, /Доступ в систему/); assert.match(source, /Создать доступ/); assert.match(source, /Сбросить пароль/); assert.match(source, /Отключить доступ/);
   assert.match(source, /error\.status === 401/); assert.match(source, /Недостаточно прав|error\.message/);
   assert.match(source, /api\.request\('\/auth\/me'/); assert.match(source, /api\.request\('\/auth\/logout'/);
 });
