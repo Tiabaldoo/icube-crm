@@ -757,7 +757,7 @@ function statisticsPage() {
   const rows = (result?.groups ?? []).map((group) => `<div class="row" style="grid-template-columns:2fr 1.2fr 1.3fr .8fr .8fr 1fr .8fr .8fr 1fr .7fr .7fr;min-width:1120px">
     <div><b>${html(group.name)}</b></div><div>${html(group.projectName)}</div><div>${html(group.directionName)}</div><div>${group.currentMembers}</div><div>${group.capacity}</div>
     <div>${group.currentMembers} / ${group.capacity} · ${group.occupancyPercent}%</div><div>${group.completedLessons}</div><div>${group.visits}</div><div>${group.absences} · ${group.attendancePercent}%</div><div>${group.newChildren}</div><div>${group.leftChildren}</div></div>`).join('');
-  return `${legacy.pageHead('Статистика', 'Посещаемость, движение детей и заполненность групп по данным CRM.')}<div class="toolbar" style="align-items:end;flex-wrap:wrap">
+  return `${legacy.pageHead('Статистика', 'Посещаемость, движение детей и заполненность групп по данным системы.')}<div class="toolbar" style="align-items:end;flex-wrap:wrap">
     <div class="field"><label>Дата от</label><input class="input" id="stats-from" type="date" value="${html(legacy.state.statisticsDateFrom)}"></div>
     <div class="field"><label>Дата до</label><input class="input" id="stats-to" type="date" value="${html(legacy.state.statisticsDateTo)}"></div>
     <div class="field"><label>Проект</label><select class="select" id="stats-project"><option value="all">Все</option>${directories.projects.map((item) => option(item, legacy.state.statisticsProjectId)).join('')}</select></div>
@@ -1443,7 +1443,7 @@ function showLogin(message = '') {
   if (!app) return;
   app.style.visibility = 'visible';
   app.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:20px;background:#f8fafc"><form class="card pad" style="width:min(100%,420px)" onsubmit="event.preventDefault();icubeAuthLogin()">
-    <div class="brand" style="color:#111827;margin-bottom:22px"><div class="brand-mark">iC</div><div>iCube CRM</div></div>
+    <div class="brand" style="color:#111827;margin-bottom:22px"><div class="brand-mark">iC</div><div>АйКуб</div></div>
     <h1 style="margin:0 0 6px">Вход</h1><div class="muted" style="margin-bottom:18px">Введите логин и пароль</div>
     ${message ? `<div class="notice" style="margin-bottom:14px">${html(message)}</div>` : ''}
     <div class="field"><label>Логин</label><input class="input" id="auth-login" type="email" autocomplete="username" required></div>
@@ -1606,7 +1606,7 @@ function installAuthenticatedShells() {
     const offlineNotice = offline
       ? '<div class="notice" style="max-width:680px;margin:12px auto 0">Офлайн · изменения будут отправлены после подключения</div>'
       : '';
-    return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>${html(teacherNameForShell())}</b></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">${teacherPushButton}${right}</div></div>
+    return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">АйКуб · Преподаватель</div><b>${html(teacherNameForShell())}</b></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">${teacherPushButton}${right}</div></div>
       <div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn ${legacy.state.page === 'teacherToday' ? 'soft' : ''}" onclick="state.page='teacherToday';render()">Сегодня</button><button class="btn ${legacy.state.page === 'teacherCalendar' ? 'soft' : ''}" onclick="state.page='teacherCalendar';render()">Календарь</button></div>${offlineNotice}</div>
       <div class="teacher-content">${content}</div></div>`;
   };
@@ -1625,12 +1625,12 @@ function installAuthenticatedShells() {
 function accessBlock(teacherId) {
   const teacher = legacy.state.teachers.find((item) => item.id === Number(teacherId));
   const access = teacher?.access;
-  if (!access) return `<div class="field span-2" style="border-top:1px solid var(--line);padding-top:14px"><label>Доступ в CRM</label>
+  if (!access) return `<div class="field span-2" style="border-top:1px solid var(--line);padding-top:14px"><label>Доступ в систему</label>
     <input class="input" id="teacher-access-login" type="email" autocomplete="off" placeholder="teacher@example.com">
     <input class="input" id="teacher-access-password" type="password" autocomplete="new-password" placeholder="Новый пароль" style="margin-top:8px">
     <button class="btn soft" type="button" style="margin-top:8px" onclick="icubeCreateTeacherAccess(${teacherId})">Создать доступ</button></div>`;
   const active = access.status === 'active';
-  return `<div class="field span-2" style="border-top:1px solid var(--line);padding-top:14px"><label>Доступ в CRM</label>
+  return `<div class="field span-2" style="border-top:1px solid var(--line);padding-top:14px"><label>Доступ в систему</label>
     <div class="info-line"><span>Логин</span><b>${html(access.login)}</b></div><div class="info-line"><span>Статус</span><b>${active ? 'Активен' : 'Отключён'}</b></div>
     ${active ? `<input class="input" id="teacher-access-password" type="password" autocomplete="new-password" placeholder="Новый пароль" style="margin-top:8px">
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px"><button class="btn soft" type="button" onclick="icubeResetTeacherPassword(${teacherId})">Сбросить пароль</button><button class="btn danger" type="button" onclick="icubeDisableTeacherAccess(${teacherId})">Отключить доступ</button></div>`
@@ -1664,7 +1664,7 @@ async function resetTeacherPassword(teacherId) {
   return refreshTeacherAccess(teacherId, () => api.request(`/teachers/${teacherId}/access/reset-password`, { method: 'POST', body: { password: value('#teacher-access-password') } }));
 }
 async function disableTeacherAccess(teacherId) {
-  if (!window.confirm('Отключить доступ преподавателя к CRM?')) return;
+  if (!window.confirm('Отключить доступ преподавателя к системе?')) return;
   return refreshTeacherAccess(teacherId, () => api.request(`/teachers/${teacherId}/access`, { method: 'DELETE' }));
 }
 
@@ -1675,7 +1675,7 @@ function showOfflineUnavailable() {
   if (!app) return;
   app.style.visibility = 'visible';
   app.innerHTML = `<div style="min-height:100vh;display:grid;place-items:center;padding:20px;background:#f8fafc"><div class="card pad" style="width:min(100%,440px)">
-    <div class="brand" style="color:#111827;margin-bottom:22px"><div class="brand-mark">iC</div><div>iCube CRM</div></div>
+    <div class="brand" style="color:#111827;margin-bottom:22px"><div class="brand-mark">iC</div><div>АйКуб</div></div>
     <h1 style="margin:0 0 8px">Нет подключения</h1>
     <div class="notice">Для первого входа и загрузки занятий требуется интернет.</div>
     <button class="btn primary" type="button" style="width:100%;margin-top:18px" onclick="location.reload()">Повторить</button>
