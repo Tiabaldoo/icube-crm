@@ -10,8 +10,8 @@ const director = { userId: '1', roles: ['director'] };
 const partner = { userId: '2', roles: ['partner'], projectIds: ['7'] };
 const foreignPartner = { userId: '3', roles: ['partner'], projectIds: ['8'] };
 
-function fixture(storageDir) {
-  const state = { receipts: [], links: [], payments: [], balance: '0.00000000', staffNotifications: [], parentNotifications: [] };
+function fixture(storageDir, { projects = [{ project_id: 1, partner_id: null }, { project_id: 7, partner_id: 70 }] } = {}) {
+  const state = { receipts: [], links: [], payments: [], balance: '0.00000000', staffNotifications: [], parentNotifications: [], projects, sql: [] };
   const options = [
     { child_id: 10, child_name: 'Иван Иванов', enrollment_id: 100, project_id: 7, direction_id: 1, direction_name: 'Робототехника' },
     { child_id: 11, child_name: 'Мария Иванова', enrollment_id: 101, project_id: 7, direction_id: 2, direction_name: 'Программирование' },
@@ -22,6 +22,7 @@ function fixture(storageDir) {
     return { ...receipt, guardian_name: null, payment_count: state.links.filter((item) => String(item.receiptId) === String(id)).length };
   };
   async function query(sql, params = {}) {
+    state.sql.push(sql);
     if (sql.includes('FROM guardians g') && sql.includes('WHERE g.user_id=:userId')) {
       return [[String(params.userId) === '50' ? { id: 5, user_id: 50, full_name: null } : undefined].filter(Boolean)];
     }
@@ -32,12 +33,12 @@ function fixture(storageDir) {
         uploaded_at: params.uploadedAt, closed_at: null });
       return [{ insertId: id, affectedRows: 1 }];
     }
-    if (sql.startsWith('SELECT DISTINCT e.project_id')) return [[{ project_id: 7 }]];
+    if (sql.startsWith('SELECT DISTINCT e.project_id')) return [state.projects];
     if (sql.includes('FROM payment_receipts pr JOIN guardians g')) {
       let rows = state.receipts.map((item) => receiptRow(item.id));
       if (params.receiptId != null) rows = rows.filter((item) => String(item.id) === String(params.receiptId));
       if (params.guardianId != null) rows = rows.filter((item) => String(item.guardian_id) === String(params.guardianId));
-      if (params.projectId != null && String(params.projectId) !== '7') rows = [];
+      if (params.projectId != null && !state.projects.some((item) => String(item.project_id) === String(params.projectId))) rows = [];
       if (params.queueOnly) rows = rows.filter((item) => item.closed_at == null);
       return [rows];
     }
@@ -80,8 +81,25 @@ function fixture(storageDir) {
   };
   const service = createPaymentReceiptService(pool, { storageDir, payments, notificationEvents, parentNotifications,
     now: () => new Date('2026-09-26T05:00:00.000Z') });
-  return { state, service };
+  return { state, service, pool };
 }
+
+async function uploadedNotificationTypes(projects) {
+  const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-receipt-notify-'));
+  try {
+    const { state, service } = fixture(storageDir, { projects });
+    await service.upload({ buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mimeType: 'image/jpeg' }, parent);
+    return state.staffNotifications.map((item) => item.type);
+  } finally { await rm(storageDir, { recursive: true, force: true }); }
+}
+
+test('new receipt action notification follows internal and partner-owned active projects', async () => {
+  assert.deepEqual(await uploadedNotificationTypes([{ project_id: 7, partner_id: 70 }]), ['partner_payment_receipt']);
+  assert.deepEqual(await uploadedNotificationTypes([{ project_id: 1, partner_id: null }]), ['director_payment_receipt']);
+  assert.deepEqual(await uploadedNotificationTypes([
+    { project_id: 1, partner_id: null }, { project_id: 7, partner_id: 70 },
+  ]), ['director_payment_receipt', 'partner_payment_receipt']);
+});
 
 test('receipt upload is non-financial, protected by owner/project scope, and one receipt links multiple normal payments', async () => {
   const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-receipts-'));
@@ -112,6 +130,30 @@ test('receipt upload is non-financial, protected by owner/project scope, and one
   } finally { await rm(storageDir, { recursive: true, force: true }); }
 });
 
+test('confirmed and closed receipt remains a manual candidate and links to another payment', async () => {
+  const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-receipt-manual-'));
+  try {
+    const { state, service, pool } = fixture(storageDir);
+    const receipt = await service.upload({ buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]), mimeType: 'image/jpeg' }, parent);
+    await service.linkPayment(pool, receipt.id, {
+      id: '20', childId: '10', directionId: '1', projectId: '7', amount: '4100.00',
+    }, partner);
+    assert.equal((await service.getParent(receipt.id, parent)).status, 'confirmed');
+    assert.deepEqual((await service.listStaff({ childId: '10', all: 'true' }, partner)).map((item) => item.id), [receipt.id]);
+    await service.close(receipt.id, partner);
+    assert.deepEqual((await service.listStaff({ childId: '10', all: 'true' }, partner)).map((item) => item.id), [receipt.id]);
+    const candidateSql = state.sql.find((sql) => sql.includes(':queueOnly=FALSE') && sql.includes('FROM payment_receipts pr'));
+    assert.doesNotMatch(candidateSql, /:childId IS NULL OR pr\.closed_at IS NULL|payment_receipt_payments linked/);
+    await service.linkPayment(pool, receipt.id, {
+      id: '21', childId: '11', directionId: '2', projectId: '7', amount: '4500.00',
+    }, partner);
+    assert.deepEqual(state.links.map((item) => item.paymentId), ['20', '21']);
+    await assert.rejects(service.linkPayment(pool, receipt.id, {
+      id: '22', childId: '10', directionId: '1', projectId: '8', amount: '4100.00',
+    }, partner), { status: 403, code: 'FORBIDDEN' });
+  } finally { await rm(storageDir, { recursive: true, force: true }); }
+});
+
 test('receipt migration and UI preserve explicit links, protected files and focused parent flow', async () => {
   const [migration, parentUi, staffUi, apiSync, pushUi, accessUi] = await Promise.all([
     readFile(new URL('../database/migrations/020_payment_receipts.sql', import.meta.url), 'utf8'),
@@ -126,6 +168,7 @@ test('receipt migration and UI preserve explicit links, protected files and focu
   assert.match(parentUi, /Переведите оплату по номеру телефона/); assert.match(parentUi, /image\/jpeg,image\/png,application\/pdf/);
   assert.match(parentUi, /Ожидает подтверждения/); assert.match(parentUi, /Подтверждено/); assert.doesNotMatch(parentUi, /Оплата абонемента|QR для оплаты/);
   assert.match(staffUi, /Чеки на проверке/); assert.match(staffUi, /Зачислить абонемент/); assert.match(staffUi, /Закрыть без автоматического зачисления/);
+  assert.doesNotMatch(staffUi, /filter\(\(item\) => item\.status === 'pending'\)/);
   assert.match(apiSync, /body\.receiptId = value\('#pf-receipt'\)/); assert.match(apiSync, /receiptIds: \(payment\.receiptIds \?\? \[\]\)\.map\(Number\)/);
   assert.match(pushUi, /Открыть уведомления/); assert.match(pushUi, /openNotificationSettings/); assert.match(pushUi, /Как установить приложение/);
   assert.match(accessUi, /Родитель: \$\{escapeHtml\(account\.name \|\| 'Не указан'\)\}/);

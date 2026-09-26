@@ -86,7 +86,7 @@ async function refreshCandidates() {
   const childId = document.querySelector('#pf-child')?.value;
   if (!childId) { field.innerHTML = ''; return; }
   try {
-    const receipts = (await api.request(`/payment-receipts?childId=${encodeURIComponent(childId)}&all=true`)).filter((item) => item.status === 'pending');
+    const receipts = await api.request(`/payment-receipts?childId=${encodeURIComponent(childId)}&all=true`);
     field.innerHTML = receipts.length ? `<label>Чек родителя</label><select class="select" id="pf-receipt"><option value="">Не прикреплять</option>${receipts.map((item) => `<option value="${item.id}">Есть чек от ${dateRu(item.uploadedAt)}</option>`).join('')}</select>` : '';
   } catch { field.innerHTML = ''; }
 }

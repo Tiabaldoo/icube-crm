@@ -117,14 +117,15 @@ export function createPaymentReceiptService(pool, {
       entityType: 'payment_receipt', entityId: receipt.id, destination: 'payment-receipt',
       referenceType: 'payment_receipt', referenceId: receipt.id,
     };
-    for (const row of await notificationEvents.roleUsers(connection, 'director')) {
+    const [projects] = await connection.query(`SELECT DISTINCT e.project_id,p.partner_id FROM child_guardians cg
+      JOIN child_enrollments e ON e.child_id=cg.child_id AND e.superseded_at IS NULL AND e.status='active'
+      JOIN projects p ON p.id=e.project_id
+      WHERE cg.guardian_id=:guardianId`, { guardianId: guardian.id });
+    if (projects.some((project) => project.partner_id == null)) for (const row of await notificationEvents.roleUsers(connection, 'director')) {
       await notificationEvents.createUser(connection, { ...payload, userId: row.user_id, roleCode: 'director',
         type: 'director_payment_receipt', dedupKey: `director:payment_receipt:${receipt.id}` });
     }
-    const [projects] = await connection.query(`SELECT DISTINCT e.project_id FROM child_guardians cg
-      JOIN child_enrollments e ON e.child_id=cg.child_id AND e.superseded_at IS NULL AND e.status='active'
-      WHERE cg.guardian_id=:guardianId`, { guardianId: guardian.id });
-    for (const project of projects) for (const row of await notificationEvents.partnerUsers(connection, project.project_id)) {
+    for (const project of projects.filter((item) => item.partner_id != null)) for (const row of await notificationEvents.partnerUsers(connection, project.project_id)) {
       await notificationEvents.createUser(connection, { ...payload, userId: row.user_id, roleCode: 'partner',
         projectId: project.project_id, type: 'partner_payment_receipt',
         dedupKey: `partner:payment_receipt:${receipt.id}:${project.project_id}` });
@@ -196,8 +197,6 @@ export function createPaymentReceiptService(pool, {
           WHERE cg.guardian_id=pr.guardian_id AND e.project_id=:projectId AND e.superseded_at IS NULL)
           OR EXISTS (SELECT 1 FROM payment_receipt_payments rp JOIN payments p ON p.id=rp.payment_id AND p.deleted_at IS NULL
             WHERE rp.receipt_id=pr.id AND p.project_id_snapshot=:projectId))
-        AND (:childId IS NULL OR pr.closed_at IS NULL OR NOT EXISTS (
-          SELECT 1 FROM payment_receipt_payments linked WHERE linked.receipt_id=pr.id))
       ORDER BY pr.uploaded_at DESC,pr.id DESC`, { queueOnly, childId, projectId });
     return rows.map((row) => mapReceipt(row));
   }
