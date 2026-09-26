@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'icube-crm-shell-';
-const CACHE_NAME = 'icube-crm-shell-v2-20260926-1';
+const CACHE_NAME = 'icube-crm-shell-v2-20260926-2';
 const RELEASE_ID = CACHE_NAME.slice('icube-crm-shell-v2-'.length);
 const versioned = (path) => `${path}?v=${RELEASE_ID}`;
 const STATIC_PATHS = [
@@ -75,8 +75,8 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let payload = {};
   try { payload = event.data?.json?.() ?? {}; }
-  catch { payload = { title: 'iCube CRM', body: event.data?.text?.() ?? '' }; }
-  const title = payload.title || 'iCube CRM';
+  catch { payload = { title: 'АйКуб', body: event.data?.text?.() ?? '' }; }
+  const title = payload.title || 'АйКуб';
   const options = {
     body: payload.body || '',
     icon: './icons/icon-192.png',
