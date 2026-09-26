@@ -362,6 +362,7 @@ function closeOnboarding() {
 }
 
 function maybeShowOnboarding() {
+  if (!window.matchMedia?.('(max-width: 760px)').matches) return;
   if (onboardingAutoHandled || onboardingSeen()) return;
   onboardingAutoHandled = true;
   if (installedStandalone() && state.status === 'enabled') return;
