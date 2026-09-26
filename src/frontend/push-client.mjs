@@ -84,7 +84,7 @@ export async function refreshPushState() {
   if (!supported()) {
     state.status = 'unsupported';
     state.message = iosLike() && !installedStandalone()
-      ? 'Для уведомлений на iPhone добавьте iCube на экран «Домой» и откройте приложение с иконки.'
+      ? 'Для уведомлений на iPhone добавьте АйКуб на экран «Домой» и откройте приложение с иконки.'
       : 'Системные уведомления не поддерживаются этим браузером.';
     return { ...state };
   }
@@ -257,35 +257,35 @@ function onboardingNotificationMarkup() {
 function onboardingSteps() {
   const notificationStep = state.status === 'enabled'
     ? 'Системные уведомления уже включены — этот шаг выполнен.'
-    : 'Откройте уведомления в CRM и нажмите «Включить уведомления».';
+    : 'Откройте уведомления в АйКуб и нажмите «Включить уведомления».';
   if (onboardingPlatform() === 'ios') return [
-    'Откройте iCube CRM в Safari.',
+    'Откройте АйКуб в Safari.',
     'Нажмите кнопку «Поделиться» в Safari.',
     'Выберите «На экран Домой».',
     'Подтвердите добавление приложения.',
-    'Закройте Safari и откройте iCube CRM с нового значка на экране Домой.',
+    'Закройте Safari и откройте АйКуб с нового значка на экране Домой.',
     notificationStep,
   ];
   if (onboardingPlatform() === 'android') return [
-    'Откройте iCube CRM в браузере, например Chrome.',
+    'Откройте АйКуб в браузере, например Chrome.',
     'Откройте меню браузера ⋮.',
     'Выберите «Установить приложение» или «Добавить на главный экран».',
     'Подтвердите установку.',
-    'Откройте iCube CRM с нового значка на главном экране.',
+    'Откройте АйКуб с нового значка на главном экране.',
     notificationStep,
   ];
   return [
     'Откройте меню вашего браузера.',
     'Найдите пункт «Установить приложение» или «Добавить на главный экран», если браузер его предлагает.',
-    'Подтвердите установку и откройте iCube CRM с нового значка.',
+    'Подтвердите установку и откройте АйКуб с нового значка.',
     notificationStep,
   ];
 }
 
 function onboardingPromptMarkup() {
-  return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>Настроить приложение?</h2></div>
+  return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">АйКуб</div><h2>Настроить приложение?</h2></div>
     <button class="pwa-onboarding-close" type="button" onclick="icubePush.deferOnboarding()" aria-label="Закрыть">×</button></div>
-    <p class="pwa-onboarding-intro">Можно установить iCube CRM на главный экран телефона и включить уведомления, чтобы быстрее открывать кабинет и не пропускать важные события.</p>
+    <p class="pwa-onboarding-intro">Можно установить АйКуб на главный экран телефона и включить уведомления, чтобы быстрее открывать кабинет и не пропускать важные события.</p>
     <div class="pwa-onboarding-actions">
       <button class="btn primary" type="button" onclick="icubePush.openOnboarding()">Настроить сейчас</button>
       <button class="btn" type="button" onclick="icubePush.deferOnboarding()">Позже</button>
@@ -295,13 +295,13 @@ function onboardingPromptMarkup() {
 function onboardingGuideMarkup() {
   if (installedStandalone()) {
     if (state.status === 'enabled') {
-      return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>Приложение настроено</h2></div>
+      return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">АйКуб</div><h2>Приложение настроено</h2></div>
         <button class="pwa-onboarding-close" type="button" onclick="icubePush.closeOnboarding()" aria-label="Закрыть">×</button></div>
-        <p class="pwa-onboarding-intro">iCube CRM уже открыта как установленное приложение.</p>
+        <p class="pwa-onboarding-intro">Приложение АйКуб уже открыто как установленное.</p>
         ${onboardingNotificationMarkup()}
         <div class="pwa-onboarding-actions"><button class="btn primary" type="button" onclick="icubePush.closeOnboarding()">Готово</button></div>`;
     }
-    return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>Осталось включить уведомления</h2></div>
+    return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">АйКуб</div><h2>Осталось включить уведомления</h2></div>
       <button class="pwa-onboarding-close" type="button" onclick="icubePush.closeOnboarding()" aria-label="Закрыть">×</button></div>
       <p class="pwa-onboarding-intro">Приложение уже установлено. Настройка главного экрана больше не требуется.</p>
       ${onboardingNotificationMarkup()}
@@ -317,9 +317,9 @@ function onboardingGuideMarkup() {
     : onboardingPlatform() === 'android'
       ? 'Установка на Android'
       : 'Установка приложения';
-  return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">iCube CRM</div><h2>${title}</h2></div>
+  return `<div class="pwa-onboarding-head"><div><div class="pwa-onboarding-kicker">АйКуб</div><h2>${title}</h2></div>
     <button class="pwa-onboarding-close" type="button" onclick="icubePush.closeOnboarding()" aria-label="Закрыть">×</button></div>
-    <p class="pwa-onboarding-intro">Установите CRM на главный экран, а затем включите системные уведомления.</p>
+    <p class="pwa-onboarding-intro">Установите приложение на главный экран, а затем включите системные уведомления.</p>
     <div class="pwa-onboarding-steps">${steps}</div>
     ${onboardingNotificationMarkup()}
     <div class="pwa-onboarding-actions"><button class="btn primary" type="button" onclick="icubePush.closeOnboarding()">Готово</button></div>`;
