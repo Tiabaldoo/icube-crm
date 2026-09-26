@@ -6123,7 +6123,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!state.mobileMenuOpen) return '';
     return '<div class="mobile-drawer-backdrop" onclick="closeMobileMenuV129()">'+
       '<aside class="mobile-drawer" onclick="event.stopPropagation()">'+
-        '<div class="mobile-drawer-head"><div class="brand"><div class="brand-mark">iC</div><div>${appBrandLabel()}</div></div><button class="mobile-drawer-close" onclick="closeMobileMenuV129()">×</button></div>'+
+        '<div class="mobile-drawer-head"><div class="brand"><div class="brand-mark">iC</div><div>'+appBrandLabel()+'</div></div><button class="mobile-drawer-close" onclick="closeMobileMenuV129()">×</button></div>'+
         '<div class="mobile-drawer-nav">'+
           mobileNavItems.filter(function(x){return state.role==='partner'?!['partner','rent','stats','settings'].includes(x[0]):x[0]!=='settlements';}).map(function(x,i){
             return (i===7?'<div class="mobile-drawer-section">Управление</div>':'')+
