@@ -32,8 +32,8 @@ const teacherState = () => ({
 
 test('A: manifest валиден и содержит install metadata и обязательные icons', async () => {
   const manifest = JSON.parse(await readFile(new URL('../manifest.webmanifest', import.meta.url), 'utf8'));
-  assert.equal(manifest.name, 'iCube CRM');
-  assert.equal(manifest.short_name, 'iCube CRM');
+  assert.equal(manifest.name, 'АйКуб');
+  assert.equal(manifest.short_name, 'АйКуб');
   assert.equal(manifest.display, 'standalone');
   assert.equal(manifest.start_url, './');
   assert.equal(manifest.scope, './');
