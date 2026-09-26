@@ -68,9 +68,10 @@ function closeModal(){state.modal=null;render()}
 const navItems=[
  ['dashboard','Главная'],['children','Дети'],['groups','Группы'],['calendar','Календарь'],['payments','Оплаты'],['refunds','Возвраты'],['balances','Балансы / долги'],['teachers','Преподаватели'],['sites','Площадки'],['salary','Зарплата'],['rent','Расчёты аренды'],['settlements','Расчёты'],['partner','Партнёр'],['stats','Статистика'],['settings','Настройки']
 ];
-function shell(content,title='iCube CRM'){
+function appBrandLabel(){return state.role==='partner'?'АйКуб · Партнёр':state.role==='teacher'?'АйКуб · Преподаватель':'АйКуб · Управление'}
+function shell(content,title='АйКуб'){
  const visibleNav=navItems.filter(([p])=>state.role==='partner'?!['partner','rent','stats','settings'].includes(p):p!=='settlements');
- return `<div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">iC</div><div>iCube CRM</div></div><div class="nav">${visibleNav.map(([p,l],i)=>`${i===7?'<small>Управление</small>':''}<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></aside><main class="main"><header class="topbar"><div class="crumb">${title}</div><div class="top-actions"><div><select class="role-switch" onchange="state.role=this.value; state.page=this.value==='teacher'?'teacherToday':'dashboard'; render()"><option value="director" ${state.role==='director'?'selected':''}>Директор</option><option value="teacher" ${state.role==='teacher'?'selected':''}>Преподаватель</option></select><div class="muted mini">Режим прототипа</div></div><div class="avatar">ИЯ</div></div></header><div class="content">${content}</div><div class="mobile-nav">${[['dashboard','Главная'],['children','Дети'],['calendar','Календарь'],['payments','Оплаты'],[state.role==='partner'?'groups':'settings','Ещё']].map(([p,l])=>`<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></main></div>`;
+ return `<div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">iC</div><div>${appBrandLabel()}</div></div><div class="nav">${visibleNav.map(([p,l],i)=>`${i===7?'<small>Управление</small>':''}<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></aside><main class="main"><header class="topbar"><div class="crumb">${title}</div><div class="top-actions"><div><select class="role-switch" onchange="state.role=this.value; state.page=this.value==='teacher'?'teacherToday':'dashboard'; render()"><option value="director" ${state.role==='director'?'selected':''}>Директор</option><option value="teacher" ${state.role==='teacher'?'selected':''}>Преподаватель</option></select><div class="muted mini">Режим прототипа</div></div><div class="avatar">ИЯ</div></div></header><div class="content">${content}</div><div class="mobile-nav">${[['dashboard','Главная'],['children','Дети'],['calendar','Календарь'],['payments','Оплаты'],[state.role==='partner'?'groups':'settings','Ещё']].map(([p,l])=>`<button class="${state.page===p?'active':''}" onclick="navTo('${p}')">${l}</button>`).join('')}</div></main></div>`;
 }
 function pageHead(title,sub='',action=''){return `<div class="page-head"><div><h1>${escapeHtml(title)}</h1><div class="muted">${escapeHtml(sub)}</div></div>${action}</div>`}
 function dashboard(){
@@ -164,7 +165,7 @@ function lesson(){
  return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'gray'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${g.name}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b>${lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])}</div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div>${lessonAttendanceBadge(l,e.childId,e.present!==false)}</div>`).join('')}</div></div>`;
 }
 function lToggle(k,v){byId(state.lessons,state.selectedLesson)[k]=v;render()}
-function teacherShell(content){return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><b>Иванов Сергей</b></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value==='director'?'dashboard':'teacherToday';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div></div><div class="teacher-content">${content}</div></div>`}
+function teacherShell(content){return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">АйКуб · Преподаватель</div><b>Иванов Сергей</b></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value==='director'?'dashboard':'teacherToday';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div></div><div class="teacher-content">${content}</div></div>`}
 function teacherToday(){
  const ls=state.lessons.filter(l=>l.date==='09.09.2026'&&l.teacherId===1);return `<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">Среда, 9 сентября</div>${ls.map(l=>{let g=byId(state.groups,l.groupId);return `<div class="teacher-card" onclick="openLesson(${l.id},true)"><div class="teacher-lesson-head"><div><div class="teacher-time">${l.time.split('–')[0]}</div><h3 style="margin:4px 0">${g.direction}</h3><div class="muted">${g.name}<br>${byId(state.sites,g.siteId).name}</div></div><span class="badge ${l.started?'green':'blue'}">${l.done?'Завершено':l.started?'Идёт':'Скоро'}</span></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>`}).join('')}`;
 }
@@ -226,10 +227,10 @@ function partner(){
 function stats(){return pageHead('Статистика','Зарезервировано под будущую аналитику; в v1 без сложных отчётов')+`<div class="grid cols-3"><div class="card metric"><div class="label">Средняя посещаемость</div><div class="value">82%</div><div class="progress"><span style="width:82%"></span></div></div><div class="card metric"><div class="label">Занятий в сентябре</div><div class="value">14</div></div><div class="card metric"><div class="label">Средняя группа</div><div class="value">6,4</div></div></div><div class="card pad" style="margin-top:16px"><div class="empty">Здесь позже появятся динамика детей, выручка, долги, наполняемость и эффективность групп.</div></div>`}
 function settings(){
  let s=state.settings;
- return pageHead('Настройки','Административные параметры CRM')+`<div class="card"><div class="settings-block"><h3>Стоимость занятий</h3><div class="setting-row"><div><b>Робототехника</b><div class="muted mini">Базовая цена направления</div></div><input class="input" type="number" value="${s.robotPrice}" onchange="state.settings.robotPrice=Number(this.value)"></div><div class="setting-row"><div><b>Программирование</b><div class="muted mini">Базовая цена направления</div></div><input class="input" type="number" value="${s.codePrice}" onchange="state.settings.codePrice=Number(this.value)"></div></div><div class="settings-block"><h3>Зарплата</h3>${[['Фикс обычного занятия','salaryFix'],['За присутствующего ребёнка','salaryChild'],['Ознакомительное занятие','salaryIntro'],['Пустой выезд','salaryEmpty']].map(([l,k])=>`<div class="setting-row"><div><b>${l}</b></div><input class="input" type="number" value="${s[k]}" onchange="state.settings.${k}=Number(this.value)"></div>`).join('')}</div><div class="settings-block"><h3>Партнёрство</h3>${[['Налог, %','tax'],['Доля iCube, %','icubeShare'],['Доля партнёра, %','partnerShare']].map(([l,k])=>`<div class="setting-row"><div><b>${l}</b></div><input class="input" type="number" value="${s[k]}" onchange="state.settings.${k}=Number(this.value)"></div>`).join('')}</div></div>`;
+ return pageHead('Настройки','Административные параметры системы')+`<div class="card"><div class="settings-block"><h3>Стоимость занятий</h3><div class="setting-row"><div><b>Робототехника</b><div class="muted mini">Базовая цена направления</div></div><input class="input" type="number" value="${s.robotPrice}" onchange="state.settings.robotPrice=Number(this.value)"></div><div class="setting-row"><div><b>Программирование</b><div class="muted mini">Базовая цена направления</div></div><input class="input" type="number" value="${s.codePrice}" onchange="state.settings.codePrice=Number(this.value)"></div></div><div class="settings-block"><h3>Зарплата</h3>${[['Фикс обычного занятия','salaryFix'],['За присутствующего ребёнка','salaryChild'],['Ознакомительное занятие','salaryIntro'],['Пустой выезд','salaryEmpty']].map(([l,k])=>`<div class="setting-row"><div><b>${l}</b></div><input class="input" type="number" value="${s[k]}" onchange="state.settings.${k}=Number(this.value)"></div>`).join('')}</div><div class="settings-block"><h3>Партнёрство</h3>${[['Налог, %','tax'],['Доля iCube, %','icubeShare'],['Доля партнёра, %','partnerShare']].map(([l,k])=>`<div class="setting-row"><div><b>${l}</b></div><input class="input" type="number" value="${s[k]}" onchange="state.settings.${k}=Number(this.value)"></div>`).join('')}</div></div>`;
 }
 function render(){
- let content='',title='iCube CRM';
+ let content='',title='АйКуб';
  if(state.role==='teacher'){if(!['teacherToday','teacherLesson'].includes(state.page))state.page='teacherToday';content=state.page==='teacherLesson'?teacherLesson():teacherToday();document.querySelector('#app').innerHTML=teacherShell(content)+(state.modal?`<div class="modal-backdrop"><div class="modal">${state.modal}</div></div>`:'');return}
  const pages={dashboard,children,child,groups,group,sites,teachers,calendar,lesson,payments,refunds,balances,salary,rent,partner,stats,settings};content=(pages[state.page]||dashboard)();document.querySelector('#app').innerHTML=shell(content,title)+(state.modal?`<div class="modal-backdrop"><div class="modal">${state.modal}</div></div>`:'');
 }
@@ -1706,7 +1707,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     state.teachers.filter(function(t){return t.active!==false;}).forEach(function(t){
       teacherOptions+='<option value="'+t.id+'"'+(t.id===currentId?' selected':'')+'>'+escapeHtml(t.name)+'</option>';
     });
-    return '<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">iCube CRM · преподаватель</div><select class="select" style="margin-top:5px;min-width:220px" onchange="setPrototypeTeacher(this.value)">'+teacherOptions+'</select><div class="mini" style="color:#98a2b3;margin-top:3px">Выбор преподавателя только для режима прототипа</div></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value===\'director\'?\'dashboard\':\'teacherToday\';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div><div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn '+(state.page==='teacherToday'?'soft':'')+'" onclick="state.page=\'teacherToday\';render()">Сегодня</button><button class="btn '+(state.page==='teacherCalendar'?'soft':'')+'" onclick="state.page=\'teacherCalendar\';render()">Календарь</button></div></div><div class="teacher-content">'+(current?content:'<div class="teacher-card"><div class="empty">Создайте преподавателя в директорском разделе «Преподаватели», затем выберите его здесь для проверки интерфейса.</div></div>')+'</div></div>';
+    return '<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">АйКуб · Преподаватель</div><select class="select" style="margin-top:5px;min-width:220px" onchange="setPrototypeTeacher(this.value)">'+teacherOptions+'</select><div class="mini" style="color:#98a2b3;margin-top:3px">Выбор преподавателя только для режима прототипа</div></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value===\'director\'?\'dashboard\':\'teacherToday\';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div><div style="max-width:680px;margin:14px auto 0;display:flex;gap:8px"><button class="btn '+(state.page==='teacherToday'?'soft':'')+'" onclick="state.page=\'teacherToday\';render()">Сегодня</button><button class="btn '+(state.page==='teacherCalendar'?'soft':'')+'" onclick="state.page=\'teacherCalendar\';render()">Календарь</button></div></div><div class="teacher-content">'+(current?content:'<div class="teacher-card"><div class="empty">Создайте преподавателя в директорском разделе «Преподаватели», затем выберите его здесь для проверки интерфейса.</div></div>')+'</div></div>';
   };
 
   // Dashboard now consumes the same shared event source.
@@ -1735,7 +1736,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   // Final render supports teacher calendar without changing director navigation.
   window.render=function(){
-    let content='',title='iCube CRM';
+    let content='',title='АйКуб';
     if(state.role==='teacher'){
       if(!['teacherToday','teacherCalendar','teacherLesson'].includes(state.page))state.page='teacherToday';
       content=state.page==='teacherLesson'?teacherLesson():state.page==='teacherCalendar'?teacherCalendar():teacherToday();
@@ -2691,7 +2692,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='</select></div>';
     html+='<div class="field"><label>Основная группа</label><select class="select" id="md-group" onchange="refreshManageDirectionPreview()">'+directionGroupsHtml(oldDirection,currentGroupId,enrollment.projectId)+'</select></div>';
     html+='<div class="field span-2"><label>Цена</label><select class="select" id="md-price-mode" onchange="toggleManageIndividualPrice()"><option value="standard"'+(enrollment.individualPrice==null?' selected':'')+'>Обычная цена направления / группы</option><option value="individual"'+(enrollment.individualPrice!=null?' selected':'')+'>Индивидуальная цена</option></select><div class="muted mini" style="margin-top:5px">Сейчас: '+money(currentPrice)+' / занятие.</div></div>';
-    html+='<div class="field span-2" id="md-individual-wrap" style="display:'+(enrollment.individualPrice!=null?'block':'none')+'"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="md-individual-package" type="number" min="0" step="1" value="'+packagePrice+'" placeholder="Например, 2900" oninput="refreshManageDirectionPreview()"><div class="muted mini" id="md-individual-hint" style="margin-top:5px">CRM будет считать стоимость одного занятия как цену абонемента ÷ 4.</div></div>';
+    html+='<div class="field span-2" id="md-individual-wrap" style="display:'+(enrollment.individualPrice!=null?'block':'none')+'"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="md-individual-package" type="number" min="0" step="1" value="'+packagePrice+'" placeholder="Например, 2900" oninput="refreshManageDirectionPreview()"><div class="muted mini" id="md-individual-hint" style="margin-top:5px">Система будет считать стоимость одного занятия как цену абонемента ÷ 4.</div></div>';
     html+='</div>';
     html+='<div id="md-preview" class="card pad" style="margin-top:14px"></div>';
     html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveEnrollment('+childId+',\''+oldDirection+'\')">Сохранить изменения</button></div>';
@@ -3033,7 +3034,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(payments) reasons.push('оплаты: '+payments);
       if(refunds) reasons.push('возвраты: '+refunds);
       if(visits) reasons.push('посещения: '+visits);
-      modal('<h3>Нельзя удалить ребёнка</h3><div class="notice">У <b>'+escapeHtml(child.name)+'</b> уже есть история: '+reasons.join(', ')+'. Ребёнка с финансовыми операциями или посещениями удалять нельзя, чтобы не повредить историю CRM.</div><div class="modal-actions"><button class="btn primary" onclick="closeModal()">Понятно</button></div>');
+      modal('<h3>Нельзя удалить ребёнка</h3><div class="notice">У <b>'+escapeHtml(child.name)+'</b> уже есть история: '+reasons.join(', ')+'. Ребёнка с финансовыми операциями или посещениями удалять нельзя, чтобы не повредить историю в системе.</div><div class="modal-actions"><button class="btn primary" onclick="closeModal()">Понятно</button></div>');
       return;
     }
 
@@ -3745,7 +3746,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!lesson||!group) return;
 
     let html='<h3>Новый ребёнок на занятии</h3>';
-    html+='<div class="notice">Создайте минимальную карточку. Ребёнок сразу появится в CRM и будет отмечен на этом занятии как <b>ознакомительный</b>. Директор позже дополнит данные.</div>';
+    html+='<div class="notice">Создайте минимальную карточку. Ребёнок сразу появится в системе и будет отмечен на этом занятии как <b>ознакомительный</b>. Директор позже дополнит данные.</div>';
     html+='<div class="form-grid" style="margin-top:14px">';
     html+='<div class="field span-2"><label>Фамилия Имя</label><input class="input" id="tqc-name" placeholder="Иванов Иван"></div>';
     html+='<div class="field span-2"><label>Телефон родителя</label><input class="input" id="tqc-phone" placeholder="+7 900 000-00-00"></div>';
@@ -4009,7 +4010,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const group=lesson?byId(state.groups,lesson.groupId):null;
     if(!lesson||!group) return;
     let html='<h3>Новый ребёнок на занятии</h3>';
-    html+='<div class="notice">Создайте минимальную карточку. Ребёнок сразу появится в CRM и будет отмечен на этом занятии как <b>ознакомительный</b>. Директор позже дополнит данные.</div>';
+    html+='<div class="notice">Создайте минимальную карточку. Ребёнок сразу появится в системе и будет отмечен на этом занятии как <b>ознакомительный</b>. Директор позже дополнит данные.</div>';
     html+='<div class="form-grid" style="margin-top:14px">';
     html+='<div class="field span-2"><label>Фамилия Имя</label><input class="input" id="tqc-name" placeholder="Иванов Иван"></div>';
     html+='<div class="field span-2"><label>Телефон родителя <span class="muted" style="font-weight:400">(необязательно)</span></label><input class="input" id="tqc-phone" placeholder="+7 900 000-00-00"></div>';
@@ -4132,7 +4133,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const current=isExtra?!!ex?.trial:isMainTrial(lesson,childId);
     const child=byId(state.children,childId);
     modal('<h3>Тип посещения</h3><div class="info-line"><span>Ребёнок</span><b>'+(child?.name||'—')+'</b></div>'+
-      '<div class="notice" style="margin-top:12px">Можно исправить тип посещения даже после завершения занятия. При переключении CRM автоматически вернёт или спишет стоимость конкретного занятия. На зарплату преподавателя это не влияет: присутствующий ребёнок учитывается как обычно.</div>'+
+      '<div class="notice" style="margin-top:12px">Можно исправить тип посещения даже после завершения занятия. Система автоматически вернёт или спишет стоимость конкретного занятия. На зарплату преподавателя это не влияет: присутствующий ребёнок учитывается как обычно.</div>'+
       '<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="forceVisitTrialV121('+childId+','+(!current)+','+(isExtra?'true':'false')+')">'+(current?'Сделать обычным':'Сделать ознакомительным')+'</button></div>');
   };
 
@@ -4453,7 +4454,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const view=salaryAppliedViewV122();
     const printWindow=window.open('','_blank');
     if(!printWindow){
-      window.alert('Не удалось открыть печатную версию. Разрешите всплывающие окна для CRM.');
+      window.alert('Не удалось открыть печатную версию. Разрешите всплывающие окна для приложения.');
       return;
     }
     printWindow.document.open();
@@ -5333,7 +5334,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const leftRate=leftPercent(from,to,project,direction);
     const newPct=pct(newIds.length,peopleDen), leftPct=leftRate.percent;
 
-    let html=pageHead('Статистика','Посещаемость, движение детей, заполненность групп и динамика по реальным данным CRM.');
+    let html=pageHead('Статистика','Посещаемость, движение детей, заполненность групп и динамика по реальным данным системы.');
     html+='<div class="toolbar" style="align-items:end;flex-wrap:wrap">';
     html+='<div class="field" style="min-width:160px"><label>Период: от</label><input class="input" id="stats-from" type="date" value="'+from+'"></div>';
     html+='<div class="field" style="min-width:160px"><label>До</label><input class="input" id="stats-to" type="date" value="'+to+'"></div>';
@@ -6122,7 +6123,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!state.mobileMenuOpen) return '';
     return '<div class="mobile-drawer-backdrop" onclick="closeMobileMenuV129()">'+
       '<aside class="mobile-drawer" onclick="event.stopPropagation()">'+
-        '<div class="mobile-drawer-head"><div class="brand"><div class="brand-mark">iC</div><div>iCube CRM</div></div><button class="mobile-drawer-close" onclick="closeMobileMenuV129()">×</button></div>'+
+        '<div class="mobile-drawer-head"><div class="brand"><div class="brand-mark">iC</div><div>${appBrandLabel()}</div></div><button class="mobile-drawer-close" onclick="closeMobileMenuV129()">×</button></div>'+
         '<div class="mobile-drawer-nav">'+
           mobileNavItems.filter(function(x){return state.role==='partner'?!['partner','rent','stats','settings'].includes(x[0]):x[0]!=='settlements';}).map(function(x,i){
             return (i===7?'<div class="mobile-drawer-section">Управление</div>':'')+
@@ -6328,7 +6329,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='</select></div>';
     html+='<div class="field"><label>Основная группа</label><select class="select" id="ad-group" onchange="refreshAddDirectionPreviewV132()">'+groupsHtml(initial)+'</select></div>';
     html+='<div class="field span-2"><label>Цена</label><select class="select" id="ad-price-mode" onchange="toggleAddDirectionPriceV132()"><option value="standard">Обычная цена направления / группы</option><option value="individual">Индивидуальная цена</option></select><div class="muted mini" style="margin-top:5px">Для второго направления можно сразу задать скидочную индивидуальную цену.</div></div>';
-    html+='<div class="field span-2" id="ad-individual-wrap" style="display:none"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="ad-individual-package" type="number" min="0" step="1" placeholder="Например, 2500" oninput="refreshAddDirectionPreviewV132()"><div class="muted mini" style="margin-top:5px">CRM разделит эту сумму на 4 и будет считать отдельную стоимость занятия для этого направления.</div></div>';
+    html+='<div class="field span-2" id="ad-individual-wrap" style="display:none"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="ad-individual-package" type="number" min="0" step="1" placeholder="Например, 2500" oninput="refreshAddDirectionPreviewV132()"><div class="muted mini" style="margin-top:5px">Система разделит эту сумму на 4 и будет считать отдельную стоимость занятия для этого направления.</div></div>';
     html+='</div>';
     html+='<div id="ad-preview" class="card pad" style="margin-top:14px"></div>';
     html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.addEnrollment()">Добавить направление</button></div>';
