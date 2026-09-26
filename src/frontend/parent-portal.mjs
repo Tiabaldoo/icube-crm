@@ -83,9 +83,9 @@ function childSelector() {
 function shell(content) {
   const unread = state.notifications.filter((item) => !item.readAt).length;
   app.innerHTML = `<div class="parent-app">
-    <aside class="parent-sidebar ${state.menuOpen ? 'open' : ''}"><div class="parent-brand"><b>iCube</b><span>Кабинет родителя</span></div><nav>${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav></aside>
+    <aside class="parent-sidebar ${state.menuOpen ? 'open' : ''}"><div class="parent-brand"><b>АйКуб</b><span>Родитель</span></div><nav>${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav></aside>
     ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
-    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>iCube</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span>${unread ? `<i>${unread}</i>` : ''}</button></header>
+    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔕'}</span>${unread ? `<i>${unread}</i>` : ''}</button></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
     ${viewerHtml()}${paymentModalHtml()}${lessonInfoHtml()}
   </div>`;
@@ -219,7 +219,7 @@ function lessonInfoHtml() {
 }
 
 function consentHtml(documents) {
-  app.innerHTML = `<div class="parent-consent"><div><b>iCube</b><h1>Документы и согласия</h1><p>Для доступа к кабинету примите каждый актуальный обязательный документ отдельно.</p>${documents.map((document) => `<article class="parent-card"><h2>${escapeHtml(document.title)}</h2><div class="parent-document-body">${escapeHtml(document.body ?? '')}</div>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть полный текст</a>` : ''}<div><small>Версия ${escapeHtml(document.version)}</small>${document.acceptedAt ? '<b class="accepted">Принято</b>' : `<button class="parent-primary" data-action="accept" data-id="${document.id}">Принять</button>`}</div></article>`).join('')}</div></div>`;
+  app.innerHTML = `<div class="parent-consent"><div><b>АйКуб</b><h1>Документы и согласия</h1><p>Для доступа к кабинету примите каждый актуальный обязательный документ отдельно.</p>${documents.map((document) => `<article class="parent-card"><h2>${escapeHtml(document.title)}</h2><div class="parent-document-body">${escapeHtml(document.body ?? '')}</div>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть полный текст</a>` : ''}<div><small>Версия ${escapeHtml(document.version)}</small>${document.acceptedAt ? '<b class="accepted">Принято</b>' : `<button class="parent-primary" data-action="accept" data-id="${document.id}">Принять</button>`}</div></article>`).join('')}</div></div>`;
 }
 
 async function loadTab() {
