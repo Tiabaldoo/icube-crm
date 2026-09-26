@@ -401,7 +401,7 @@ test('push frontend uses capability detection, explicit permission button and ba
   assert.match(source, /onclick="icubePush\.enable\(\)">Разрешить уведомления/);
   assert.match(source, /api\.request\('\/push\/test'/);
   assert.doesNotMatch(source, /new Notification\(/);
-  assert.match(source, /Для уведомлений на iPhone добавьте iCube на экран «Домой»/);
+  assert.match(source, /Для уведомлений на iPhone добавьте АйКуб на экран «Домой»/);
 });
 
 test('deep-link bridge opens teacher lesson, director child and parent schedule and marks read after navigation', async () => {
