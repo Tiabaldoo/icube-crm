@@ -8012,7 +8012,20 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         '<button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
     }).join('');
 
-    const birthdays=(state.notifications||[]).filter(function(n){return n.type==='child_birthday';});
+    const birthdayDayFormatter=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Sakhalin',year:'numeric',month:'2-digit',day:'2-digit'});
+    const birthdayBusinessDay=function(notification){
+      const createdAt=notification?.createdAt??notification?.created_at;
+      if(!createdAt) return '';
+      const created=new Date(createdAt);
+      if(Number.isNaN(created.getTime())) return '';
+      const values={};
+      birthdayDayFormatter.formatToParts(created).forEach(function(part){if(part.type!=='literal') values[part.type]=part.value;});
+      return values.year+'-'+values.month+'-'+values.day;
+    };
+    const birthdayToday=toIso(d);
+    const birthdays=(state.notifications||[]).filter(function(n){
+      return n.type==='child_birthday' && birthdayBusinessDay(n)===birthdayToday;
+    });
     const birthdaySafe=function(value){return String(value||'').replace(/[&<>"']/g,function(char){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char];});};
     const birthdayHtml=birthdays.length?'<div class="teacher-card" style="border-color:#d6bbfb;background:#faf5ff"><b>Дни рождения</b>'+birthdays.map(function(n){return '<div class="muted" style="margin-top:6px">'+birthdaySafe(n.body)+'</div>';}).join('')+'</div>':'';
     return '<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">'+longRu(d)+' · '+events.length+' занятий</div>'+birthdayHtml+
@@ -8192,11 +8205,15 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!group) return fn();
     const wanted=new Set(uniqueIds(effectiveIds));
     const restores=[];
+    const renderedGroupId=function(enrollment){
+      return Object.prototype.hasOwnProperty.call(enrollment,'effectiveGroupId')
+        ? enrollment.effectiveGroupId : enrollment.groupId;
+    };
 
     (state.children||[]).forEach(function(child){
       const shouldBe=wanted.has(Number(child.id));
       const matching=(child.enrollments||[]).filter(function(e){return e.direction===group.direction;});
-      const inGroup=matching.some(function(e){return Number(e.groupId)===Number(group.id);});
+      const inGroup=matching.some(function(e){return Number(renderedGroupId(e))===Number(group.id);});
 
       if(shouldBe){
         const oldStatus=child.status;
@@ -8204,28 +8221,41 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           child.status='Активный';
           restores.push(function(){child.status=oldStatus;});
         }
-        let enrollment=matching.find(function(e){return Number(e.groupId)===Number(group.id);}) || matching[0];
+        let enrollment=matching.find(function(e){return Number(renderedGroupId(e))===Number(group.id);}) || matching[0];
         if(enrollment){
           const oldGroupId=enrollment.groupId, oldEnrollStatus=enrollment.status;
+          const hadEffectiveGroupId=Object.prototype.hasOwnProperty.call(enrollment,'effectiveGroupId');
+          const oldEffectiveGroupId=enrollment.effectiveGroupId;
           enrollment.groupId=group.id;
+          enrollment.effectiveGroupId=group.id;
           if(enrollment.status && enrollment.status!=='Активный') enrollment.status='Активный';
-          restores.push(function(){enrollment.groupId=oldGroupId; enrollment.status=oldEnrollStatus;});
+          restores.push(function(){
+            enrollment.groupId=oldGroupId;
+            enrollment.status=oldEnrollStatus;
+            if(hadEffectiveGroupId) enrollment.effectiveGroupId=oldEffectiveGroupId;
+            else delete enrollment.effectiveGroupId;
+          });
         }else{
-          const temp={direction:group.direction,groupId:group.id,individualPrice:null,balance:0,status:'Активный',__v146Temp:true};
+          const temp={direction:group.direction,groupId:group.id,effectiveGroupId:group.id,individualPrice:null,balance:0,status:'Активный',__v146Temp:true};
           child.enrollments=child.enrollments||[];
           child.enrollments.push(temp);
           restores.push(function(){child.enrollments=child.enrollments.filter(function(e){return e!==temp;});});
         }
       }else if(inGroup){
         matching.forEach(function(enrollment){
-          if(Number(enrollment.groupId)!==Number(group.id)) return;
+          if(Number(renderedGroupId(enrollment))!==Number(group.id)) return;
           const oldGroupId=enrollment.groupId;
+          const hadEffectiveGroupId=Object.prototype.hasOwnProperty.call(enrollment,'effectiveGroupId');
+          const oldEffectiveGroupId=enrollment.effectiveGroupId;
           const hadLiveGroupId=Object.prototype.hasOwnProperty.call(enrollment,'__v146LiveGroupId');
           const oldLiveGroupId=enrollment.__v146LiveGroupId;
           enrollment.__v146LiveGroupId=oldGroupId;
           enrollment.groupId=null;
+          enrollment.effectiveGroupId=null;
           restores.push(function(){
             enrollment.groupId=oldGroupId;
+            if(hadEffectiveGroupId) enrollment.effectiveGroupId=oldEffectiveGroupId;
+            else delete enrollment.effectiveGroupId;
             if(hadLiveGroupId) enrollment.__v146LiveGroupId=oldLiveGroupId;
             else delete enrollment.__v146LiveGroupId;
           });
