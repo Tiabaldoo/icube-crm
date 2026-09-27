@@ -8,6 +8,7 @@ import { settingsForRole } from '../backend/src/notification-types.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { PARENT_NOTIFICATION_TYPES } from '../backend/src/parent-portal.mjs';
 import { createPushScheduler } from '../backend/src/push-scheduler.mjs';
+import { isPushPanelInteraction } from '../src/frontend/push-panel-click.mjs';
 
 function pushPoolFixture() {
   const state = { subscriptions: [], deliveries: [], notifications: [] };
@@ -418,6 +419,19 @@ test('bell is an internal notification inbox independent from Web Push settings'
   assert.match(source, /if \(!item\.readAt\) await api\.request/);
   assert.match(source, /item\.readAt = item\.readAt \?\? new Date\(\)\.toISOString\(\)/);
   assert.match(source, /async function showHistory\(\)[\s\S]*state\.history = true[\s\S]*await refreshInbox\(\)/);
+});
+
+test('notification history rerender keeps the originating popup click inside', () => {
+  const detachedHistoryButton = {};
+  const currentPanel = { contains: () => false };
+  const anchor = { contains: () => false };
+  const eventAfterRerender = {
+    target: detachedHistoryButton,
+    composedPath: () => [detachedHistoryButton, currentPanel, { nodeName: 'BODY' }],
+  };
+  assert.equal(isPushPanelInteraction(eventAfterRerender, currentPanel, anchor), true);
+  assert.equal(isPushPanelInteraction({ target: {}, composedPath: () => [{ nodeName: 'MAIN' }] }, currentPanel, anchor), false);
+  assert.equal(isPushPanelInteraction({ target: detachedHistoryButton }, { contains: (target) => target === detachedHistoryButton }, anchor), true);
 });
 
 test('deep-link bridge opens teacher lesson, director child and parent schedule and marks read after navigation', async () => {

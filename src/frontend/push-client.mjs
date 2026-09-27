@@ -1,4 +1,5 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
+import { isPushPanelInteraction } from './push-panel-click.mjs';
 
 globalThis.ICUBE_FRONTEND_BUILD = new URL(import.meta.url).searchParams.get('v') || 'unversioned';
 
@@ -12,6 +13,7 @@ let pushPanelAnchor = null;
 let onboardingModal = null;
 let onboardingView = null;
 let onboardingAutoHandled = false;
+let pushSettingsModal = null;
 
 function bellIcon() {
   return '🔔';
@@ -548,24 +550,40 @@ async function runAction(action, refresh = true) {
 }
 
 async function openSettings() {
-  const legacy = window.icubeLegacy; if (!legacy) return;
   try {
-    const settings = await api.request('/notification-settings');
+    const parent = parentInbox();
+    const settings = await api.request(parent ? '/parent/notification-settings' : '/notification-settings');
     await refreshPushState();
-    legacy.state.modal = `<h3>Уведомления и приложение</h3>${controlsMarkup()}
+    const content = `<h3>Уведомления и приложение</h3><div data-push-controls>${controlsMarkup()}</div>
       <h3 style="margin-top:18px">Типы уведомлений</h3>
       <div style="margin-top:8px">
       ${settings.map((item) => `<label class="parent-toggle" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0">
         <span>${esc(item.label)}</span><input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="icubePush.setting('${esc(item.type)}',this.checked)">
       </label>`).join('')}</div><button class="btn" type="button" style="width:100%;margin-top:16px" onclick="icubePush.openOnboarding()">Как установить приложение</button>
-      <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
+      <div class="modal-actions"><button class="btn" type="button" onclick="${parent ? 'icubePush.closeSettings()' : 'closeModal()'}">Закрыть</button></div>`;
+    if (parent) {
+      closePushPanel();
+      pushSettingsModal?.remove();
+      pushSettingsModal = document.createElement('div');
+      pushSettingsModal.className = 'modal-backdrop';
+      pushSettingsModal.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-label="Уведомления и приложение">${content}</div>`;
+      document.body.appendChild(pushSettingsModal);
+      return;
+    }
+    const legacy = window.icubeLegacy; if (!legacy) return;
+    legacy.state.modal = content;
     legacy.render();
   } catch (error) { window.alert(error?.message ?? 'Не удалось загрузить настройки уведомлений.'); }
 }
 
 async function saveSetting(type, enabled) {
-  try { await api.request('/notification-settings', { method: 'PATCH', body: { [type]: Boolean(enabled) } }); }
+  try { await api.request(parentInbox() ? '/parent/notification-settings' : '/notification-settings', { method: 'PATCH', body: { [type]: Boolean(enabled) } }); }
   catch (error) { window.alert(error?.message ?? 'Не удалось сохранить настройку.'); await openSettings(); }
+}
+
+function closeSettings() {
+  pushSettingsModal?.remove();
+  pushSettingsModal = null;
 }
 
 window.icubePush = {
@@ -579,11 +597,11 @@ window.icubePush = {
   showUnread: () => { state.history = false; renderPushPanel(); },
   openOnboarding, closeOnboarding, deferOnboarding,
   maybeShowOnboardingAfterLogin,
-  openSettings, setting: saveSetting,
+  openSettings, closeSettings, setting: saveSetting,
 };
 
 document.addEventListener('click', (event) => {
-  if (!pushPanel || pushPanel.contains(event.target) || pushPanelAnchor?.contains(event.target)) return;
+  if (!pushPanel || isPushPanelInteraction(event, pushPanel, pushPanelAnchor)) return;
   closePushPanel();
 });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape') closePushPanel(); });

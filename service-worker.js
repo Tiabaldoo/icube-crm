@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'icube-crm-shell-';
-const CACHE_NAME = 'icube-crm-shell-v2-20260927-1';
+const CACHE_NAME = 'icube-crm-shell-v2-20260927-2';
 const RELEASE_ID = CACHE_NAME.slice('icube-crm-shell-v2-'.length);
 const versioned = (path) => `${path}?v=${RELEASE_ID}`;
 const STATIC_PATHS = [
@@ -12,6 +12,7 @@ const STATIC_PATHS = [
   versioned('./src/frontend/crm-ui.js'),
   versioned('./src/frontend/pwa-register.mjs'),
   versioned('./src/frontend/push-client.mjs'),
+  './src/frontend/push-panel-click.mjs',
   './src/frontend/offline-teacher-snapshot.mjs',
   versioned('./src/frontend/parent-portal.mjs'),
   versioned('./src/frontend/api-sync.mjs'),

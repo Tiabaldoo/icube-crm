@@ -92,6 +92,9 @@ export function parentBalancePresentation(value) {
   const adjective = noun === 'занятие' ? 'оплаченное' : 'оплаченных';
   return { tone: units >= 200000000n ? 'success' : 'warning', text: `Осталось ${count} ${adjective} ${noun}` };
 }
+export function parentHasPendingReceipt(receipts) {
+  return (receipts ?? []).some((receipt) => receipt.status === 'pending');
+}
 function parseIsoDate(value) {
   const fallback = businessDate();
   const [year, month, day] = String(value || fallback).split('-').map(Number);
@@ -125,7 +128,7 @@ function shell(content) {
   app.innerHTML = `<div class="parent-app">
     <aside class="parent-sidebar ${state.menuOpen ? 'open' : ''}"><div class="parent-brand"><b>АйКуб</b><span>Родитель</span></div><nav>${tabs.map(([id, label]) => `<button data-action="tab" data-tab="${id}" class="${state.tab === id ? 'active' : ''}">${escapeHtml(label)}</button>`).join('')}</nav></aside>
     ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
-    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<button class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button></header>
+    <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<span class="notification-header-actions parent-header-actions"><button type="button" class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button><button type="button" class="push-settings-button parent-push-settings" data-action="push-settings" aria-label="Уведомления и приложение" title="Уведомления и приложение">⚙</button></span></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
     ${viewerHtml()}${lessonInfoHtml()}${notificationMessageHtml()}
   </div>`;
@@ -143,6 +146,7 @@ export function parentHomeHtml(data) {
     return `<article class="parent-card parent-balance parent-balance-${balance.tone}"><span>${escapeHtml(item.direction)}</span><strong>${escapeHtml(balance.text)}</strong>${paymentAction}</article>`;
   }).join('');
   return `<section class="parent-title"><h1>${escapeHtml(child.name)}</h1></section>
+    ${data.hasPendingReceipt ? '<div class="parent-pending-receipt" role="status">Оплата на проверке</div>' : ''}
     <article class="parent-card"><h2>Ближайшее занятие</h2>${next ? `<button type="button" class="parent-next parent-next-open" data-action="home-next-lesson" data-lesson="${next.id}" data-starts="${escapeHtml(next.startsAt)}"><strong>${dateRu(next.startsAt)}</strong><b>${time(next.startsAt)}–${time(next.endsAt)}</b><span>${escapeHtml(next.site)}</span></button>${nextAbsence}` : empty('Нет будущих занятий.')}</article>
     <section class="parent-balances">${enrollmentCards || empty('Нет активных направлений.')}</section>
     <article class="parent-card"><h2>Фото с последнего занятия</h2>${data.latestPhoto ? `<button class="parent-photo-preview" data-action="tab" data-tab="photos"><img src="${escapeHtml(data.latestPhoto.fileUrl)}" alt="Фото с последнего занятия ${escapeHtml(child.name)}"></button>` : empty('Нет доступных фотографий.')}</article>`;
@@ -233,11 +237,8 @@ function photosHtml(rows) {
 
 function settingsHtml(data) {
   const contact = state.profile.contact ?? {};
-  queueMicrotask(() => window.icubePush?.mount?.('[data-parent-push-controls]'));
   return `<section class="parent-title"><h1>Настройки</h1></section>
     <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
-    <article class="parent-card"><h2>Уведомления и приложение</h2><div data-parent-push-controls data-push-controls></div><button class="parent-secondary parent-install-help" data-action="install-help">Как установить приложение</button></article>
-    <article class="parent-card"><h2>Типы уведомлений</h2>${data.settings.map((item) => `<label class="parent-toggle"><span>${escapeHtml(item.label)}</span><input type="checkbox" data-action="notification-setting" data-type="${item.type}"${item.enabled ? ' checked' : ''}></label>`).join('')}</article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
     <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
     <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-contact-button primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a class="parent-contact-button" href="tel:${escapeHtml(String(contact.phone).replace(/[^\d+]/g, ''))}">Позвонить: ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
@@ -278,14 +279,20 @@ async function loadTab() {
   try {
     let data;
     if (tab === 'notifications') data = await api.request('/parent/notifications');
-    else if (tab === 'home') data = await api.request(`/parent/children/${childId}/home`);
+    else if (tab === 'home') {
+      const [home, receipts] = await Promise.all([
+        api.request(`/parent/children/${childId}/home`),
+        api.request('/parent/payment-receipts'),
+      ]);
+      data = { ...home, hasPendingReceipt: parentHasPendingReceipt(receipts) };
+    }
     else if (tab === 'schedule') {
       const range = scheduleRange(state.scheduleCursor);
       data = await api.request(`/parent/children/${childId}/schedule?from=${range.from}&to=${range.to}`);
     }
     else if (tab === 'settings') {
-      const [profile, settings, docs] = await Promise.all([api.request('/parent/profile'), api.request('/parent/notification-settings'), api.request('/parent/documents')]);
-      data = { profile, settings, documents: docs.documents };
+      const [profile, docs] = await Promise.all([api.request('/parent/profile'), api.request('/parent/documents')]);
+      data = { profile, documents: docs.documents };
     } else if (tab === 'payments') {
       const [rows, homes, receipts] = await Promise.all([
         api.request(`/parent/children/${childId}/payments`),
@@ -348,10 +355,6 @@ app?.addEventListener('change', async (event) => {
     state.receiptPreviewUrl = state.receiptFile ? globalThis.URL.createObjectURL(state.receiptFile) : null;
     state.receiptMessage = ''; render();
   }
-  if (action === 'notification-setting') {
-    try { await api.request('/parent/notification-settings', { method: 'PATCH', body: { [event.target.dataset.type]: event.target.checked } }); }
-    catch (error) { event.target.checked = !event.target.checked; window.alert(errorMessage(error)); }
-  }
 });
 app?.addEventListener('submit', async (event) => {
   if (!['profile', 'child-about'].includes(event.target.dataset.action)) return;
@@ -367,6 +370,7 @@ app?.addEventListener('click', async (event) => {
   if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; state.menuOpen = false; await loadTab(); }
   else if (action === 'retry') await loadTab();
   else if (action === 'notifications') window.icubePush?.togglePanel?.(target, true);
+  else if (action === 'push-settings') await window.icubePush?.openSettings?.();
   else if (action === 'notification') await openPushDestination({ notificationId: target.dataset.id, destination: target.dataset.destination });
   else if (action === 'photo') { const rows = state.data ?? []; state.viewer = { photos: rows, index: Math.max(0, rows.findIndex((item) => String(item.id) === target.dataset.photo)) }; render(); }
   else if (action === 'viewer-close' && (event.target === target || event.target.tagName === 'BUTTON')) { state.viewer = null; render(); }
@@ -375,7 +379,6 @@ app?.addEventListener('click', async (event) => {
   else if (action === 'viewer-download') event.stopPropagation();
   else if (action === 'accept') { await api.request(`/parent/documents/${target.dataset.id}/accept`, { method: 'POST' }); await start(); }
   else if (action === 'logout') window.icubeAuthLogout?.();
-  else if (action === 'install-help') await window.icubePush?.openOnboarding?.();
   else if (action === 'notification-message-close') { state.notificationMessage = null; render(); }
   else if (action === 'copy-payment-phone') {
     await copyText('+79994541506');
@@ -437,10 +440,7 @@ async function openNotifications() {
 }
 
 async function openNotificationSettings() {
-  state.tab = 'settings';
-  state.data = null;
-  state.menuOpen = false;
-  await loadTab();
+  await window.icubePush?.openSettings?.();
 }
 
 async function openPushDestination({ notificationId, destination, entityType, entityId } = {}) {

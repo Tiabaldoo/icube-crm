@@ -5,7 +5,7 @@ import { createParentPortal } from '../backend/src/parent-portal.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
 import { permissions } from '../backend/src/auth.mjs';
-import { ageFromBirthDate, parentAbsenceAction, parentBalancePresentation, parentHomeHtml, parentScheduleCalendar, parentScheduleStatus, prepareReceiptUpload } from '../src/frontend/parent-portal.mjs';
+import { ageFromBirthDate, parentAbsenceAction, parentBalancePresentation, parentHasPendingReceipt, parentHomeHtml, parentScheduleCalendar, parentScheduleStatus, prepareReceiptUpload } from '../src/frontend/parent-portal.mjs';
 import { ageOnDate, createBirthdayNotifications } from '../backend/src/birthday-notifications.mjs';
 import { localDate, nextDate } from '../scripts/generate-parent-notifications.mjs';
 
@@ -358,7 +358,8 @@ test('parent migration and UI keep many-to-many links, deduplication and mobile-
   assert.doesNotMatch(migration, /DROP DATABASE|DROP TABLE|TRUNCATE/i);
   assert.match(portal, /\/parent\/children\/\$\{childId\}/);
   assert.doesNotMatch(portal, /Предстоит/);
-  assert.match(portal, /data-action="notification-setting"/);
+  assert.match(portal, /data-action="push-settings"/);
+  assert.doesNotMatch(portal, /data-action="notification-setting"/);
   assert.match(portal, /version !== state\.loadVersion/);
   assert.match(parentBackend, /a\.present=TRUE/);
   assert.match(parentBackend, /ph\.deleted_at IS NULL AND ph\.purged_at IS NULL AND ph\.expires_at>NOW\(6\)/);
@@ -530,10 +531,11 @@ test('latest parent photo uses the first upload from the latest photographed les
 });
 
 test('parent UI moves price and child data to their sections and removes email and bottom tabbar', async () => {
-  const [portal, css, access] = await Promise.all([
+  const [portal, css, access, push] = await Promise.all([
     readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8'),
     readFile(new URL('../src/ui/parent-portal.css', import.meta.url), 'utf8'),
     readFile(new URL('../src/frontend/parent-access.mjs', import.meta.url), 'utf8'),
+    readFile(new URL('../src/frontend/push-client.mjs', import.meta.url), 'utf8'),
   ]);
   const home = portal.slice(portal.indexOf('function parentHomeHtml'), portal.indexOf('function scheduleEventHtml'));
   const payments = portal.slice(portal.indexOf('function paymentsHtml'), portal.indexOf('function aboutHtml'));
@@ -545,7 +547,10 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.doesNotMatch(payments, /Загруженные чеки|parent-receipt-history/);
   assert.doesNotMatch(payments, /data-action="pay"|QR/);
   assert.match(payments, /parent-payment-receipt-link/);
-  assert.match(portal, /data-parent-push-controls/); assert.match(portal, /Как установить приложение/);
+  assert.match(portal, /data-action="push-settings"/);
+  assert.doesNotMatch(portal, /data-parent-push-controls|data-action="install-help"|data-action="notification-setting"/);
+  assert.match(push, /parent \? '\/parent\/notification-settings' : '\/notification-settings'/);
+  assert.match(push, /Как установить приложение/);
   assert.match(portal, /item\?\.type === 'payment_confirmed'/); assert.match(portal, /Оплата добавлена, баланс занятий обновлён/);
   assert.match(portal, /О ребёнке/); assert.match(portal, /data-action="child-about"/);
   assert.doesNotMatch(portal, /name="email"/);
@@ -560,6 +565,17 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
   assert.match(access, /Родитель: \$\{escapeHtml\(account\.name \|\| 'Не указан'\)\}/);
   assert.match(access, /backdrop\.remove\(\); legacy\.render\(\); return/);
+});
+
+test('parent home shows one compact review status only for server pending receipts', () => {
+  const base = { child: { name: 'Петя' }, enrollments: [], nextLesson: null, latestPhoto: null };
+  assert.equal(parentHasPendingReceipt([]), false);
+  assert.equal(parentHasPendingReceipt([{ status: 'confirmed' }]), false);
+  assert.equal(parentHasPendingReceipt([{ status: 'confirmed' }, { status: 'pending' }]), true);
+  assert.doesNotMatch(parentHomeHtml(base), /Оплата на проверке/);
+  const pending = parentHomeHtml({ ...base, hasPendingReceipt: true });
+  assert.equal((pending.match(/Оплата на проверке/g) ?? []).length, 1);
+  assert.match(pending, /parent-pending-receipt/);
 });
 
 test('parent receipt upload compresses JPEG/PNG to 1800px JPEG and leaves PDF unchanged', async () => {
