@@ -256,7 +256,9 @@ function notificationFixture({ disabled = new Set(), balance = '0.00000000' } = 
   const state = { notifications: [], balance };
   async function query(sql, params = {}) {
     assert.doesNotMatch(sql, /gm\.child_id/, 'group_memberships has no child_id column');
-    if (sql.includes('FROM child_guardians cg JOIN guardians')) return [disabled.has(params.type) ? [] : [{ user_id: 50, guardian_id: 5, enabled: 1 }]];
+    if (sql.includes('FROM child_guardians cg JOIN guardians')) return [[{
+      user_id: 50, guardian_id: 5, enabled: disabled.has(params.type) ? 0 : 1,
+    }]];
     if (sql.startsWith('INSERT IGNORE INTO notifications')) {
       if (state.notifications.some((item) => item.userId === params.userId && item.dedupKey === params.dedupKey)) return [{ affectedRows: 0 }];
       state.notifications.push(params); return [{ affectedRows: 1 }];
@@ -294,7 +296,9 @@ function lessonOperationFixture({ hasParent = true, disabled = new Set() } = {})
       assert.match(sql, /SELECT e\.child_id FROM group_memberships gm JOIN child_enrollments e ON e\.id=gm\.enrollment_id/);
       return [[{ child_id: 10 }]];
     }
-    if (sql.includes('FROM child_guardians cg JOIN guardians')) return [hasParent && !disabled.has(params.type) ? [{ user_id: 50, guardian_id: 5, enabled: 1 }] : []];
+    if (sql.includes('FROM child_guardians cg JOIN guardians')) return [hasParent ? [{
+      user_id: 50, guardian_id: 5, enabled: disabled.has(params.type) ? 0 : 1,
+    }] : []];
     if (sql.startsWith('INSERT IGNORE INTO notifications')) {
       if (state.notifications.some((item) => item.dedupKey === params.dedupKey && item.userId === params.userId)) return [{ affectedRows: 0 }];
       state.notifications.push(params); return [{ affectedRows: 1 }];
@@ -309,17 +313,18 @@ function lessonOperationFixture({ hasParent = true, disabled = new Set() } = {})
   return { state, service: createMysqlLessons(pool, { parentNotifications: notifications }) };
 }
 
-test('parent notifications respect settings, destinations and deduplicate event triggers', async () => {
+test('parent notification settings do not hide inbox events, destinations stay intact and triggers deduplicate', async () => {
   const fixture = notificationFixture({ disabled: new Set(['lesson_finished']) });
   const lesson = { id: 70, group_id: 100, starts_at: new Date('2026-09-21T13:00:00Z') };
   await fixture.service.lessonMoved(fixture.pool, lesson, new Date('2026-09-20T13:00:00Z'));
   await fixture.service.lessonMoved(fixture.pool, lesson, new Date('2026-09-20T13:00:00Z'));
   await fixture.service.lessonCancelled(fixture.pool, lesson);
   await fixture.service.lessonFinished(fixture.pool, lesson);
+  await fixture.service.photoAvailable(fixture.pool, lesson, 10);
   assert.equal(fixture.state.notifications.filter((item) => item.type === 'lesson_move').length, 1);
   assert.equal(fixture.state.notifications.find((item) => item.type === 'lesson_move').destination, 'schedule');
   assert.match(fixture.state.notifications.find((item) => item.type === 'lesson_move').body, /перенесено на 21\.09\.2026, 13:00/);
-  assert.equal(fixture.state.notifications.filter((item) => item.type === 'lesson_finished').length, 0);
+  assert.equal(fixture.state.notifications.filter((item) => item.type === 'lesson_finished').length, 1);
   assert.equal(fixture.state.notifications.filter((item) => item.type === 'last_paid_lesson').length, 1);
   assert.equal(fixture.state.notifications.find((item) => item.type === 'last_paid_lesson').destination, 'payments');
 });
@@ -333,7 +338,7 @@ test('lesson move and cancellation complete and notify the linked parent', async
   assert.deepEqual(fixture.state.notifications.map((item) => item.type), ['lesson_move', 'lesson_cancel']);
 });
 
-test('missing parent account and disabled notification settings never break lesson operations', async () => {
+test('missing parent account and disabled push settings never break lesson operations', async () => {
   const withoutParent = lessonOperationFixture({ hasParent: false });
   await withoutParent.service.update(70, { date: '2026-09-21' }, { roles: ['director'] });
   await withoutParent.service.cancel(70, { roles: ['director'] });
@@ -342,7 +347,8 @@ test('missing parent account and disabled notification settings never break less
   const disabled = lessonOperationFixture({ disabled: new Set(['lesson_move', 'lesson_cancel']) });
   await disabled.service.update(70, { date: '2026-09-21' }, { roles: ['director'] });
   await disabled.service.cancel(70, { roles: ['director'] });
-  assert.equal(disabled.state.lesson.status, 'cancelled'); assert.deepEqual(disabled.state.notifications, []);
+  assert.equal(disabled.state.lesson.status, 'cancelled');
+  assert.deepEqual(disabled.state.notifications.map((item) => item.type), ['lesson_move', 'lesson_cancel']);
 });
 
 test('day-before scheduler creates reminder and zero-balance payment reminder only once', async () => {

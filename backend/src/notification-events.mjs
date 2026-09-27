@@ -33,23 +33,22 @@ export function createNotificationEvents(pool) {
     userId, roleCode = null, projectId = null, childId = null, type, title, body,
     entityType = null, entityId = null, destination = null, dedupKey,
     referenceType = null, referenceId = null, actorUserId = null, respectSettings = true,
+    pushEnabled = null,
   }) {
     if (!userId || (actorUserId != null && same(actorUserId, userId))) return null;
-    if (respectSettings && !(await userSetting(connection, userId, type))) return null;
     const [result] = await connection.query(`INSERT IGNORE INTO notifications
       (user_id,role_code,recipient_project_id,child_id,notification_type,title,body,entity_type,entity_id,destination,dedup_key,reference_type,reference_id)
       VALUES (:userId,:roleCode,:projectId,:childId,:type,:title,:body,:entityType,:entityId,:destination,:dedupKey,:referenceType,:referenceId)`, {
       userId, roleCode, projectId, childId, type, title, body, entityType, entityId, destination,
       dedupKey, referenceType, referenceId,
     });
-    let notificationId = result.insertId ? String(result.insertId) : null;
-    if (!notificationId && dedupKey) {
-      const [rows] = await connection.query(`SELECT id FROM notifications
-        WHERE user_id=:userId AND dedup_key=:dedupKey LIMIT 1`, { userId, dedupKey });
-      notificationId = rows[0]?.id == null ? null : String(rows[0].id);
-    }
-    if (notificationId) await enqueueDeliveries(connection, notificationId, userId);
-    return result.affectedRows ? notificationId : null;
+    const notificationId = result.insertId ? String(result.insertId) : null;
+    if (!result.affectedRows || !notificationId) return null;
+    const pushAllowed = pushEnabled == null
+      ? (!respectSettings || await userSetting(connection, userId, type))
+      : Boolean(pushEnabled);
+    if (pushAllowed) await enqueueDeliveries(connection, notificationId, userId);
+    return notificationId;
   }
 
   async function roleUsers(connection, role) {

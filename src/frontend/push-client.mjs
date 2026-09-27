@@ -555,7 +555,8 @@ async function openSettings() {
     const settings = await api.request(parent ? '/parent/notification-settings' : '/notification-settings');
     await refreshPushState();
     const content = `<h3>Уведомления и приложение</h3><div data-push-controls>${controlsMarkup()}</div>
-      <h3 style="margin-top:18px">Типы уведомлений</h3>
+      <h3 style="margin-top:18px">Push-уведомления</h3>
+      <p class="muted mini" style="margin:6px 0 0">Отключённые типы останутся в уведомлениях внутри приложения, но не будут приходить на устройство.</p>
       <div style="margin-top:8px">
       ${settings.map((item) => `<label class="parent-toggle" style="display:flex;justify-content:space-between;gap:12px;padding:8px 0">
         <span>${esc(item.label)}</span><input type="checkbox" ${item.enabled ? 'checked' : ''} onchange="icubePush.setting('${esc(item.type)}',this.checked)">

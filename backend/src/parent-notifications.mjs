@@ -57,7 +57,7 @@ export function createParentNotifications(pool, { notificationEvents = null } = 
       WHERE cg.child_id=:childId AND cg.can_receive_notifications=TRUE`, {
       childId, type, defaultEnabled: defaults.get(type) ? 1 : 0,
     });
-    return rows.filter((row) => Boolean(row.enabled));
+    return rows;
   }
 
   async function createForChild(connection, { childId, type, data = {}, referenceType, referenceId, dedupKey }) {
@@ -70,7 +70,7 @@ export function createParentNotifications(pool, { notificationEvents = null } = 
         const notificationId = await notificationEvents.createUser(connection, {
           userId: recipient.user_id, roleCode: 'parent', childId, type, title: message.title, body: message.body,
           entityType: referenceType, entityId: referenceId, destination: message.destination, dedupKey,
-          referenceType, referenceId, respectSettings: false,
+          referenceType, referenceId, respectSettings: false, pushEnabled: Boolean(recipient.enabled),
         });
         created += Number(Boolean(notificationId));
       } else {
@@ -94,12 +94,12 @@ export function createParentNotifications(pool, { notificationEvents = null } = 
       LEFT JOIN parent_notification_settings s ON s.guardian_id=g.id AND s.notification_type=:type
       WHERE g.id=:guardianId LIMIT 1`, { guardianId, type, defaultEnabled: defaults.get(type) ? 1 : 0 });
     const recipient = rows[0];
-    if (!recipient || !Boolean(recipient.enabled)) return 0;
+    if (!recipient) return 0;
     const message = template(data);
     if (notificationEvents) return Number(Boolean(await notificationEvents.createUser(connection, {
       userId: recipient.user_id, roleCode: 'parent', childId, type, title: message.title, body: message.body,
       entityType: referenceType, entityId: referenceId, destination: message.destination, dedupKey,
-      referenceType, referenceId, respectSettings: false,
+      referenceType, referenceId, respectSettings: false, pushEnabled: Boolean(recipient.enabled),
     })));
     const [result] = await connection.query(`INSERT IGNORE INTO notifications
       (user_id,role_code,child_id,notification_type,title,body,entity_type,entity_id,destination,dedup_key,reference_type,reference_id)

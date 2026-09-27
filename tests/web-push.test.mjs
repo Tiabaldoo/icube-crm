@@ -8,6 +8,7 @@ import { settingsForRole } from '../backend/src/notification-types.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { PARENT_NOTIFICATION_TYPES } from '../backend/src/parent-portal.mjs';
 import { createPushScheduler } from '../backend/src/push-scheduler.mjs';
+import { createNotifications } from '../backend/src/notifications.mjs';
 import { isPushPanelInteraction } from '../src/frontend/push-panel-click.mjs';
 
 function pushPoolFixture() {
@@ -404,6 +405,8 @@ test('push frontend uses capability detection, explicit permission button and ba
   assert.match(source, /api\.request\('\/push\/test'/);
   assert.doesNotMatch(source, /new Notification\(/);
   assert.match(source, /Для уведомлений на iPhone добавьте АйКуб на экран «Домой»/);
+  assert.match(source, />Push-уведомления</);
+  assert.match(source, /Отключённые типы останутся в уведомлениях внутри приложения, но не будут приходить на устройство\./);
 });
 
 test('bell is an internal notification inbox independent from Web Push settings', async () => {
@@ -527,7 +530,7 @@ test('push migration and worker are durable, per-device and atomically claimed',
 
 
 function notificationEventFixture({ directors = [10, 11], partnersByProject = { 1: [31], 2: [30] }, settings = {} } = {}) {
-  const state = { notifications: [], nextId: 1 };
+  const state = { notifications: [], deliveries: [], nextId: 1 };
   const groups = {
     4: { id: 4, name: 'Школа №1 · Пн · 16:00', project_id: 2, default_teacher_id: 7 },
     5: { id: 5, name: 'Чужой проект', project_id: 1, default_teacher_id: 8 },
@@ -537,6 +540,13 @@ function notificationEventFixture({ directors = [10, 11], partnersByProject = { 
     if (sql.startsWith('SELECT enabled FROM user_notification_settings')) {
       const key = String(params.userId) + ':' + params.type;
       return [Object.hasOwn(settings, key) ? [{ enabled: settings[key] ? 1 : 0 }] : []];
+    }
+    if (sql.startsWith('SELECT id,notification_type,title,body')) {
+      return [state.notifications.filter((row) => String(row.userId) === String(params.userId)).map((row) => ({
+        id: row.id, notification_type: row.type, title: row.title, body: row.body,
+        entity_type: row.entityType, entity_id: row.entityId, destination: row.destination,
+        created_at: '2026-09-27 12:00:00', read_at: null,
+      }))];
     }
     if (sql.startsWith('SELECT g.id,g.name,g.project_id,g.default_teacher_id,c.full_name child_name')) {
       const group = groups[Number(params.groupId)];
@@ -574,7 +584,11 @@ function notificationEventFixture({ directors = [10, 11], partnersByProject = { 
       const row = state.notifications.find((item) => String(item.userId) === String(params.userId) && item.dedupKey === params.dedupKey);
       return [[row ? { id: row.id } : undefined].filter(Boolean)];
     }
-    if (sql.startsWith('INSERT IGNORE INTO push_deliveries')) return [{ affectedRows: 0 }];
+    if (sql.startsWith('INSERT IGNORE INTO push_deliveries')) {
+      const duplicate = state.deliveries.some((row) => String(row.notificationId) === String(params.notificationId));
+      if (!duplicate) state.deliveries.push({ notificationId: String(params.notificationId), userId: String(params.userId) });
+      return [{ affectedRows: duplicate ? 0 : 1 }];
+    }
     throw new Error('Unexpected notification-event SQL: ' + sql);
   }
   return { state, connection: { query }, pool: { query } };
@@ -694,7 +708,8 @@ test('partner overdue notification types are default-off but explicit true enabl
     userId: 30, roleCode: 'partner', projectId: 2, type: 'partner_lesson_not_started',
     title: 'Late', body: 'Body', entityType: 'lesson', entityId: 90, destination: 'lesson', dedupKey: 'partner:late:90',
   });
-  assert.equal(off.state.notifications.length, 0);
+  assert.equal(off.state.notifications.length, 1);
+  assert.equal(off.state.deliveries.length, 0);
 
   const on = notificationEventFixture({ directors: [], partnersByProject: {}, settings: { '30:partner_lesson_not_started': true } });
   const onEvents = createNotificationEvents(on.pool);
@@ -703,34 +718,97 @@ test('partner overdue notification types are default-off but explicit true enabl
     title: 'Late', body: 'Body', entityType: 'lesson', entityId: 90, destination: 'lesson', dedupKey: 'partner:late:90',
   });
   assert.equal(on.state.notifications.length, 1);
+  assert.equal(on.state.deliveries.length, 1);
 });
 
-test('explicit parent false remains stronger than the new default true', async () => {
-  let inserts = 0;
-  const pool = { query: async (sql) => {
-    if (sql.includes('FROM child_guardians cg') && sql.includes('parent_notification_settings')) {
-      return [[{ user_id: 10, guardian_id: 5, enabled: 0 }]];
-    }
-    if (sql.startsWith('INSERT IGNORE INTO notifications')) { inserts += 1; return [{ affectedRows: 1 }]; }
-    throw new Error('Unexpected parent preference SQL: ' + sql);
-  } };
-  const service = createParentNotifications(pool);
-  const created = await service.createForChild(pool, {
-    childId: 5, type: 'lesson_move', data: { startsAt: '2026-09-28 16:00:00', previousStartsAt: '2026-09-28 15:00:00' },
-    referenceType: 'lesson', referenceId: 90, dedupKey: 'parent:move:90',
-  });
-  assert.equal(created, 0);
-  assert.equal(inserts, 0);
+test('parent setting controls only push delivery while the internal notification is always created', async () => {
+  for (const enabled of [false, true]) {
+    const fixture = notificationEventFixture({ directors: [] });
+    const query = async (sql, params = {}) => {
+      if (sql.includes('FROM child_guardians cg') && sql.includes('parent_notification_settings')) {
+        return [[{ user_id: 10, guardian_id: 5, enabled: enabled ? 1 : 0 }]];
+      }
+      if (sql.includes('FROM guardians g JOIN users u') && sql.includes('parent_notification_settings')) {
+        return [[{ user_id: 10, enabled: enabled ? 1 : 0 }]];
+      }
+      return fixture.connection.query(sql, params);
+    };
+    const connection = { query };
+    const events = createNotificationEvents({ query });
+    const service = createParentNotifications({ query }, { notificationEvents: events });
+    const created = await service.createForChild(connection, {
+      childId: 5, type: 'lesson_move', data: { startsAt: '2026-09-28 16:00:00', previousStartsAt: '2026-09-28 15:00:00' },
+      referenceType: 'lesson', referenceId: 90, dedupKey: `parent:move:90:${enabled}`,
+    });
+    assert.equal(created, 1);
+    const direct = await service.createForGuardian(connection, {
+      guardianId: 5, childId: 5, type: 'payment_confirmed', data: { childName: 'Ребёнок', directionName: 'Робототехника', amount: '4100.00' },
+      referenceType: 'payment', referenceId: 91, dedupKey: `parent:payment:91:${enabled}`,
+    });
+    assert.equal(direct, 1);
+    assert.equal(fixture.state.notifications.length, 2);
+    assert.equal(fixture.state.deliveries.length, enabled ? 2 : 0);
+  }
 });
 
-test('generic saved false suppresses the logical notification before outbox delivery is created', async () => {
-  const fixture = notificationEventFixture({ directors: [], settings: { '20:teacher_lesson_moved': false } });
+test('generic saved false keeps the notification visible and unread but skips push delivery', async () => {
+  const fixture = notificationEventFixture({ directors: [], partnersByProject: {}, settings: { '20:teacher_lesson_moved': false } });
   const events = createNotificationEvents(fixture.pool);
   await events.lessonMoved(fixture.connection, {
     lesson: { id: 90, group_id: 4, planned_teacher_id: 7, starts_at: '2026-09-28 16:00:00' },
     previousStartsAt: '2026-09-28 15:00:00', actorUserId: 99,
   });
-  assert.equal(fixture.state.notifications.some((row) => row.type === 'teacher_lesson_moved'), false);
+  assert.equal(fixture.state.notifications.some((row) => row.type === 'teacher_lesson_moved'), true);
+  assert.equal(fixture.state.deliveries.length, 0);
+  const inbox = await createNotifications(fixture.pool).list({ userId: '20', roles: ['teacher'] });
+  assert.equal(inbox.length, 1);
+  assert.equal(inbox[0].readAt, null);
+});
+
+test('director teacher and partner disabled types still create inbox rows without deliveries', async () => {
+  const cases = [
+    { userId: 10, roleCode: 'director', type: 'director_lesson_moved', context: { userId: '10', roles: ['director'] } },
+    { userId: 20, roleCode: 'teacher', type: 'teacher_lesson_moved', context: { userId: '20', roles: ['teacher'] } },
+    { userId: 30, roleCode: 'partner', projectId: 2, type: 'partner_lesson_moved', context: { userId: '30', roles: ['partner'], projectIds: ['2'] } },
+  ];
+  for (const item of cases) {
+    const { context, ...payload } = item;
+    const fixture = notificationEventFixture({ directors: [], settings: { [`${item.userId}:${item.type}`]: false } });
+    await createNotificationEvents(fixture.pool).createUser(fixture.connection, {
+      ...payload, title: 'Событие', body: 'Текст', destination: 'lesson', dedupKey: `${item.roleCode}:disabled`,
+    });
+    assert.equal(fixture.state.notifications.length, 1);
+    assert.equal(fixture.state.deliveries.length, 0);
+    const inbox = await createNotifications(fixture.pool).list(context);
+    assert.equal(inbox.length, 1);
+    assert.equal(inbox[0].readAt, null);
+  }
+});
+
+test('turning push on affects only new notifications and does not enqueue an old deduplicated event', async () => {
+  const settings = { '20:teacher_lesson_moved': false };
+  const fixture = notificationEventFixture({ directors: [], settings });
+  const events = createNotificationEvents(fixture.pool);
+  const payload = { userId: 20, roleCode: 'teacher', type: 'teacher_lesson_moved', title: 'Move', body: 'Body',
+    destination: 'lesson', dedupKey: 'teacher:move:old' };
+  await events.createUser(fixture.connection, payload);
+  settings['20:teacher_lesson_moved'] = true;
+  await events.createUser(fixture.connection, payload);
+  assert.equal(fixture.state.notifications.length, 1);
+  assert.equal(fixture.state.deliveries.length, 0);
+  await events.createUser(fixture.connection, { ...payload, dedupKey: 'teacher:move:new' });
+  assert.equal(fixture.state.notifications.length, 2);
+  assert.equal(fixture.state.deliveries.length, 1);
+});
+
+test('respectSettings false keeps push_test delivery independent from disabled type settings', async () => {
+  const fixture = notificationEventFixture({ directors: [], settings: { '20:push_test': false } });
+  await createNotificationEvents(fixture.pool).createUser(fixture.connection, {
+    userId: 20, roleCode: 'teacher', type: 'push_test', title: 'Тест', body: 'Тест',
+    destination: 'home', dedupKey: 'push-test:20:1', respectSettings: false,
+  });
+  assert.equal(fixture.state.notifications.length, 1);
+  assert.equal(fixture.state.deliveries.length, 1);
 });
 
 function schedulerFixture(rows, { directors = [{ user_id: 10 }], partnersByProject = { 2: [{ user_id: 30 }] } } = {}) {
