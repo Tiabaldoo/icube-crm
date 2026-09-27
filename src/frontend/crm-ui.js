@@ -57,7 +57,10 @@ const escapeInlineJs=value=>escapeAttr(String(value??'').replace(/\\/g,'\\\\').r
 const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
-const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>e.groupId===id&&(!e.status||e.status==='Активный')));
+const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>{
+ const effectiveId=Object.prototype.hasOwnProperty.call(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId;
+ return Number(effectiveId)===Number(id)&&(!e.status||e.status==='Активный');
+}));
 const effectivePrice=e=>e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 function openChild(id){state.selectedChild=id;state.page='child';render()}
@@ -2646,7 +2649,19 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const box=document.querySelector('#md-group');
     if(!box) return;
     box.innerHTML=directionGroupsHtml(direction,selectedGroupId);
+    refreshManageDirectionGroupDate(true);
     refreshManageDirectionPreview();
+  };
+
+  window.refreshManageDirectionGroupDate=function(resetForChangedGroup){
+    const group=document.querySelector('#md-group')?.value||'';
+    const original=document.querySelector('#md-original-group')?.value||'';
+    const wrap=document.querySelector('#md-group-started-wrap');
+    const input=document.querySelector('#md-group-started-on');
+    if(!wrap||!input) return;
+    wrap.style.display=group?'block':'none';
+    input.disabled=!group;
+    if(group && (!input.value || (resetForChangedGroup && String(group)!==String(original)))) input.value=businessTodayIso();
   };
 
   window.toggleManageIndividualPrice=function(){
@@ -2698,22 +2713,24 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return d===oldDirection || !(child.enrollments||[]).some(function(e){return e.direction===d;});
     });
 
-    let html='<h3>Изменить направление / цену</h3>';
+    let html='<h3>Настройки направления</h3>';
     html+='<input type="hidden" id="md-child-id" value="'+childId+'">';
     html+='<input type="hidden" id="md-old-dir" value="'+oldDirection+'">';
+    html+='<input type="hidden" id="md-original-group" value="'+(currentGroupId||'')+'">';
     html+='<div class="notice" style="margin-bottom:12px">Текущий проект: <b>'+enrollment.project+'</b> <button class="btn soft" type="button" onclick="icubeApi.projectTransferForm('+enrollment.id+')">Перенести в другой проект</button></div>';
     html+='<div class="form-grid">';
     html+='<div class="field"><label>Направление</label><select class="select" id="md-dir" onchange="refreshManageDirectionGroups()">';
     directions.forEach(function(d){html+='<option'+(d===oldDirection?' selected':'')+'>'+d+'</option>';});
     html+='</select></div>';
-    html+='<div class="field"><label>Основная группа</label><select class="select" id="md-group" onchange="refreshManageDirectionPreview()">'+directionGroupsHtml(oldDirection,currentGroupId,enrollment.projectId)+'</select></div>';
+    html+='<div class="field"><label>Основная группа</label><select class="select" id="md-group" onchange="refreshManageDirectionGroupDate(true);refreshManageDirectionPreview()">'+directionGroupsHtml(oldDirection,currentGroupId,enrollment.projectId)+'</select></div>';
+    html+='<div class="field" id="md-group-started-wrap" style="display:'+(currentGroupId?'block':'none')+'"><label>Дата начала занятий в группе</label><input class="input" id="md-group-started-on" type="date" value="'+escapeAttr(enrollment.groupStartedOn||businessTodayIso())+'"'+(currentGroupId?'':' disabled')+'></div>';
     html+='<div class="field span-2"><label>Цена</label><select class="select" id="md-price-mode" onchange="toggleManageIndividualPrice()"><option value="standard"'+(enrollment.individualPrice==null?' selected':'')+'>Обычная цена направления / группы</option><option value="individual"'+(enrollment.individualPrice!=null?' selected':'')+'>Индивидуальная цена</option></select><div class="muted mini" style="margin-top:5px">Сейчас: '+money(currentPrice)+' / занятие.</div></div>';
     html+='<div class="field span-2" id="md-individual-wrap" style="display:'+(enrollment.individualPrice!=null?'block':'none')+'"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="md-individual-package" type="number" min="0" step="1" value="'+packagePrice+'" placeholder="Например, 2900" oninput="refreshManageDirectionPreview()"><div class="muted mini" id="md-individual-hint" style="margin-top:5px">Система будет считать стоимость одного занятия как цену абонемента ÷ 4.</div></div>';
     html+='</div>';
     html+='<div id="md-preview" class="card pad" style="margin-top:14px"></div>';
     html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveEnrollment('+childId+',\''+oldDirection+'\')">Сохранить изменения</button></div>';
     modal(html);
-    setTimeout(refreshManageDirectionPreview,0);
+    setTimeout(function(){refreshManageDirectionGroupDate(false);refreshManageDirectionPreview();},0);
   };
 
   window.saveManagedDirection=function(childId, oldDirection){
@@ -2791,7 +2808,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     (child.enrollments||[]).forEach(function(e){
       const edit='<button class="btn" onclick="enrollmentForm('+child.id+',\''+e.direction+'\')">Изменить</button>';
-      const unified='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+e.direction+'\')">Изменить направление / цену</button>';
+      const unified='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+e.direction+'\')">Настройки направления</button>';
       html=html.replace(edit,unified);
 
       const transfer='<button class="btn" onclick="changeDirectionForm('+child.id+',\''+e.direction+'\')">Сменить направление</button>';
@@ -2825,7 +2842,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const hint=document.createElement('div');
       hint.className='muted mini direction-edit-hint';
       hint.style.marginTop='5px';
-      hint.innerHTML='Направление и индивидуальная цена меняются в карточке ребёнка кнопкой <b>«Изменить направление / цену»</b>.';
+      hint.innerHTML='Направление и индивидуальная цена меняются в карточке ребёнка кнопкой <b>«Настройки направления»</b>.';
       field.appendChild(hint);
     }
   };
@@ -3242,6 +3259,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return now[0]-year-((now[1]<month||(now[1]===month&&now[2]<day))?1:0);
   }
 
+  function childCreatedLabelV118(value){
+    const match=String(value||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return match?'В базе с '+match[3]+'.'+match[2]+'.'+match[1]:'';
+  }
+
   function childOverviewV118(c){
     const activeProjects=new Set((c.enrollments||[]).filter(function(e){return (e.status||'Активный')==='Активный';}).map(function(e){return String(e.projectId??e.project??'');}).filter(Boolean));
     const dayShort={1:'Пн',2:'Вт',3:'Ср',4:'Чт',5:'Пт',6:'Сб',7:'Вс','Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
@@ -3250,7 +3272,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':e.project==='Зебра'?'purple':'blue')+'" style="margin-left:7px">'+escapeHtml(e.project)+'</span>':'';
       const schedule=e.groupId==null?'Без группы':escapeHtml(e.siteName||byId(state.sites,g?.siteId)?.name||'Площадка не указана')+' · '+escapeHtml(dayShort[e.weekday]||dayShort[g?.day]||g?.day||'—')+' '+escapeHtml(e.startTime||g?.startTime||String(g?.time||'').split('–')[0]||'—');
       const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
-      const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">Изменить направление / цену</button></div>';
+      const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">Настройки направления</button></div>';
       return '<div style="border-top:1px solid var(--line);padding:14px 0">'+
         '<div style="display:flex;justify-content:space-between;gap:12px">'+
           '<div><b>'+escapeHtml(e.direction)+'</b>'+projectBadge+'<div class="muted">'+schedule+'</div></div>'+finance+
@@ -3273,7 +3295,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const age=childAgeV118(c.birth);
     return '<div class="split">'+
       '<div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge '+statusBadge(c.status)+'">'+escapeHtml(c.status)+'</span></div>'+directions+'</div>'+
-      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list">'+
+      '<div class="card pad"><div class="section-title"><h2>Контакты и данные</h2>'+(childCreatedLabelV118(c.createdAt)?'<span class="muted mini">'+childCreatedLabelV118(c.createdAt)+'</span>':'')+'</div><div class="info-list">'+
         '<div class="info-line"><span>Дата рождения</span><b>'+escapeHtml(c.birth||'—')+'</b></div>'+
         '<div class="info-line"><span>Возраст</span><b>'+(age==null?'—':age+' лет')+'</b></div>'+
         '<div class="info-line"><span>Школа</span><b>'+escapeHtml(c.school||'—')+'</b></div>'+
@@ -7550,7 +7572,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(!child) return html;
       const showDirectionStatuses=(child.enrollments||[]).length>1;
       (child.enrollments||[]).forEach(function(e){
-        const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+escapeInlineJs(e.direction)+'\')">Изменить направление / цену</button>';
+        const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+escapeInlineJs(e.direction)+'\')">Настройки направления</button>';
         if(!html.includes(button) || !showDirectionStatuses) return;
         const badge='<span class="badge '+badgeClass(enrollmentStatus(e))+'" style="margin-right:8px">'+enrollmentStatus(e)+'</span>';
         html=html.replace(button,badge+button);
@@ -7775,7 +7797,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     (child.enrollments||[]).forEach(function(e){
       if(!canTransfer(child,e)) return;
       const direction=escapeInlineJs(e.direction);
-      const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+direction+'\')">Изменить направление / цену</button>';
+      const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+direction+'\')">Настройки направления</button>';
       if(!html.includes(button)) return;
       const transfer='<button class="btn soft" onclick="transferDirectionBalanceFormV142('+child.id+',\''+direction+'\')">Перенести остаток</button>';
       html=html.replace(button,button+transfer);
@@ -8100,6 +8122,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   // Important: the frozen roster must respect the status of this exact direction.
   // Do not rely on the old groupChildren() here because it only knows groupId + global child status.
   function currentRoster(lesson){
+    if(lesson && !lesson.groupRosterFrozenV146 && Array.isArray(lesson.effectiveGroupChildIds)){
+      return uniqueIds(lesson.effectiveGroupChildIds).map(function(id){return byId(state.children,id);}).filter(Boolean);
+    }
     const group=lesson?byId(state.groups,lesson.groupId):null;
     if(!group) return [];
     return (state.children||[]).filter(function(child){
@@ -8156,14 +8181,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return typeof startBeforeV146==='function' ? startBeforeV146.apply(this,arguments) : undefined;
   };
 
-  // Older renderers call groupChildren() directly. While rendering a frozen lesson,
-  // temporarily make the group's live membership look like the saved roster, then
+  // Older renderers call groupChildren() directly. While rendering a lesson,
+  // temporarily make the group's live membership look like its date-effective roster, then
   // restore every child/enrollment immediately afterwards.
   function withFrozenRoster(lesson,fn){
-    if(!lesson || !lesson.groupRosterFrozenV146 || !Array.isArray(lesson.groupChildIdsV146)) return fn();
+    const effectiveIds=lesson?.groupRosterFrozenV146 && Array.isArray(lesson.groupChildIdsV146)
+      ? lesson.groupChildIdsV146 : lesson?.effectiveGroupChildIds;
+    if(!lesson || !Array.isArray(effectiveIds)) return fn();
     const group=byId(state.groups,lesson.groupId);
     if(!group) return fn();
-    const wanted=new Set(rosterIds(lesson));
+    const wanted=new Set(uniqueIds(effectiveIds));
     const restores=[];
 
     (state.children||[]).forEach(function(child){

@@ -165,6 +165,7 @@ export function createParentPortal(pool, {
   }
 
   async function enrollmentRows(childId) {
+    const today = localDate();
     const [rows] = await pool.query(`SELECT e.id,e.direction_id,e.balance_lessons,e.status,d.name direction_name,
       g.id group_id,g.name group_name,g.weekday,g.start_time,g.end_time,s.name site_name,t.full_name teacher_name,
       COALESCE(e.individual_price,
@@ -174,13 +175,22 @@ export function createParentPortal(pool, {
           ORDER BY (pv.project_id IS NOT NULL) DESC,pv.valid_from DESC,pv.id DESC LIMIT 1)) current_price
       FROM child_enrollments e JOIN directions d ON d.id=e.direction_id
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id
-        AND gm2.started_on<=CURRENT_DATE AND gm2.ended_on IS NULL ORDER BY gm2.id DESC LIMIT 1)
+        AND gm2.started_on<=:today AND (gm2.ended_on IS NULL OR gm2.ended_on>=:today)
+        ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
       LEFT JOIN study_groups g ON g.id=gm.group_id LEFT JOIN sites s ON s.id=g.site_id LEFT JOIN teachers t ON t.id=g.default_teacher_id
-      WHERE e.child_id=:childId AND e.superseded_at IS NULL AND e.status='active' ORDER BY e.id`, { childId });
+      WHERE e.child_id=:childId AND e.superseded_at IS NULL AND e.status='active' ORDER BY e.id`, { childId, today });
     return rows.map((row) => ({ id: String(row.id), directionId: String(row.direction_id), direction: row.direction_name,
       status: row.status, balanceLessons: String(row.balance_lessons), subscriptionPrice: row.current_price == null ? null : moneyDecimal(moneyCents(row.current_price) * 4n),
       groupId: row.group_id == null ? null : String(row.group_id), group: row.group_name, teacher: row.teacher_name, site: row.site_name,
       schedule: row.group_id == null ? null : `${weekdayNames[Number(row.weekday)]}, ${String(row.start_time).slice(0, 5)}–${String(row.end_time).slice(0, 5)}` }));
+  }
+
+  async function membershipGroupIds(childId, from, to) {
+    const [rows] = await pool.query(`SELECT DISTINCT gm.group_id FROM child_enrollments e
+      JOIN group_memberships gm ON gm.enrollment_id=e.id
+      WHERE e.child_id=:childId AND gm.started_on<=:to AND (gm.ended_on IS NULL OR gm.ended_on>=:from)
+      ORDER BY gm.group_id`, { childId, from, to });
+    return rows.map((row) => String(row.group_id));
   }
 
   async function latestPhoto(childId) {
@@ -195,17 +205,20 @@ export function createParentPortal(pool, {
   async function home(childId, context = {}) {
     await assertConsents(context); const child = await assertChild(context, childId);
     const enrollments = await enrollmentRows(child.id);
-    const groupIds = enrollments.map((item) => item.groupId).filter(Boolean);
+    const from = localDate(); const to = addDays(from, 120);
+    const groupIds = await membershipGroupIds(child.id, from, to);
     let nextLesson = null;
     if (groupIds.length) {
-      const from = localDate(); const to = addDays(from, 120);
       for (const groupId of groupIds) await materializeLessons(from, to, groupId);
       const [rows] = await pool.query(`SELECT l.id,l.starts_at,l.ends_at,l.status,COALESCE(os.name,s.name) site_name,
         (an.id IS NOT NULL) absence_notice,(l.status='scheduled' AND l.starts_at>NOW(6)) can_change_absence
         FROM lessons l JOIN sites s ON s.id=l.site_id_snapshot LEFT JOIN sites os ON os.id=l.site_override_id
-        LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=? AND an.cancelled_at IS NULL
-        WHERE l.group_id IN (${groupIds.map(() => '?').join(',')}) AND l.deleted_at IS NULL AND l.status='scheduled' AND l.starts_at>=NOW(6)
-        ORDER BY l.starts_at,l.id LIMIT 1`, [child.id, ...groupIds]);
+        LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=:childId AND an.cancelled_at IS NULL
+        WHERE l.group_id IN (${groupIds.join(',')}) AND l.deleted_at IS NULL AND l.status='scheduled' AND l.starts_at>=NOW(6)
+          AND EXISTS (SELECT 1 FROM child_enrollments e JOIN group_memberships gm ON gm.enrollment_id=e.id
+            WHERE e.child_id=:childId AND gm.group_id=l.group_id AND gm.started_on<=DATE(l.starts_at)
+              AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at)))
+        ORDER BY l.starts_at,l.id LIMIT 1`, { childId: child.id });
       if (rows[0]) nextLesson = { id: String(rows[0].id), startsAt: isoDateTime(rows[0].starts_at), endsAt: isoDateTime(rows[0].ends_at), site: rows[0].site_name,
         absenceNotice: bool(rows[0].absence_notice), canChangeAbsence: bool(rows[0].can_change_absence) };
     }
@@ -218,7 +231,7 @@ export function createParentPortal(pool, {
     const today = localDate();
     const from = /^\d{4}-\d{2}-\d{2}$/.test(String(filters.from ?? '')) ? filters.from : today;
     const to = /^\d{4}-\d{2}-\d{2}$/.test(String(filters.to ?? '')) ? filters.to : addDays(today, 120);
-    const enrollments = await enrollmentRows(child.id); const groupIds = enrollments.map((item) => item.groupId).filter(Boolean);
+    const groupIds = await membershipGroupIds(child.id, from, to);
     if (!groupIds.length) return [];
     for (const groupId of groupIds) await materializeLessons(from, to, groupId);
     const [rows] = await pool.query(`SELECT l.id,l.group_id,l.scheduled_starts_at,l.starts_at,l.ends_at,l.status,l.planned_teacher_id,
@@ -227,11 +240,14 @@ export function createParentPortal(pool, {
       (l.status='scheduled' AND l.starts_at>NOW(6)) can_change_absence
       FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN teachers t ON t.id=COALESCE(l.actual_teacher_id,l.planned_teacher_id)
       JOIN sites s ON s.id=l.site_id_snapshot LEFT JOIN sites os ON os.id=l.site_override_id
-      LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=? AND an.cancelled_at IS NULL
-      LEFT JOIN attendances a ON a.lesson_id=l.id AND a.child_id=?
-      WHERE l.group_id IN (${groupIds.map(() => '?').join(',')}) AND l.deleted_at IS NULL
-        AND l.starts_at>=CONCAT(?,' 00:00:00') AND l.starts_at<DATE_ADD(?,INTERVAL 1 DAY)
-      ORDER BY l.starts_at,l.id`, [child.id, child.id, ...groupIds, from, to]);
+      LEFT JOIN lesson_child_absence_notices an ON an.lesson_id=l.id AND an.child_id=:childId AND an.cancelled_at IS NULL
+      LEFT JOIN attendances a ON a.lesson_id=l.id AND a.child_id=:childId
+      WHERE l.group_id IN (${groupIds.join(',')}) AND l.deleted_at IS NULL
+        AND l.starts_at>=CONCAT(:from,' 00:00:00') AND l.starts_at<DATE_ADD(:to,INTERVAL 1 DAY)
+        AND EXISTS (SELECT 1 FROM child_enrollments e JOIN group_memberships gm ON gm.enrollment_id=e.id
+          WHERE e.child_id=:childId AND gm.group_id=l.group_id AND gm.started_on<=DATE(l.starts_at)
+            AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at)))
+      ORDER BY l.starts_at,l.id`, { childId: child.id, from, to });
     return rows.map((row) => ({ id: String(row.id), groupId: String(row.group_id), group: row.group_name,
       startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), site: row.site_name, teacher: row.teacher_name,
       status: row.status, moved: String(row.starts_at) !== String(row.scheduled_starts_at), absenceNotice: bool(row.absence_notice),

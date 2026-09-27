@@ -4,6 +4,7 @@ import { lessonUnits } from './lesson-rules.mjs';
 import { normalizeMoney } from './payments.mjs';
 import { assertProjectScope } from './project-scope.mjs';
 import { businessDate } from '../../src/shared/business-time.mjs';
+import { changeGroupMembership } from './group-memberships.mjs';
 
 const identifier = (value, field = 'id') => {
   const result = String(value ?? '').trim();
@@ -129,19 +130,10 @@ export function createEnrollmentChanges(pool, balanceTransfers, { notificationEv
               (scope_type,enrollment_id,price,valid_from,created_by_user_id)
               VALUES ('enrollment',:id,:price,NOW(6),:actorId)`, { id: target.id, price: requestedPrice, actorId: context.userId ?? null });
           }
-          if (String(targetMemberships[0]?.group_id ?? '') !== String(targetGroupId ?? '')) {
-            await connection.query(`UPDATE group_memberships SET ended_on=GREATEST(:businessDate,started_on)
-              WHERE enrollment_id=:id AND ended_on IS NULL`, { id: target.id, businessDate: operationDate });
-            if (targetGroupId != null) {
-              const [membershipResult] = await connection.query(`INSERT INTO group_memberships
-                (enrollment_id,group_id,started_on) VALUES (:id,:groupId,:businessDate)`, {
-                id: target.id, groupId: targetGroupId, businessDate: operationDate,
-              });
-              if (notificationEvents) await notificationEvents.childAddedToGroup(connection, {
-                groupId: targetGroupId, childId: source.child_id, actorUserId: context.userId,
-                causeKey: `membership-${membershipResult.insertId}`,
-              });
-            }
+          if (String(targetMemberships[0]?.group_id ?? '') !== String(targetGroupId ?? '') || body.groupStartedOn !== undefined) {
+            await changeGroupMembership(connection, { enrollmentId: target.id, targetGroupId,
+              startedOn: body.groupStartedOn, operationDate, childId: source.child_id,
+              actorUserId: context.userId, notificationEvents });
           }
         } else {
           const [inserted] = await connection.query(`INSERT INTO child_enrollments
@@ -154,16 +146,9 @@ export function createEnrollmentChanges(pool, balanceTransfers, { notificationEv
           if (requestedPrice != null) await connection.query(`INSERT INTO price_versions
             (scope_type,enrollment_id,price,valid_from,created_by_user_id)
             VALUES ('enrollment',:id,:price,NOW(6),:actorId)`, { id: target.id, price: requestedPrice, actorId: context.userId ?? null });
-          if (targetGroupId != null) {
-            const [membershipResult] = await connection.query(`INSERT INTO group_memberships
-              (enrollment_id,group_id,started_on) VALUES (:id,:groupId,:businessDate)`, {
-              id: target.id, groupId: targetGroupId, businessDate: operationDate,
-            });
-            if (notificationEvents) await notificationEvents.childAddedToGroup(connection, {
-              groupId: targetGroupId, childId: source.child_id, actorUserId: context.userId,
-              causeKey: `membership-${membershipResult.insertId}`,
-            });
-          }
+          if (targetGroupId != null) await changeGroupMembership(connection, { enrollmentId: target.id, targetGroupId,
+            startedOn: body.groupStartedOn, operationDate, childId: source.child_id,
+            actorUserId: context.userId, notificationEvents });
         }
 
         let transfer = null;

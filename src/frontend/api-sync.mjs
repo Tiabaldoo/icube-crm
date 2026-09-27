@@ -94,11 +94,15 @@ function mapGroup(group) {
 function mapChild(child) {
   return { id: Number(child.id), name: child.name, birth: child.birthDate ?? '', school: child.school ?? '', grade: child.grade ?? '',
     parent: child.guardian?.name ?? '', phone: child.guardian?.phone ?? '', status: childStatusFromApi[child.status] ?? child.status,
-    note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
+    createdAt: child.createdAt ?? null, note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
     enrollments: child.enrollments.map((enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
       projectId: Number(enrollment.projectId), project: enrollment.projectName,
       editable: enrollment.editable !== false, direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId),
       groupName: enrollment.groupName ?? null, siteName: enrollment.siteName ?? null, weekday: enrollment.weekday ?? null, startTime: enrollment.startTime ?? null,
+      groupStartedOn: enrollment.groupStartedOn ?? null,
+      effectiveGroupId: enrollment.effectiveGroupId === undefined
+        ? (enrollment.groupId == null ? null : Number(enrollment.groupId))
+        : enrollment.effectiveGroupId == null ? null : Number(enrollment.effectiveGroupId),
       status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
       individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
       balance: enrollment.balanceLessons == null ? null : Number(enrollment.balanceLessons) })) };
@@ -134,6 +138,7 @@ function mapLesson(lesson) {
     photos: {}, started: ['in_progress', 'completed'].includes(lesson.status), done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
     moved: date !== scheduledDate || time !== scheduledTime, intro: lesson.introGroup, emptyTrip: lesson.emptyTrip,
     attendanceApplied: Boolean(lesson.attendanceAppliedAt), groupChildIdsV146: lesson.roster.filter((item) => item.type === 'main').map((item) => Number(item.childId)),
+    effectiveGroupChildIds: (lesson.effectiveRoster ?? []).filter((item) => item.type === 'main').map((item) => Number(item.childId)),
     groupRosterFrozenV146: Boolean(lesson.rosterFrozenAt), groupRosterFrozenAtV146: lesson.rosterFrozenAt,
     absenceNoticeChildIds: (lesson.absenceNoticeChildIds ?? []).map(Number), birthdayChildIds: (lesson.birthdayChildIds ?? []).map(Number),
     salaryAccrual: lesson.salary ?? null,
@@ -624,7 +629,9 @@ async function saveEnrollment(childId, oldDirection) {
     if (!enrollment || !direction) return;
     const individual = value('#md-price-mode') === 'individual'; const packagePrice = Number(value('#md-individual-package') || 0);
     if (individual && !(packagePrice > 0)) return window.alert('Укажите индивидуальную цену абонемента за 4 занятия.');
-    const targetValues = { groupId: value('#md-group') ? Number(value('#md-group')) : null,
+    const selectedGroupId = value('#md-group') ? Number(value('#md-group')) : null;
+    const targetValues = { groupId: selectedGroupId,
+      ...(selectedGroupId ? { groupStartedOn: value('#md-group-started-on') || businessDate() } : {}),
       status: enrollmentStatusToApi[value('#md-enrollment-status')] ?? enrollmentStatusToApi[enrollment.status] ?? 'active', individualPrice: individual ? packagePrice / 4 : null };
     const directionChanged = String(direction.id) !== String(enrollment.directionId);
     const currentIndividual = enrollment.individualPrice == null ? null : Number(enrollment.individualPrice);
@@ -1017,8 +1024,8 @@ function applyLessonAction(action) {
   if (action.type === 'start') {
     lesson.started = true; lesson.status = 'Идёт'; lesson.groupRosterFrozenV146 = true;
     if (!(lesson.groupChildIdsV146 ?? []).length) {
-      lesson.groupChildIdsV146 = legacy.state.children.filter((child) => (child.enrollments ?? []).some((enrollment) =>
-        Number(enrollment.groupId) === Number(lesson.groupId) && ['Активный', 'active'].includes(enrollment.status))).map((child) => Number(child.id));
+      lesson.groupChildIdsV146 = (lesson.effectiveGroupChildIds ?? legacy.state.children.filter((child) => (child.enrollments ?? []).some((enrollment) =>
+        Number(enrollment.groupId) === Number(lesson.groupId) && ['Активный', 'active'].includes(enrollment.status))).map((child) => Number(child.id)));
     }
     for (const id of lesson.groupChildIdsV146) {
       if (!Object.prototype.hasOwnProperty.call(lesson.attendance ?? {}, id)) lesson.attendance[id] = false;

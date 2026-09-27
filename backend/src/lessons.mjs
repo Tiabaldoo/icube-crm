@@ -49,6 +49,12 @@ function lessonKind(row) {
 
 export function createMysqlLessons(pool, { lessonPhotos = null, parentNotifications = null, notificationEvents = null } = {}) {
   const baseSelect = `SELECT l.*,g.name group_name,d.name direction_name,p.name project_name,s.name site_name,os.name site_override_name,
+    (SELECT JSON_ARRAYAGG(e.child_id) FROM group_memberships gm
+      JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN children c ON c.id=e.child_id
+      WHERE gm.group_id=l.group_id AND l.roster_frozen_at IS NULL
+        AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
+        AND e.status='active' AND e.superseded_at IS NULL
+        AND c.deleted_at IS NULL AND c.status IN ('lead','active')) effective_roster_child_ids,
     (SELECT JSON_ARRAYAGG(an.child_id) FROM lesson_child_absence_notices an
       WHERE an.lesson_id=l.id AND an.cancelled_at IS NULL) absence_notice_child_ids,
     (SELECT JSON_ARRAYAGG(c.id) FROM children c WHERE c.deleted_at IS NULL AND c.status<>'archived'
@@ -111,6 +117,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), readOnly: true,
       };
       const roster = rosterRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({ childId: String(item.child_id), type: item.roster_type }));
+      const effectiveRoster = jsonIds(row.effective_roster_child_ids).map((childId) => ({ childId, type: 'main' }));
       const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({
         id: String(item.id), childId: String(item.child_id), enrollmentId: item.enrollment_id == null ? null : String(item.enrollment_id),
         type: item.attendance_type, present: bool(item.present), trial: bool(item.is_trial),
@@ -130,7 +137,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         actualStartsAt: isoDateTime(row.actual_starts_at), actualEndsAt: isoDateTime(row.actual_ends_at), status: row.status,
         topic: row.topic, introGroup: bool(row.is_intro_group), emptyTrip: bool(row.is_empty_trip), rosterFrozenAt: isoDateTime(row.roster_frozen_at),
         attendanceAppliedAt: isoDateTime(row.attendance_applied_at), completedAt: isoDateTime(row.completed_at), cancelledAt: isoDateTime(row.cancelled_at),
-        lockVersion: Number(row.lock_version), roster, attendances,
+        lockVersion: Number(row.lock_version), roster, effectiveRoster, attendances,
         absenceNoticeChildIds: jsonIds(row.absence_notice_child_ids), birthdayChildIds: jsonIds(row.birthday_child_ids),
         ...(salary ? { salary: { id: String(salary.id), teacherId: String(salary.teacher_id), rateVersionId: salary.rate_version_id == null ? null : String(salary.rate_version_id),
           type: salary.accrual_type, presentChildren: Number(salary.present_children), fixedAmount: String(salary.fixed_amount), childrenAmount: String(salary.children_amount), totalAmount: String(salary.total_amount) } } : {}),

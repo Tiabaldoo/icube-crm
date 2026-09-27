@@ -3,6 +3,7 @@ import { createSiteRentService } from './site-rent.mjs';
 import { businessDate, parseCalendarDate } from '../../src/shared/business-time.mjs';
 import { scopedIdempotencyKey } from './idempotency.mjs';
 import { lessonUnits } from './lesson-rules.mjs';
+import { changeGroupMembership } from './group-memberships.mjs';
 
 export class ApiProblem extends Error {
   constructor(status, code, message, details) {
@@ -145,7 +146,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
   async function children(context = {}) {
     const actorTeacherId = scopedTeacherId(context);
     const projectId = partnerProject(context);
-    const childRows = await rows(`SELECT c.id, c.full_name, c.birth_date, c.school, c.grade, c.status, c.note, c.needs_director_review,
+    const today = businessDate();
+    const childRows = await rows(`SELECT c.id, c.full_name, c.birth_date, c.school, c.grade, c.status, c.note, c.needs_director_review,c.created_at,
       g.full_name guardian_name, g.phone guardian_phone
       FROM children c LEFT JOIN child_guardians cg ON cg.child_id=c.id AND cg.is_primary=TRUE
       LEFT JOIN guardians g ON g.id=cg.guardian_id WHERE c.deleted_at IS NULL
@@ -155,7 +157,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
           JOIN study_groups sg ON sg.id=gm.group_id JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId
             AND tp.project_id=sg.project_id AND tp.active=TRUE
           JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=sg.direction_id
-          WHERE se.child_id=c.id AND gm.ended_on IS NULL AND sg.default_teacher_id=:actorTeacherId)
+          WHERE se.child_id=c.id AND gm.started_on<=:today AND (gm.ended_on IS NULL OR gm.ended_on>=:today)
+            AND sg.default_teacher_id=:actorTeacherId)
         OR EXISTS (SELECT 1 FROM lesson_roster_members lrm JOIN lessons l ON l.id=lrm.lesson_id
           JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
           JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=l.direction_id_snapshot
@@ -164,12 +167,13 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
           JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
           JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=l.direction_id_snapshot
           WHERE a.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)))
-      ORDER BY c.full_name`, { actorTeacherId, projectId });
+      ORDER BY c.full_name`, { actorTeacherId, projectId, today });
     if (!childRows.length) return [];
     const visibleIds = childRows.map((row) => String(row.id));
     const enrollmentRows = await rows(`SELECT e.id, e.child_id, e.direction_id, e.project_id, p.name project_name,
       d.name direction_name, e.status, e.individual_price, e.balance_lessons,
-      e.started_on, e.ended_on, gm.group_id,sg.name group_name,sg.weekday,sg.start_time,s.name site_name,
+      e.started_on, e.ended_on, gm.group_id,gm.started_on group_started_on,
+      effective_gm.group_id effective_group_id,sg.name group_name,sg.weekday,sg.start_time,s.name site_name,
       COALESCE(e.individual_price,
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
@@ -179,17 +183,20 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       ) current_price
       FROM child_enrollments e JOIN directions d ON d.id=e.direction_id JOIN projects p ON p.id=e.project_id
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.ended_on IS NULL ORDER BY gm2.started_on DESC, gm2.id DESC LIMIT 1)
+      LEFT JOIN group_memberships effective_gm ON effective_gm.id=(SELECT gm3.id FROM group_memberships gm3 WHERE gm3.enrollment_id=e.id
+        AND gm3.started_on<=:today AND (gm3.ended_on IS NULL OR gm3.ended_on>=:today) ORDER BY gm3.started_on DESC,gm3.id DESC LIMIT 1)
       LEFT JOIN study_groups sg ON sg.id=gm.group_id LEFT JOIN sites s ON s.id=sg.site_id
       WHERE e.child_id IN (${visibleIds.join(',')}) AND e.superseded_at IS NULL
         AND (:actorTeacherId IS NULL OR EXISTS (SELECT 1 FROM teacher_projects tp
           JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
           WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=e.project_id AND tp.active=TRUE AND tpd.direction_id=e.direction_id))
-      ORDER BY e.child_id, e.id`, { projectId, actorTeacherId });
+      ORDER BY e.child_id, e.id`, { projectId, actorTeacherId, today });
     return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
-      status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
+      createdAt: isoDate(row.created_at), status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
       enrollments: enrollmentRows.filter((item) => String(item.child_id) === String(row.id)).map((item) => ({ id: String(item.id), directionId: String(item.direction_id),
         projectId: String(item.project_id), projectName: item.project_name, editable: projectId == null || String(item.project_id) === projectId,
         directionName: item.direction_name, groupId: item.group_id == null ? null : String(item.group_id), groupName: item.group_name,
+        groupStartedOn: isoDate(item.group_started_on), effectiveGroupId: item.effective_group_id == null ? null : String(item.effective_group_id),
         siteName: item.site_name, weekday: item.weekday == null ? null : Number(item.weekday), startTime: item.start_time == null ? null : String(item.start_time).slice(0, 5), status: item.status,
         ...(actorTeacherId == null && (projectId == null || String(item.project_id) === projectId) ? { individualPrice: item.individual_price == null ? null : String(item.individual_price),
           currentPrice: item.current_price == null ? null : String(item.current_price), balanceLessons: String(item.balance_lessons) } : {}),
@@ -464,12 +471,12 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       await validateEnrollmentGroup(connection, directionId, body.groupId, resolvedProjectId);
       const [existing] = await connection.query('SELECT id FROM child_enrollments WHERE child_id=:childId AND direction_id=:directionId AND superseded_at IS NULL FOR UPDATE', { childId, directionId });
       if (existing.length) throw new ApiProblem(409, 'ENROLLMENT_EXISTS', 'У ребёнка уже есть это направление');
-      const price = body.individualPrice === '' || body.individualPrice == null ? null : Number(body.individualPrice); if (price !== null && !(price > 0)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Индивидуальная цена должна быть больше нуля'); const [result] = await connection.query(`INSERT INTO child_enrollments (child_id,direction_id,project_id,status,individual_price,started_on) VALUES (:childId,:directionId,:projectId,:status,:price,:startedOn)`, { childId, directionId, projectId: resolvedProjectId, status: body.status ?? 'active', price, startedOn: body.startedOn ?? businessDate() }); if (body.groupId != null) { const groupId = id(body.groupId, 'groupId'); const [membershipResult] = await connection.query('INSERT INTO group_memberships (enrollment_id,group_id,started_on) VALUES (:enrollmentId,:groupId,CURDATE())', { enrollmentId: result.insertId, groupId }); if (notificationEvents) await notificationEvents.childAddedToGroup(connection, { groupId, childId, actorUserId: context.userId, causeKey: `membership-${membershipResult.insertId}` }); } if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,enrollment_id,price,valid_from) VALUES ('enrollment',:enrollmentId,:price,NOW(6))`, { enrollmentId: result.insertId, price }); return String(result.insertId); }); return (await get('children', childId, context)).enrollments.find((item) => item.id === enrollmentId); }
+      const price = body.individualPrice === '' || body.individualPrice == null ? null : Number(body.individualPrice); if (price !== null && !(price > 0)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Индивидуальная цена должна быть больше нуля'); const [result] = await connection.query(`INSERT INTO child_enrollments (child_id,direction_id,project_id,status,individual_price,started_on) VALUES (:childId,:directionId,:projectId,:status,:price,:startedOn)`, { childId, directionId, projectId: resolvedProjectId, status: body.status ?? 'active', price, startedOn: body.startedOn ?? businessDate() }); if (body.groupId != null) { const groupId = id(body.groupId, 'groupId'); const startedOn = businessDate(); const [membershipResult] = await connection.query('INSERT INTO group_memberships (enrollment_id,group_id,started_on) VALUES (:enrollmentId,:groupId,:startedOn)', { enrollmentId: result.insertId, groupId, startedOn }); if (notificationEvents) await notificationEvents.childAddedToGroup(connection, { groupId, childId, actorUserId: context.userId, causeKey: `membership-${membershipResult.insertId}` }); } if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,enrollment_id,price,valid_from) VALUES ('enrollment',:enrollmentId,:price,NOW(6))`, { enrollmentId: result.insertId, price }); return String(result.insertId); }); return (await get('children', childId, context)).enrollments.find((item) => item.id === enrollmentId); }
     catch (error) { throw mysqlError(error); }
   }
   async function updateEnrollment(enrollmentId, body, context = {}) {
     enrollmentId = id(enrollmentId, 'enrollmentId');
-    try { const childId = await inTransaction(pool, async (connection) => { const [found] = await connection.query('SELECT * FROM child_enrollments WHERE id=:id FOR UPDATE', { id: enrollmentId }); if (!found.length) throw new ApiProblem(404, 'NOT_FOUND', 'Направление ребёнка не найдено'); const current = found[0]; assertProject(context, current.project_id); if (current.superseded_at != null) throw new ApiProblem(409, 'ENROLLMENT_TRANSFERRED', 'Направление уже перенесено в другой проект'); if (body.projectId != null && String(body.projectId) !== String(current.project_id)) throw new ApiProblem(409, 'PROJECT_TRANSFER_REQUIRED', 'Используйте перенос в другой проект'); const directionId = id(body.directionId ?? current.direction_id, 'directionId'); if (directionId !== String(current.direction_id)) throw new ApiProblem(409, 'DIRECTION_CHANGE_REQUIRES_NEW_ENROLLMENT', 'Смена направления требует закрыть старое и создать отдельное новое направление'); const status = body.status ?? current.status; if (!enrollmentStatuses.has(status)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректный статус направления'); const price = body.individualPrice === undefined ? current.individual_price : body.individualPrice === '' || body.individualPrice == null ? null : Number(body.individualPrice); if (price !== null && !(price > 0)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Индивидуальная цена должна быть больше нуля'); const priceChanged = (current.individual_price == null ? null : Number(current.individual_price)) !== (price == null ? null : Number(price)); if (priceChanged && lessonUnits(String(current.balance_lessons)) !== 0n) throw new ApiProblem(409, 'PRICE_CHANGE_REQUIRES_ATOMIC_UPDATE', 'Изменение цены при ненулевом балансе требует атомарного переноса остатка'); const [membership] = await connection.query('SELECT id,group_id FROM group_memberships WHERE enrollment_id=:id AND ended_on IS NULL ORDER BY started_on DESC,id DESC LIMIT 1', { id: enrollmentId }); const targetGroupId = body.groupId === undefined ? membership[0]?.group_id ?? null : body.groupId; await assertIds(connection, 'directions', [directionId], 'directionId'); await validateEnrollmentGroup(connection, directionId, targetGroupId, current.project_id); await connection.query('UPDATE child_enrollments SET direction_id=:directionId,status=:status,individual_price=:price,ended_on=:endedOn WHERE id=:id', { id: enrollmentId, directionId, status, price, endedOn: status === 'finished' ? (body.endedOn ?? businessDate()) : null }); if (priceChanged) { await connection.query(`UPDATE price_versions SET valid_to=NOW(6) WHERE scope_type='enrollment' AND enrollment_id=:id AND valid_to IS NULL`, { id: enrollmentId }); if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,enrollment_id,price,valid_from) VALUES ('enrollment',:id,:price,NOW(6))`, { id: enrollmentId, price }); } if (String(membership[0]?.group_id ?? '') !== String(targetGroupId ?? '')) { await connection.query('UPDATE group_memberships SET ended_on=CURDATE() WHERE enrollment_id=:id AND ended_on IS NULL', { id: enrollmentId }); if (targetGroupId != null) { const groupId = id(targetGroupId, 'groupId'); const [membershipResult] = await connection.query('INSERT INTO group_memberships (enrollment_id,group_id,started_on) VALUES (:id,:groupId,CURDATE())', { id: enrollmentId, groupId }); if (notificationEvents) await notificationEvents.childAddedToGroup(connection, { groupId, childId: current.child_id, actorUserId: context.userId, causeKey: `membership-${membershipResult.insertId}` }); } } if (targetGroupId != null) await resolvePendingOperationSnapshots(connection, enrollmentId, id(targetGroupId, 'groupId')); if (status !== current.status) await connection.query(`INSERT INTO enrollment_status_history (enrollment_id,old_status,new_status,direction_id_snapshot,group_id_snapshot,project_id_snapshot) VALUES (:id,:old,:next,:directionId,:groupId,:projectId)`, { id: enrollmentId, old: current.status, next: status, directionId, groupId: targetGroupId, projectId: current.project_id }); return String(current.child_id); }); return (await get('children', childId, context)).enrollments.find((item) => item.id === enrollmentId); }
+    try { const childId = await inTransaction(pool, async (connection) => { const [found] = await connection.query('SELECT * FROM child_enrollments WHERE id=:id FOR UPDATE', { id: enrollmentId }); if (!found.length) throw new ApiProblem(404, 'NOT_FOUND', 'Направление ребёнка не найдено'); const current = found[0]; assertProject(context, current.project_id); if (current.superseded_at != null) throw new ApiProblem(409, 'ENROLLMENT_TRANSFERRED', 'Направление уже перенесено в другой проект'); if (body.projectId != null && String(body.projectId) !== String(current.project_id)) throw new ApiProblem(409, 'PROJECT_TRANSFER_REQUIRED', 'Используйте перенос в другой проект'); const directionId = id(body.directionId ?? current.direction_id, 'directionId'); if (directionId !== String(current.direction_id)) throw new ApiProblem(409, 'DIRECTION_CHANGE_REQUIRES_NEW_ENROLLMENT', 'Смена направления требует закрыть старое и создать отдельное новое направление'); const status = body.status ?? current.status; if (!enrollmentStatuses.has(status)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректный статус направления'); const price = body.individualPrice === undefined ? current.individual_price : body.individualPrice === '' || body.individualPrice == null ? null : Number(body.individualPrice); if (price !== null && !(price > 0)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Индивидуальная цена должна быть больше нуля'); const priceChanged = (current.individual_price == null ? null : Number(current.individual_price)) !== (price == null ? null : Number(price)); if (priceChanged && lessonUnits(String(current.balance_lessons)) !== 0n) throw new ApiProblem(409, 'PRICE_CHANGE_REQUIRES_ATOMIC_UPDATE', 'Изменение цены при ненулевом балансе требует атомарного переноса остатка'); const [membership] = await connection.query('SELECT id,group_id FROM group_memberships WHERE enrollment_id=:id AND ended_on IS NULL ORDER BY started_on DESC,id DESC LIMIT 1', { id: enrollmentId }); const targetGroupId = body.groupId === undefined ? membership[0]?.group_id ?? null : body.groupId; await assertIds(connection, 'directions', [directionId], 'directionId'); await validateEnrollmentGroup(connection, directionId, targetGroupId, current.project_id); await connection.query('UPDATE child_enrollments SET direction_id=:directionId,status=:status,individual_price=:price,ended_on=:endedOn WHERE id=:id', { id: enrollmentId, directionId, status, price, endedOn: status === 'finished' ? (body.endedOn ?? businessDate()) : null }); if (priceChanged) { await connection.query(`UPDATE price_versions SET valid_to=NOW(6) WHERE scope_type='enrollment' AND enrollment_id=:id AND valid_to IS NULL`, { id: enrollmentId }); if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,enrollment_id,price,valid_from) VALUES ('enrollment',:id,:price,NOW(6))`, { id: enrollmentId, price }); } if (String(membership[0]?.group_id ?? '') !== String(targetGroupId ?? '') || body.groupStartedOn !== undefined) { await changeGroupMembership(connection, { enrollmentId, targetGroupId, startedOn: body.groupStartedOn, childId: current.child_id, actorUserId: context.userId, notificationEvents }); } if (targetGroupId != null) await resolvePendingOperationSnapshots(connection, enrollmentId, id(targetGroupId, 'groupId')); if (status !== current.status) await connection.query(`INSERT INTO enrollment_status_history (enrollment_id,old_status,new_status,direction_id_snapshot,group_id_snapshot,project_id_snapshot) VALUES (:id,:old,:next,:directionId,:groupId,:projectId)`, { id: enrollmentId, old: current.status, next: status, directionId, groupId: targetGroupId, projectId: current.project_id }); return String(current.child_id); }); return (await get('children', childId, context)).enrollments.find((item) => item.id === enrollmentId); }
     catch (error) { throw mysqlError(error); }
   }
 
@@ -551,15 +558,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
             VALUES ('enrollment',:id,:price,NOW(6))`, { id: resolvedEnrollmentId, price });
         }
         if (String(membership[0]?.group_id ?? '') !== String(targetGroupId ?? '')) {
-          await connection.query('UPDATE group_memberships SET ended_on=CURDATE() WHERE enrollment_id=:id AND ended_on IS NULL', { id: resolvedEnrollmentId });
-          if (targetGroupId != null) {
-            const groupId = id(targetGroupId, 'groupId');
-            const [membershipResult] = await connection.query(`INSERT INTO group_memberships (enrollment_id,group_id,started_on)
-              VALUES (:id,:groupId,CURDATE())`, { id: resolvedEnrollmentId, groupId });
-            if (notificationEvents) await notificationEvents.childAddedToGroup(connection, {
-              groupId, childId: resolvedChildId, actorUserId: context.userId, causeKey: `membership-${membershipResult.insertId}`,
-            });
-          }
+          await changeGroupMembership(connection, { enrollmentId: resolvedEnrollmentId, targetGroupId,
+            childId: resolvedChildId, actorUserId: context.userId, notificationEvents });
         }
         return { childId: resolvedChildId, enrollmentId: resolvedEnrollmentId };
       });

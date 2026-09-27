@@ -67,7 +67,7 @@ function fixture({ existingTarget = false, failTransfer = false, sourceStartedOn
     }
     if (sql.startsWith('INSERT INTO group_memberships')) {
       state.memberships.push({ id: state.memberships.length + 40, enrollment_id: Number(params.id), group_id: Number(params.groupId),
-        started_on: params.businessDate, ended_on: null }); return [{ insertId: 1 }];
+        started_on: params.startedOn ?? params.businessDate, ended_on: null }); return [{ insertId: 1 }];
     }
     if (sql.startsWith('SELECT id,project_id FROM child_enrollments')) return [[clone(enrollment(params.sourceId)), clone(enrollment(params.targetId))]];
     if (sql.includes('FROM balance_entries be JOIN balance_transfers bt')) {
@@ -117,11 +117,12 @@ const context = (key) => ({ roles: ['director'], userId: '7', idempotencyKey: ke
 
 test('смена направления атомарно переносит 4 × 1025 ₽ в 3.64444444 занятия по 1125 ₽', async () => {
   const { state, service } = fixture();
-  const result = await service.changeDirection(9, { directionId: 2, groupId: 42, status: 'active', individualPrice: null }, context('direction-1'));
+  const result = await service.changeDirection(9, { directionId: 2, groupId: 42, groupStartedOn: '2026-09-20', status: 'active', individualPrice: null }, context('direction-1'));
   assert.equal(state.enrollments.find((item) => item.id === 9).status, 'finished');
   const target = state.enrollments.find((item) => String(item.id) === result.targetEnrollmentId);
   assert.equal(target.balance_lessons, '3.64444444'); assert.equal(state.transfers[0].transferred_amount, '4100.00');
   assert.equal(state.transfers[0].target_price_snapshot, '1125.00'); assert.equal(state.transfers.length, 1);
+  assert.equal(state.memberships.find((item) => String(item.enrollment_id) === result.targetEnrollmentId).started_on, '2026-09-20');
   assert.deepEqual(state.historical, { paymentPrice: '1025.00', attendancePrice: '1025.00' });
   assert.equal(state.calls.some(({ sql }) => /UPDATE (?:payments|attendances)/.test(sql)), false);
 });
@@ -189,6 +190,7 @@ test('frontend отправляет смену направления и цен�
   const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
   const save = source.slice(source.indexOf('async function saveEnrollment'), source.indexOf('async function addEnrollment'));
   assert.match(save, /individual \? packagePrice \/ 4 : null/);
+  assert.match(save, /groupStartedOn: value\('#md-group-started-on'\) \|\| businessDate\(\)/);
   assert.match(save, /\/enrollments\/\$\{enrollment\.id\}\/change-direction/);
   assert.doesNotMatch(save, /api\.createEnrollment/); assert.doesNotMatch(save, /existingTarget/);
   assert.ok(save.indexOf('legacy.state.modal = null') > save.indexOf('await api.request'));

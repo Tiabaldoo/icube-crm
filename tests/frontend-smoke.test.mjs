@@ -113,6 +113,11 @@ test('единый frontend загружается и рендерит все т
     { status: 'Лид', enrollments: [{ groupId: 999 }] },
   ];
   assert.equal(context.__crmProbe.groupChildren(999).length, 1);
+  context.__crmProbe.state.children = [
+    { status: 'Активный', enrollments: [{ groupId: 999, effectiveGroupId: null, status: 'Активный' }] },
+    { status: 'Активный', enrollments: [{ groupId: 1000, effectiveGroupId: 999, status: 'Активный' }] },
+  ];
+  assert.equal(context.__crmProbe.groupChildren(999).length, 1, 'состав группы считается на сегодня, а не по будущей open membership');
   context.__crmProbe.state.children = savedChildren;
 
   assert.match(context.lessonAttendanceBadge({ done: true, cancelled: false, trialChildren: {8:true}, extras: [] }, 8, true), /Ознакомительное/);
@@ -167,7 +172,7 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.sites = [{ id: 1, name: 'Школа №1' }, { id: 2, name: 'Зебра' }];
   context.__crmProbe.state.lessons = [];
   context.__crmProbe.state.payments = [];
-  context.__crmProbe.state.children = [{ id: 20, name: 'Смешанный ребёнок', school: '', grade: '', parent: '', phone: '', status: 'Активный', enrollments: [
+  context.__crmProbe.state.children = [{ id: 20, name: 'Смешанный ребёнок', createdAt: '2026-09-27', school: '', grade: '', parent: '', phone: '', status: 'Активный', enrollments: [
     { id: 70, direction: 'Робототехника', projectId: '1', project: 'iCubeRobots', groupId: 10, siteName: 'Школа №1', weekday: 3, startTime: '15:30', status: 'Активный', editable: true, balance: 3, price: 1025 },
     { id: 71, direction: 'Программирование', projectId: '2', project: 'Зебра', groupId: 11, siteName: 'Зебра', weekday: 5, startTime: '18:00', status: 'Активный', editable: true, balance: 1, price: 1125 },
   ] }];
@@ -176,6 +181,7 @@ test('единый frontend загружается и рендерит все т
   assert.match(childHtml, /badge purple[^>]*>Зебра</);
   assert.match(childHtml, /Школа №1 · Ср 15:30/);
   assert.match(childHtml, /Зебра · Пт 18:00/);
+  assert.match(childHtml, /В базе с 27\.09\.2026/, 'дата создания показана только как read-only подпись');
   assert.doesNotMatch(childHtml, /Техническое имя [12]/, 'карточка не показывает техническое имя группы');
 
   context.__crmProbe.state.children[0].enrollments[1].projectId = '1';
@@ -192,7 +198,7 @@ test('единый frontend загружается и рендерит все т
   assert.match(childHtml, /badge gray[^>]*>iCubeRobots/);
   assert.match(childHtml, /Другой проект/);
   assert.equal((childHtml.match(/>\+ Оплата<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает финансовые действия');
-  assert.equal((childHtml.match(/>Изменить направление \/ цену<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает mutation controls');
+  assert.equal((childHtml.match(/>Настройки направления<\/button>/g) ?? []).length, 1, 'foreign enrollment не получает mutation controls');
 
   context.__crmProbe.state.role = 'director';
   context.__crmProbe.state.childLedgerSort = { payments: 'desc', visits: 'desc', refunds: 'desc' };

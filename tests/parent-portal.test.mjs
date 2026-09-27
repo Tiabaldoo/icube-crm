@@ -14,6 +14,10 @@ const parent = { userId: '50', roles: ['parent'] };
 function portalFixture() {
   const state = {
     accepted: new Set(), materialized: [], notices: new Set(), sql: [],
+    memberships: [
+      { child_id: 10, group_id: 100, started_on: '2026-01-01', ended_on: null },
+      { child_id: 11, group_id: 101, started_on: '2026-01-01', ended_on: null },
+    ],
     documents: [
       { id: 1, document_type: 'privacy_policy', document_version: 'v1', title: 'Privacy', body: 'Text', is_required: 1 },
       { id: 2, document_type: 'personal_data_parent', document_version: 'v1', title: 'Parent', body: 'Text', is_required: 1 },
@@ -43,6 +47,11 @@ function portalFixture() {
         group_id: child.group, group_name: `Группа ${child.group}`, weekday: 3, start_time: '17:00:00', end_time: '18:00:00',
         site_name: 'Площадка', teacher_name: 'Учитель', current_price: '1025.00' } : undefined].filter(Boolean)];
     }
+    if (sql.includes('SELECT DISTINCT gm.group_id FROM child_enrollments e')) {
+      return [state.memberships.filter((item) => String(item.child_id) === String(params.childId)
+        && item.started_on <= params.to && (item.ended_on == null || item.ended_on >= params.from))
+        .map((item) => ({ group_id: item.group_id }))];
+    }
     if (sql.startsWith('UPDATE children SET birth_date=')) { const child = state.children.find((item) => String(item.id) === String(params.id)); Object.assign(child, { birth_date: params.birthDate, school: params.school, grade: params.grade }); return [{ affectedRows: 1 }]; }
     if (sql.includes('SELECT l.id,l.starts_at,l.status FROM lessons l') && sql.includes('FOR UPDATE')) return [[String(params.lessonId) === '70' && String(params.childId) === '10' ? { id: 70, starts_at: '2026-09-22 17:00:00', status: 'scheduled' } : undefined].filter(Boolean)];
     if (sql.startsWith('INSERT INTO lesson_child_absence_notices')) { state.notices.add(`${params.lessonId}:${params.childId}`); return [{ affectedRows: 1 }]; }
@@ -55,7 +64,10 @@ function portalFixture() {
       { id: 72, group_id: 100, scheduled_starts_at: '2026-09-25 17:00:00', starts_at: '2026-09-25 17:00:00', ends_at: '2026-09-25 18:00:00', status: 'cancelled', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '0', attendance_present: '0', can_change_absence: '0' },
       { id: 73, group_id: 100, scheduled_starts_at: '2026-09-26 15:00:00', starts_at: '2026-09-26 17:00:00', ends_at: '2026-09-26 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '1', attendance_present: '1', can_change_absence: '0' },
       { id: 74, group_id: 100, scheduled_starts_at: '2026-09-27 17:00:00', starts_at: '2026-09-27 17:00:00', ends_at: '2026-09-27 18:00:00', status: 'completed', group_name: 'Группа 100', teacher_name: 'Учитель', site_name: 'Площадка', absence_notice: '1', attendance_present: null, can_change_absence: '0' },
-    ]];
+    ].filter((lesson) => state.memberships.some((membership) => String(membership.child_id) === String(params.childId)
+      && String(membership.group_id) === String(lesson.group_id)
+      && membership.started_on <= String(lesson.starts_at).slice(0, 10)
+      && (membership.ended_on == null || membership.ended_on >= String(lesson.starts_at).slice(0, 10))))];
     if (sql.includes('FROM attendances a JOIN lessons')) {
       const childId = Number(params.childId); return [[{ lesson_id: childId * 10, starts_at: `2026-09-${childId === 10 ? '10' : '11'} 17:00:00`, is_trial: childId === 11, direction_name: 'Робототехника', group_name: `Группа ${childId}` }]];
     }
@@ -116,6 +128,20 @@ test('parent schedule materializes only linked current group and exposes no futu
   assert.equal(parentScheduleStatus(rows[1]), 'Перенесено');
   assert.equal(parentScheduleStatus(rows[2]), 'Отменено');
   assert.equal(parentScheduleStatus(rows[3]), 'Проведено');
+});
+
+test('parent schedule uses membership history and hides lessons before started_on', async () => {
+  const fixture = portalFixture(); fixture.state.documents.forEach((item) => fixture.state.accepted.add(item.id));
+  fixture.state.memberships = [{ child_id: 10, group_id: 100, started_on: '2026-09-23', ended_on: null }];
+  let rows = await fixture.service.schedule(10, { from: '2026-09-20', to: '2026-10-01' }, parent);
+  assert.equal(rows.some((lesson) => lesson.id === '70'), false, 'lesson before enrollment is not shown as an absence');
+  assert.equal(rows.some((lesson) => lesson.id === '71'), true);
+  fixture.state.memberships[0].started_on = '2026-09-22';
+  rows = await fixture.service.schedule(10, { from: '2026-09-20', to: '2026-10-01' }, parent);
+  assert.equal(rows.some((lesson) => lesson.id === '70'), true, 'backdated membership reveals lessons from its start date');
+  const scheduleSql = fixture.state.sql.find((sql) => sql.includes('SELECT l.id,l.group_id,l.scheduled_starts_at'));
+  assert.match(scheduleSql, /gm\.started_on<=DATE\(l\.starts_at\)/);
+  assert.match(scheduleSql, /gm\.ended_on IS NULL OR gm\.ended_on>=DATE\(l\.starts_at\)/);
 });
 
 test('parent schedule uses the shared calendar layout in read-only mode and completed overrides moved', () => {
@@ -438,7 +464,7 @@ test('parent schedule converts SQL string booleans strictly and joins only activ
   assert.equal(rows[3].absenceNotice, true); assert.equal(rows[3].present, true);
   assert.equal(rows[4].present, false); assert.equal(parentScheduleStatus(rows[4]), 'Отсутствовал');
   const source = await readFile(new URL('../backend/src/parent-portal.mjs', import.meta.url), 'utf8');
-  assert.match(source, /LEFT JOIN lesson_child_absence_notices an ON an\.lesson_id=l\.id AND an\.child_id=\? AND an\.cancelled_at IS NULL/);
+  assert.match(source, /LEFT JOIN lesson_child_absence_notices an ON an\.lesson_id=l\.id AND an\.child_id=:childId AND an\.cancelled_at IS NULL/);
   assert.doesNotMatch(source, /absenceNotice: Boolean\(row\.absence_notice\)/);
 });
 

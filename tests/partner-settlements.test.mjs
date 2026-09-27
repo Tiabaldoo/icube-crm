@@ -59,6 +59,7 @@ test('первое назначение группы заполняет толь
   const query = async (sql, params = {}) => {
     if (sql.startsWith('SELECT * FROM child_enrollments')) return [[{ id: 9, child_id: 8, direction_id: 1, status: 'active', individual_price: null }]];
     if (sql.startsWith('SELECT id,group_id FROM group_memberships')) return [[]];
+    if (sql.startsWith('SELECT id,group_id,started_on,ended_on FROM group_memberships')) return [[]];
     if (sql.startsWith('SELECT id FROM directions')) return [[{ id: 1 }]];
     if (sql.startsWith('SELECT id FROM study_groups')) return [[{ id: 5 }]];
     if (sql.startsWith('UPDATE payments p') || sql.startsWith('UPDATE refunds r')) { snapshotSql.push({ sql, params }); return [{ affectedRows: 1 }]; }
