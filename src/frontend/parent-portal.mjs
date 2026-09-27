@@ -7,7 +7,7 @@ const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
   ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['about', 'О ребёнке'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '', receiptFile: null, receiptPreviewUrl: null };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, documentViewer: null, consentDocuments: [], lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '', receiptFile: null, receiptPreviewUrl: null };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
@@ -130,7 +130,7 @@ function shell(content) {
     ${state.menuOpen ? '<button class="parent-menu-backdrop" data-action="menu-close" aria-label="Закрыть меню"></button>' : ''}
     <div class="parent-work"><header class="parent-header"><button class="parent-menu-button" data-action="menu" aria-label="Открыть меню">☰</button><div class="parent-mobile-brand"><b>АйКуб</b></div>${childSelector()}<span class="notification-header-actions parent-header-actions"><button type="button" class="parent-bell" data-push-bell data-action="notifications" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button><button type="button" class="push-settings-button parent-push-settings" data-action="push-settings" aria-label="Уведомления и приложение" title="Уведомления и приложение">⚙</button></span></header>
     <main class="parent-main">${state.error ? `<div class="parent-error">${escapeHtml(state.error)} <button data-action="retry">Повторить</button></div>` : ''}${state.loading ? '<div class="parent-loading">Загрузка…</div>' : content}</main></div>
-    ${viewerHtml()}${lessonInfoHtml()}${notificationMessageHtml()}
+    ${viewerHtml()}${parentDocumentViewerHtml(state.documentViewer)}${lessonInfoHtml()}${notificationMessageHtml()}
   </div>`;
 }
 
@@ -235,12 +235,26 @@ function photosHtml(rows) {
   }).join('') : empty('Нет доступных фотографий.')}`;
 }
 
+function documentOpenHtml(document) {
+  const bodyAction = document.body ? `<button type="button" class="parent-secondary parent-document-open" data-action="document-open" data-id="${escapeHtml(document.id)}">Открыть документ</button>` : '';
+  const urlAction = document.url ? `<a class="parent-secondary parent-document-open" href="${escapeHtml(document.url)}" target="_blank" rel="noopener">${document.body ? 'Открыть ссылку' : 'Открыть документ'}</a>` : '';
+  return bodyAction + urlAction;
+}
+
+export function parentSettingsDocumentsHtml(documents) {
+  return documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b>${document.acceptedAt ? `<span>Принято ${dateRu(document.acceptedAt)}</span>` : ''}<div class="parent-document-actions">${documentOpenHtml(document)}</div></div>`).join('');
+}
+
+export function parentConsentDocumentsHtml(documents) {
+  return documents.map((document) => `<article class="parent-card parent-document-card"><h2>${escapeHtml(document.title)}</h2><div class="parent-document-actions">${documentOpenHtml(document)}${document.acceptedAt ? '<b class="accepted">Принято</b>' : `<button class="parent-primary" data-action="accept" data-id="${escapeHtml(document.id)}">Принять</button>`}</div></article>`).join('');
+}
+
 function settingsHtml(data) {
   const contact = state.profile.contact ?? {};
   return `<section class="parent-title"><h1>Настройки</h1></section>
     <article class="parent-card"><h2>Профиль</h2><form data-action="profile"><label>ФИО<input name="name" value="${escapeHtml(data.profile.name ?? '')}"></label><label>Телефон<input name="phone" value="${escapeHtml(data.profile.phone ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article>
     <article class="parent-card"><h2>Мои дети</h2>${state.profile.children.map((child) => `<div class="parent-child-line">${escapeHtml(child.name)}</div>`).join('')}</article>
-    <article class="parent-card"><h2>Документы</h2>${data.documents.map((document) => `<div class="parent-document"><b>${escapeHtml(document.title)}</b><span>Версия ${escapeHtml(document.version)} · принято ${dateRu(document.acceptedAt)}</span>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть</a>` : ''}</div>`).join('')}</article>
+    <article class="parent-card"><h2>Документы</h2>${parentSettingsDocumentsHtml(data.documents)}</article>
     <article class="parent-card"><h2>Связаться с нами</h2><div class="parent-actions">${contact.maxUrl ? `<a class="parent-contact-button primary" href="${escapeHtml(contact.maxUrl)}" target="_blank" rel="noopener">Написать в MAX</a>` : ''}${contact.phone ? `<a class="parent-contact-button" href="tel:${escapeHtml(String(contact.phone).replace(/[^\d+]/g, ''))}">Позвонить: ${escapeHtml(contact.phone)}</a>` : ''}</div></article>
     <button class="parent-logout" data-action="logout">Выйти</button>`;
 }
@@ -253,6 +267,11 @@ function viewerHtml() {
   if (!state.viewer?.photos?.length) return '';
   const photo = state.viewer.photos[state.viewer.index];
   return `<div class="parent-viewer" data-action="viewer-close"><button data-action="viewer-close" aria-label="Закрыть"></button><button data-action="viewer-prev" aria-label="Предыдущее">←</button><img src="${escapeHtml(photo.fileUrl)}" alt="Фото"><button data-action="viewer-next" aria-label="Следующее">→</button><a class="parent-viewer-download" href="${escapeHtml(photo.fileUrl)}" download="icube-photo-${escapeHtml(photo.id)}.jpg" data-action="viewer-download">Скачать</a><span>${state.viewer.index + 1} / ${state.viewer.photos.length}</span></div>`;
+}
+
+export function parentDocumentViewerHtml(document) {
+  if (!document?.body) return '';
+  return `<div class="parent-document-viewer" data-action="document-close"><article role="dialog" aria-modal="true" aria-labelledby="parent-document-viewer-title"><header><h2 id="parent-document-viewer-title">${escapeHtml(document.title)}</h2><button type="button" data-action="document-close" aria-label="Закрыть">×</button></header><div class="parent-document-body">${escapeHtml(document.body)}</div><footer><button type="button" class="parent-secondary" data-action="document-close">Закрыть</button></footer></article></div>`;
 }
 
 function lessonInfoHtml() {
@@ -270,7 +289,13 @@ function notificationMessageHtml() {
 }
 
 function consentHtml(documents) {
-  app.innerHTML = `<div class="parent-consent"><div><b>АйКуб</b><h1>Документы и согласия</h1><p>Для доступа к кабинету примите каждый актуальный обязательный документ отдельно.</p>${documents.map((document) => `<article class="parent-card"><h2>${escapeHtml(document.title)}</h2><div class="parent-document-body">${escapeHtml(document.body ?? '')}</div>${document.url ? `<a href="${escapeHtml(document.url)}" target="_blank" rel="noopener">Открыть полный текст</a>` : ''}<div><small>Версия ${escapeHtml(document.version)}</small>${document.acceptedAt ? '<b class="accepted">Принято</b>' : `<button class="parent-primary" data-action="accept" data-id="${document.id}">Принять</button>`}</div></article>`).join('')}</div></div>`;
+  state.consentDocuments = documents;
+  app.innerHTML = `<div class="parent-consent"><div><b>АйКуб</b><h1>Документы и согласия</h1><p>Для доступа к кабинету примите каждый актуальный обязательный документ отдельно.</p>${parentConsentDocumentsHtml(documents)}</div>${parentDocumentViewerHtml(state.documentViewer)}</div>`;
+}
+
+function renderDocumentContext() {
+  if (state.profile?.consentRequired) consentHtml(state.consentDocuments);
+  else render();
 }
 
 async function loadTab() {
@@ -367,7 +392,7 @@ app?.addEventListener('click', async (event) => {
   const target = event.target.closest('[data-action]'); if (!target) return;
   const action = target.dataset.action;
   try {
-  if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; state.menuOpen = false; await loadTab(); }
+  if (action === 'tab') { state.tab = target.dataset.tab; state.data = null; state.documentViewer = null; state.menuOpen = false; await loadTab(); }
   else if (action === 'retry') await loadTab();
   else if (action === 'notifications') window.icubePush?.togglePanel?.(target, true);
   else if (action === 'push-settings') await window.icubePush?.openSettings?.();
@@ -377,6 +402,12 @@ app?.addEventListener('click', async (event) => {
   else if (action === 'viewer-prev') setViewer(-1);
   else if (action === 'viewer-next') setViewer(1);
   else if (action === 'viewer-download') event.stopPropagation();
+  else if (action === 'document-open') {
+    const documents = state.profile?.consentRequired ? state.consentDocuments : state.data?.documents ?? [];
+    state.documentViewer = documents.find((document) => String(document.id) === String(target.dataset.id)) ?? null;
+    renderDocumentContext();
+  }
+  else if (action === 'document-close' && (event.target === target || target.tagName === 'BUTTON')) { state.documentViewer = null; renderDocumentContext(); }
   else if (action === 'accept') { await api.request(`/parent/documents/${target.dataset.id}/accept`, { method: 'POST' }); await start(); }
   else if (action === 'logout') window.icubeAuthLogout?.();
   else if (action === 'notification-message-close') { state.notificationMessage = null; render(); }
