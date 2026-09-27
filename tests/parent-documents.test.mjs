@@ -28,7 +28,18 @@ test('production documents describe actual CRM processing without public photo o
   for (const placeholder of [
     '[ПОЛНОЕ НАИМЕНОВАНИЕ ОПЕРАТОРА]', '[ИНН]', '[ОГРН]', '[АДРЕС]',
     '[EMAIL ДЛЯ ОБРАЩЕНИЙ ПО ПЕРСОНАЛЬНЫМ ДАННЫМ]',
-  ]) assert.ok(migration.split(placeholder).length >= 4, `${placeholder} must be present in every document`);
+  ]) assert.doesNotMatch(migration, new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal((migration.match(/Якубенко Иван Валерьевич/g) ?? []).length, 3);
+  assert.equal((migration.match(/плательщик налога на профессиональный доход \(самозанятый\)/g) ?? []).length, 3);
+  assert.equal((migration.match(/ИНН: 650403490282/g) ?? []).length, 3);
+  assert.match(migration, /694020, Сахалинская область, г\. Корсаков,/);
+  assert.match(migration, /ул\. Советская, д\. 57, кв\. 30/);
+  assert.match(migration, /icuberobots@gmail\.com/);
+  assert.equal((migration.match(/Телефон: \+7 \(995\) 604-11-20/g) ?? []).length, 3);
+  assert.equal((migration.match(/Сайт: icubesakh\.ru/g) ?? []).length, 3);
+  assert.doesNotMatch(migration, /\bОГРН(?:ИП)?\b/);
+  assert.match(migration, /ребёнка или детей, профили которых связаны с моей учётной записью/);
+  assert.match(migration, /Согласие распространяется на персональные данные ребёнка или детей, профили которых связаны с моей учётной записью/);
   assert.match(migration, /не публикуются на публичном сайте/);
   assert.match(migration, /не размещаются в социальных сетях/);
   assert.match(migration, /не используются в рекламе/);
