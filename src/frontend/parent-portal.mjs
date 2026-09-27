@@ -7,7 +7,7 @@ const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
   ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['about', 'О ребёнке'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '' };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '', receiptFile: null, receiptPreviewUrl: null };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
@@ -18,6 +18,41 @@ async function copyText(value) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value);
   const input = document.createElement('textarea'); input.value = value; input.style.position = 'fixed'; input.style.opacity = '0';
   document.body.append(input); input.select(); document.execCommand('copy'); input.remove();
+}
+
+async function decodeReceiptImage(file, env) {
+  if (typeof env.createImageBitmap === 'function') return env.createImageBitmap(file);
+  return new Promise((resolve, reject) => {
+    const url = env.URL.createObjectURL(file); const image = new env.Image();
+    image.onload = () => { env.URL.revokeObjectURL(url); resolve(image); };
+    image.onerror = () => { env.URL.revokeObjectURL(url); reject(new Error('Изображение чека не читается')); };
+    image.src = url;
+  });
+}
+
+export async function prepareReceiptUpload(file, env = globalThis) {
+  if (!['image/jpeg', 'image/png'].includes(file?.type)) return file;
+  const image = await decodeReceiptImage(file, env);
+  try {
+    const width = Number(image.naturalWidth ?? image.width); const height = Number(image.naturalHeight ?? image.height);
+    if (!(width > 0 && height > 0)) throw new Error('Некорректный размер изображения чека');
+    const scale = Math.min(1, 1800 / Math.max(width, height));
+    const canvas = env.document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Сжатие изображения недоступно');
+    context.fillStyle = '#fff'; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.82));
+    if (!blob) throw new Error('Не удалось сжать изображение чека');
+    const baseName = String(file.name ?? 'receipt').replace(/\.[^.]+$/, '') || 'receipt';
+    return new env.File([blob], `${baseName}.jpg`, { type: 'image/jpeg', lastModified: file.lastModified ?? Date.now() });
+  } finally { image.close?.(); }
+}
+
+function clearSelectedReceiptFile() {
+  if (state.receiptPreviewUrl) globalThis.URL?.revokeObjectURL?.(state.receiptPreviewUrl);
+  state.receiptFile = null; state.receiptPreviewUrl = null;
 }
 
 export function parentScheduleStatus(lesson) {
@@ -168,16 +203,14 @@ function attendanceHtml(rows) {
 export function paymentsHtml(data) {
   const rows = data?.rows ?? [];
   const homes = data?.homes ?? [];
-  const receipts = data?.receipts ?? [];
   const prices = homes.map((home) => {
     const enrollments = (home.enrollments ?? []).filter((item) => item.subscriptionPrice != null);
     if (!enrollments.length) return '';
     return `<div class="parent-payment-child"><b>${escapeHtml(home.child?.name ?? 'Ребёнок')}</b>${enrollments.map((item) => `<span>${escapeHtml(item.direction)} — <strong>${money(item.subscriptionPrice)}</strong> / 4 занятия</span>`).join('')}</div>`;
   }).join('');
-  const receiptHistory = receipts.length ? `<div class="parent-receipt-history">${receipts.map((receipt) => `<article class="parent-card parent-row"><div><b>Чек от ${dateRu(receipt.uploadedAt)}</b><span>${receipt.status === 'confirmed' ? 'Подтверждено' : 'Ожидает подтверждения'}</span></div><a class="parent-secondary" href="${escapeHtml(receipt.fileUrl)}" target="_blank" rel="noopener">Посмотреть чек</a></article>`).join('')}</div>` : empty('Загруженных чеков пока нет.');
+  const selectedReceipt = state.receiptFile ? `<div class="parent-receipt-selected"><span>Выбран файл</span><b>${escapeHtml(state.receiptFile.name)}</b><div><button class="parent-secondary" data-action="receipt-preview">Посмотреть</button><button class="parent-secondary danger" data-action="receipt-remove">Удалить</button></div></div>` : '';
   return `<section class="parent-title"><h1>Оплаты</h1></section>
-    <article class="parent-card parent-payment-instructions"><h2>Оплата занятий</h2><p>Переведите оплату по номеру телефона:</p><div class="parent-payment-phone"><strong>+7 (999) 454-15-06</strong><span>Сбербанк</span><button class="parent-secondary" data-action="copy-payment-phone">Скопировать номер</button></div><h3>Текущая стоимость занятий:</h3>${prices || empty('Нет активных направлений с настроенной ценой.')}<p>Можно оплатить другую сумму или сразу несколько абонементов. После перевода загрузите чек. После проверки оплата появится в вашем кабинете, а баланс занятий обновится.</p><div class="parent-receipt-upload"><label>Загрузить чек<input type="file" data-receipt-file accept="image/jpeg,image/png,application/pdf"></label><button class="parent-primary" data-action="upload-receipt">Отправить чек</button><span data-receipt-message>${escapeHtml(state.receiptMessage)}</span></div></article>
-    <section class="parent-payment-section"><h2>Загруженные чеки</h2>${receiptHistory}</section>
+    <article class="parent-card parent-payment-instructions"><h2>Оплата занятий</h2><p>Переведите оплату по номеру телефона:</p><div class="parent-payment-phone"><strong>+7 (999) 454-15-06</strong><span>Сбербанк</span><button class="parent-secondary" data-action="copy-payment-phone">Скопировать номер</button></div><h3>Текущая стоимость занятий:</h3>${prices || empty('Нет активных направлений с настроенной ценой.')}<p>Можно оплатить другую сумму или сразу несколько абонементов. После перевода загрузите чек. После проверки оплата появится в вашем кабинете, а баланс занятий обновится.</p><div class="parent-receipt-upload"><label class="parent-receipt-picker"><span class="parent-secondary">Выбрать файл</span><input type="file" data-action="receipt-file" data-receipt-file accept="image/jpeg,image/png,application/pdf"></label>${selectedReceipt}${state.receiptFile ? '<button class="parent-primary" data-action="upload-receipt">Отправить чек</button>' : ''}<span data-receipt-message>${escapeHtml(state.receiptMessage)}</span></div></article>
     <section class="parent-payment-section"><h2>История оплат</h2>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${row.type === 'refund' ? 'Возврат' : 'Оплата'}</b><span>${dateRu(row.date)}</span></div><div class="parent-payment-value"><strong class="${row.type === 'refund' ? 'negative' : ''}">${row.type === 'refund' ? '−' : '+'}${money(row.amount)}</strong>${row.type === 'payment' && row.receiptIds?.length ? `<a class="parent-payment-receipt-link" href="/api/v1/parent/payment-receipts/${row.receiptIds[0]}/file" target="_blank" rel="noopener" title="Посмотреть чек" aria-label="Посмотреть чек">📎 <span>Чек</span></a>` : ''}</div></article>`).join('')}</div>` : empty('Оплат пока нет.')}</section>`;
 }
 
@@ -310,6 +343,11 @@ function setViewer(delta) {
 app?.addEventListener('change', async (event) => {
   const action = event.target.dataset.action;
   if (action === 'child') { state.childId = event.target.value; state.data = null; await loadTab(); }
+  if (action === 'receipt-file') {
+    clearSelectedReceiptFile(); state.receiptFile = event.target.files?.[0] ?? null;
+    state.receiptPreviewUrl = state.receiptFile ? globalThis.URL.createObjectURL(state.receiptFile) : null;
+    state.receiptMessage = ''; render();
+  }
   if (action === 'notification-setting') {
     try { await api.request('/parent/notification-settings', { method: 'PATCH', body: { [event.target.dataset.type]: event.target.checked } }); }
     catch (error) { event.target.checked = !event.target.checked; window.alert(errorMessage(error)); }
@@ -343,16 +381,20 @@ app?.addEventListener('click', async (event) => {
     await copyText('+79994541506');
     target.textContent = 'Скопировано';
   }
+  else if (action === 'receipt-preview' && state.receiptPreviewUrl) window.open(state.receiptPreviewUrl, '_blank', 'noopener');
+  else if (action === 'receipt-remove') { clearSelectedReceiptFile(); state.receiptMessage = ''; render(); }
   else if (action === 'upload-receipt') {
-    const file = app.querySelector('[data-receipt-file]')?.files?.[0];
+    const file = state.receiptFile;
     if (!file) throw new ApiError('Выберите JPG, PNG или PDF');
     target.disabled = true;
     const message = app.querySelector('[data-receipt-message]');
     try {
-      await api.requestRaw('/parent/payment-receipts', { body: file, headers: {
-        'Content-Type': file.type || 'application/octet-stream',
-        'X-Original-Filename': encodeURIComponent(file.name),
+      const uploadFile = await prepareReceiptUpload(file);
+      await api.requestRaw('/parent/payment-receipts', { body: uploadFile, headers: {
+        'Content-Type': uploadFile.type || 'application/octet-stream',
+        'X-Original-Filename': encodeURIComponent(uploadFile.name),
       } });
+      clearSelectedReceiptFile();
       state.receiptMessage = 'Чек отправлен на проверку.';
       if (message) message.textContent = state.receiptMessage;
       await loadTab();

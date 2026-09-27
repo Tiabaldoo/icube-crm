@@ -468,13 +468,13 @@ function notificationItemMarkup(item) {
 
 function pushPanelMarkup() {
   const unread = state.notifications.filter((item) => !item.readAt);
-  const rows = state.history ? state.notifications.filter((item) => item.readAt) : unread;
+  const rows = state.inboxLoading ? [] : state.history ? state.notifications.filter((item) => item.readAt) : unread;
   const title = state.history ? 'История уведомлений' : 'Уведомления';
   const empty = state.inboxLoading ? 'Загрузка…' : state.history ? 'Прочитанных уведомлений пока нет' : 'Новых уведомлений нет';
   return `<div class="push-popover-head"><b>${title}</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
     <div class="notification-inbox-list">${rows.length ? rows.map(notificationItemMarkup).join('') : `<div class="push-popover-status">${empty}</div>`}</div>
     <div class="push-popover-actions">${state.history
-      ? '<button class="btn" type="button" onclick="icubePush.showUnread()">Непрочитанные</button>'
+      ? '<button class="btn" type="button" onclick="icubePush.showUnread()">Назад к новым</button>'
       : `${unread.length ? '<button class="btn" type="button" onclick="icubePush.markAllRead()">Прочитать все</button>' : ''}<button class="btn" type="button" onclick="icubePush.showHistory()">История уведомлений</button>`}</div>`;
 }
 
@@ -513,6 +513,15 @@ async function markAllRead() {
     state.notifications = state.notifications.map((item) => item.readAt ? item : { ...item, readAt: now });
     syncBellIcons(); renderPushPanel();
   } catch (error) { window.alert(error?.message ?? 'Не удалось отметить уведомления прочитанными.'); }
+}
+
+async function showHistory() {
+  if (!pushPanel) return;
+  state.history = true;
+  state.inboxLoading = true;
+  renderPushPanel();
+  try { await refreshInbox(); }
+  catch (error) { window.alert(error?.message ?? 'Не удалось обновить историю уведомлений.'); }
 }
 
 async function openNotification(notificationId) {
@@ -566,7 +575,7 @@ window.icubePush = {
   icon: bellIcon, unread: () => state.notifications.filter((item) => !item.readAt).length,
   syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
   refreshInbox, openNotification, markAllRead,
-  showHistory: () => { state.history = true; renderPushPanel(); },
+  showHistory,
   showUnread: () => { state.history = false; renderPushPanel(); },
   openOnboarding, closeOnboarding, deferOnboarding,
   maybeShowOnboardingAfterLogin,

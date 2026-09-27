@@ -411,11 +411,13 @@ test('bell is an internal notification inbox independent from Web Push settings'
   assert.match(panel, /Новых уведомлений нет/);
   assert.match(panel, /Прочитать все/);
   assert.match(panel, /История уведомлений/);
+  assert.match(panel, /Назад к новым/);
   assert.doesNotMatch(panel, /pushStatusText|Включить уведомления|Отключить уведомления|Как установить приложение/);
   assert.match(source, /state\.notifications\.filter\(\(item\) => !item\.readAt\)\.length/);
   assert.match(source, /api\.request\(`\$\{inboxBase\(\)\}\/read-all`/);
   assert.match(source, /if \(!item\.readAt\) await api\.request/);
   assert.match(source, /item\.readAt = item\.readAt \?\? new Date\(\)\.toISOString\(\)/);
+  assert.match(source, /async function showHistory\(\)[\s\S]*state\.history = true[\s\S]*await refreshInbox\(\)/);
 });
 
 test('deep-link bridge opens teacher lesson, director child and parent schedule and marks read after navigation', async () => {

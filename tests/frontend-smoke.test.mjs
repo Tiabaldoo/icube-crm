@@ -212,7 +212,7 @@ test('единый frontend загружается и рендерит все т
 
   context.__crmProbe.state.childTab = 'payments';
   childHtml = context.child();
-  assert.match(childHtml, /Сначала новые/);
+  assert.match(childHtml, /sort-order-button[^>]*Сейчас новые сверху[^>]*>↓<\/button>/);
   assert.ok(childHtml.indexOf('20.09.2026') < childHtml.indexOf('01.09.2026'), 'оплаты: новые сверху');
   context.setChildLedgerSort('payments', 'asc');
   childHtml = context.child();
@@ -221,7 +221,7 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.childTab = 'visits';
   context.__crmProbe.state.childLedgerSort.visits = 'desc';
   childHtml = context.child();
-  assert.match(childHtml, /Сначала новые/);
+  assert.match(childHtml, /sort-order-button[^>]*>↓<\/button>/);
   assert.ok(childHtml.indexOf('22.09.2026') < childHtml.indexOf('05.09.2026'), 'посещения: новые сверху');
   context.setChildLedgerSort('visits', 'asc');
   childHtml = context.child();
@@ -230,11 +230,20 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.childTab = 'refunds';
   context.__crmProbe.state.childLedgerSort.refunds = 'desc';
   childHtml = context.child();
-  assert.match(childHtml, /Сначала новые/);
+  assert.match(childHtml, /sort-order-button[^>]*>↓<\/button>/);
   assert.ok(childHtml.indexOf('21.09.2026') < childHtml.indexOf('03.09.2026'), 'возвраты: новые сверху');
   context.setChildLedgerSort('refunds', 'asc');
   childHtml = context.child();
   assert.ok(childHtml.indexOf('03.09.2026') < childHtml.indexOf('21.09.2026'), 'возвраты: старые сверху');
+
+  context.__crmProbe.state.paymentSort = 'desc';
+  let paymentsHtml = context.payments();
+  assert.match(paymentsHtml, /sort-order-button[^>]*Сейчас новые сверху[^>]*>↓<\/button>/);
+  assert.ok(paymentsHtml.indexOf('20.09.2026') < paymentsHtml.indexOf('01.09.2026'), 'общие оплаты: новые сверху');
+  context.togglePaymentSort();
+  paymentsHtml = context.payments();
+  assert.match(paymentsHtml, /sort-order-button[^>]*Сейчас старые сверху[^>]*>↑<\/button>/);
+  assert.ok(paymentsHtml.indexOf('01.09.2026') < paymentsHtml.indexOf('20.09.2026'), 'общие оплаты: старые сверху');
 
   const payload = '<img src=x onerror=alert(1)>';
   context.__crmProbe.state.role = 'director'; context.__crmProbe.state.page = 'children';

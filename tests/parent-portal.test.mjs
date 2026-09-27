@@ -5,7 +5,7 @@ import { createParentPortal } from '../backend/src/parent-portal.mjs';
 import { createParentNotifications } from '../backend/src/parent-notifications.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
 import { permissions } from '../backend/src/auth.mjs';
-import { ageFromBirthDate, parentAbsenceAction, parentBalancePresentation, parentHomeHtml, parentScheduleCalendar, parentScheduleStatus } from '../src/frontend/parent-portal.mjs';
+import { ageFromBirthDate, parentAbsenceAction, parentBalancePresentation, parentHomeHtml, parentScheduleCalendar, parentScheduleStatus, prepareReceiptUpload } from '../src/frontend/parent-portal.mjs';
 import { ageOnDate, createBirthdayNotifications } from '../backend/src/birthday-notifications.mjs';
 import { localDate, nextDate } from '../scripts/generate-parent-notifications.mjs';
 
@@ -540,7 +540,9 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.doesNotMatch(home, /Стоимость абонемента|Здравствуйте/);
   assert.match(payments, /Текущая стоимость занятий/);
   assert.match(payments, /\/ 4 занятия/);
-  assert.match(payments, /Загрузить чек/);
+  assert.match(payments, /Выбрать файл/);
+  assert.match(payments, /receipt-preview/); assert.match(payments, /receipt-remove/);
+  assert.doesNotMatch(payments, /Загруженные чеки|parent-receipt-history/);
   assert.doesNotMatch(payments, /data-action="pay"|QR/);
   assert.match(payments, /parent-payment-receipt-link/);
   assert.match(portal, /data-parent-push-controls/); assert.match(portal, /Как установить приложение/);
@@ -558,6 +560,27 @@ test('parent UI moves price and child data to their sections and removes email a
   assert.match(access, /отдельный доступ для второго родителя или законного представителя/);
   assert.match(access, /Родитель: \$\{escapeHtml\(account\.name \|\| 'Не указан'\)\}/);
   assert.match(access, /backdrop\.remove\(\); legacy\.render\(\); return/);
+});
+
+test('parent receipt upload compresses JPEG/PNG to 1800px JPEG and leaves PDF unchanged', async () => {
+  class TestFile extends Blob {
+    constructor(parts, name, options = {}) { super(parts, options); this.name = name; this.lastModified = options.lastModified ?? 0; }
+  }
+  const draw = []; const encoded = [];
+  const canvas = { width: 0, height: 0,
+    getContext: () => ({ fillStyle: '', fillRect: (...args) => draw.push(['fill', ...args]), drawImage: (...args) => draw.push(['image', ...args.slice(1)]) }),
+    toBlob: (callback, type, quality) => { encoded.push({ type, quality }); callback(new Blob(['compressed'], { type })); },
+  };
+  const image = { width: 3600, height: 2400, closeCalled: false, close() { this.closeCalled = true; } };
+  const env = { createImageBitmap: async () => image, document: { createElement: (tag) => { assert.equal(tag, 'canvas'); return canvas; } }, File: TestFile };
+  const png = new TestFile(['image'], 'receipt.png', { type: 'image/png', lastModified: 7 });
+  const result = await prepareReceiptUpload(png, env);
+  assert.equal(canvas.width, 1800); assert.equal(canvas.height, 1200);
+  assert.deepEqual(encoded, [{ type: 'image/jpeg', quality: 0.82 }]);
+  assert.equal(result.name, 'receipt.jpg'); assert.equal(result.type, 'image/jpeg'); assert.equal(result.lastModified, 7);
+  assert.equal(image.closeCalled, true); assert.equal(draw.some(([kind]) => kind === 'image'), true);
+  const pdf = new TestFile(['pdf'], 'receipt.pdf', { type: 'application/pdf' });
+  assert.equal(await prepareReceiptUpload(pdf, env), pdf);
 });
 
 test('parent access create and reset share a selectable one-time credentials dialog', async () => {

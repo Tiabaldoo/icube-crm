@@ -212,7 +212,8 @@ test('receipt migration and UI preserve explicit links, protected files and focu
   assert.match(migration, /CREATE TABLE payment_receipts/); assert.match(migration, /CREATE TABLE payment_receipt_payments/);
   assert.match(migration, /PRIMARY KEY \(receipt_id,payment_id\)/); assert.doesNotMatch(migration, /DROP DATABASE|TRUNCATE/i);
   assert.match(parentUi, /Переведите оплату по номеру телефона/); assert.match(parentUi, /image\/jpeg,image\/png,application\/pdf/);
-  assert.match(parentUi, /Ожидает подтверждения/); assert.match(parentUi, /Подтверждено/); assert.doesNotMatch(parentUi, /Оплата абонемента|QR для оплаты/);
+  assert.match(parentUi, /Выбрать файл/); assert.match(parentUi, /prepareReceiptUpload/);
+  assert.doesNotMatch(parentUi, /Загруженные чеки|Ожидает подтверждения|Оплата абонемента|QR для оплаты/);
   assert.match(staffUi, /Чеки на проверке/); assert.match(staffUi, /Внести оплату/); assert.match(staffUi, /Не все оплаты по этому чеку внесены/);
   assert.match(staffUi, /Закрыть без внесения/); assert.match(staffUi, /linkedPayments/); assert.match(staffUi, /button\.disabled = true/);
   assert.doesNotMatch(staffUi, /filter\(\(item\) => item\.status === 'pending'\)/);

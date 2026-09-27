@@ -2067,7 +2067,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function childSortSelect(tab){
     const order=state.childLedgerSort[tab]||'desc';
-    return '<select class="select child-ledger-sort" style="max-width:170px" onchange="setChildLedgerSort(\''+tab+'\',this.value)"><option value="desc"'+(order==='desc'?' selected':'')+'>Сначала новые</option><option value="asc"'+(order==='asc'?' selected':'')+'>Сначала старые</option></select>';
+    const next=order==='desc'?'asc':'desc',label=order==='desc'?'Сейчас новые сверху. Показать старые сверху':'Сейчас старые сверху. Показать новые сверху';
+    return '<button class="btn sort-order-button" type="button" title="'+label+'" aria-label="'+label+'" onclick="setChildLedgerSort(\''+tab+'\',\''+next+'\')">'+(order==='desc'?'↓':'↑')+'</button>';
   }
 
   function childTabs(){
@@ -2548,13 +2549,28 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     render();
   };
 
+  function paymentDateValue(value){
+    const text=String(value||'');
+    if(/^\d{4}-\d{2}-\d{2}/.test(text)) return new Date(text.slice(0,10)+'T00:00:00').getTime();
+    const parts=text.split('.').map(Number);
+    return parts.length===3?new Date(parts[2],parts[1]-1,parts[0]).getTime():0;
+  }
+  state.paymentSort=state.paymentSort==='asc'?'asc':'desc';
+  window.togglePaymentSort=function(){state.paymentSort=state.paymentSort==='desc'?'asc':'desc';render();};
+  function paymentSortButton(){
+    const desc=state.paymentSort!=='asc',label=desc?'Сейчас новые сверху. Показать старые сверху':'Сейчас старые сверху. Показать новые сверху';
+    return '<button class="btn sort-order-button" type="button" title="'+label+'" aria-label="'+label+'" onclick="togglePaymentSort()">'+(desc?'↓':'↑')+'</button>';
+  }
   window.payments=function(){
-    let html=pageHead('Оплаты','Каждая оплата относится к одному ребёнку и одному направлению; ошибочную запись можно исправить или удалить.','<button class="btn primary" onclick="paymentForm()">+ Оплата</button>');
+    let html=pageHead('Оплаты','Каждая оплата относится к одному ребёнку и одному направлению; ошибочную запись можно исправить или удалить.','<div class="page-actions">'+paymentSortButton()+'<button class="btn primary" onclick="paymentForm()">+ Оплата</button></div>');
     if(!state.payments.length)return html+'<div class="card pad"><div class="empty">Оплат пока нет.</div></div>';
     html+='<div class="card list"><div class="row header payment-main-row"><div>Ребёнок</div><div>Направление</div><div>Сумма</div><div>Дата</div><div>Занятий</div><div></div></div>';
-    html+=state.payments.slice().reverse().map(function(p){
+    html+=state.payments.slice().sort(function(a,b){
+      const direction=state.paymentSort==='asc'?1:-1,diff=paymentDateValue(a.paidOn||a.date)-paymentDateValue(b.paidOn||b.date);
+      return diff?direction*diff:direction*(Number(a.id||0)-Number(b.id||0));
+    }).map(function(p){
       const c=byId(state.children,p.childId);
-      return '<div class="row payment-main-row"><div><b>'+(c?.name||p.childName||'—')+'</b><div class="muted mini">'+p.method+'</div></div><div>'+p.direction+'</div><div class="money">'+money(p.amount)+'</div><div>'+p.date+'</div><div><span class="badge green">+'+Number(p.lessons.toFixed(4))+'</span></div><div style="display:flex;gap:6px;justify-content:flex-end"><button class="btn" onclick="editPayment('+p.id+')">Изменить</button><button class="btn danger" onclick="deletePayment('+p.id+')">Удалить</button></div></div>';
+      return '<div class="row payment-main-row"><div><b>'+(c?.name||p.childName||'—')+'</b><div class="muted mini">'+p.method+'</div></div><div>'+p.direction+'</div><div class="money">'+money(p.amount)+'</div><div>'+p.date+'</div><div><span class="badge green">+'+Number(p.lessons.toFixed(4))+'</span></div><div class="payment-row-actions"><button class="btn" onclick="editPayment('+p.id+')">Изменить</button><button class="btn danger" onclick="deletePayment('+p.id+')">Удалить</button></div></div>';
     }).join('');
     return html+'</div>';
   };
@@ -3289,7 +3305,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
   function childSortSelectV118(tab){
     const order=state.childLedgerSort?.[tab]||'desc';
-    return '<select class="select child-ledger-sort" style="max-width:170px" onchange="setChildLedgerSort(\''+tab+'\',this.value)"><option value="desc"'+(order==='desc'?' selected':'')+'>Сначала новые</option><option value="asc"'+(order==='asc'?' selected':'')+'>Сначала старые</option></select>';
+    const next=order==='desc'?'asc':'desc',label=order==='desc'?'Сейчас новые сверху. Показать старые сверху':'Сейчас старые сверху. Показать новые сверху';
+    return '<button class="btn sort-order-button" type="button" title="'+label+'" aria-label="'+label+'" onclick="setChildLedgerSort(\''+tab+'\',\''+next+'\')">'+(order==='desc'?'↓':'↑')+'</button>';
   }
 
   function childPaymentsV118(c){
@@ -3297,11 +3314,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const paymentEnrollment=(c.enrollments||[]).find(function(e){return e.editable!==false;});
     let html='<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Оплаты</h2><div class="muted mini child-ledger-count">'+rows.length+' операций</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+(rows.length?childSortSelectV118('payments'):'')+(paymentEnrollment?'<button class="btn primary" onclick="paymentForm('+c.id+',\''+escapeInlineJs(paymentEnrollment.direction)+'\')">+ Оплата</button>':'')+'</div></div>';
     if(!rows.length) return html+'<div class="empty">Оплат пока нет.</div></div>';
-    html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr 1.2fr"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div><div></div></div>';
+    html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr minmax(max-content,2fr)"><div>Дата</div><div>Направление</div><div>Сумма</div><div>Способ</div><div>Занятий</div><div></div></div>';
     html+=rows.map(function(p){
-      return '<div class="row" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr 1.2fr">'+
+      return '<div class="row" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr minmax(max-content,2fr)">'+
         '<div><b>'+escapeHtml(p.date)+'</b></div><div>'+escapeHtml(p.direction)+'</div><div class="money">'+money(p.amount)+'</div><div>'+escapeHtml(p.method)+'</div><div class="positive">+'+fmt(p.lessons,4)+'</div>'+
-        '<div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">'+(Number(p.refundableAmount)>0?'<button class="btn soft" onclick="refundPayment('+p.id+')">Возврат</button>':'')+'<button class="btn" onclick="editChildPayment('+c.id+','+p.id+')">Изменить</button><button class="btn danger" onclick="deleteChildPayment('+c.id+','+p.id+')">Удалить</button></div>'+
+        '<div class="payment-row-actions">'+(Number(p.refundableAmount)>0?'<button class="btn soft" onclick="refundPayment('+p.id+')">Возврат</button>':'')+'<button class="btn" onclick="editChildPayment('+c.id+','+p.id+')">Изменить</button><button class="btn danger" onclick="deleteChildPayment('+c.id+','+p.id+')">Удалить</button></div>'+
       '</div>';
     }).join('');
     return html+'</div></div>';
