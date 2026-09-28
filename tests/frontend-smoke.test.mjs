@@ -120,14 +120,14 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
   context.__crmProbe.state.children = [
     { id: 101, name: 'Иван Роботов', parent: 'Анна', school: '', grade: '', status: 'Активный', enrollments: [
-      { projectId: 2, project: 'Зебра', direction: 'Робототехника', balance: 1 },
-      { projectId: 1, project: 'iCubeRobots', direction: 'Программирование', balance: 1 },
+      { projectId: 2, project: 'Зебра', direction: 'Робототехника', groupName: 'Школа №1 · Чт 14:00', balance: 1 },
+      { projectId: 1, project: 'iCubeRobots', direction: 'Программирование', groupName: null, balance: 1 },
     ] },
     { id: 102, name: 'Пётр Кодеров', parent: 'Иван Петров', school: '', grade: '', status: 'Лид', enrollments: [
-      { projectId: 2, project: 'Зебра', direction: 'Программирование', balance: 1 },
+      { projectId: 2, project: 'Зебра', direction: 'Программирование', groupName: 'Зебра · Пт 18:00', balance: 1 },
     ] },
     { id: 103, name: 'Мария Пауза', parent: 'Ольга', school: '', grade: '', status: 'Пауза', enrollments: [
-      { projectId: 1, project: 'iCubeRobots', direction: 'Робототехника', balance: 1 },
+      { projectId: 1, project: 'iCubeRobots', direction: 'Робототехника', groupName: 'Соловьёвка · Ср 15:00', balance: 1 },
     ] },
     { id: 104, name: 'Финиш Закончил', parent: 'Светлана', school: '', grade: '', status: 'Закончил', enrollments: [
       { projectId: 1, project: 'iCubeRobots', direction: 'Робототехника', balance: 1 },
@@ -142,6 +142,17 @@ test('единый frontend загружается и рендерит все т
   assert.match(childrenHtml, /Все статусы/);
   assert.match(childrenHtml, /Закончил/);
   assert.match(childrenHtml, /Все направления/);
+  assert.match(childrenHtml, /<div>Группа<\/div><div>Баланс<\/div>/, 'desktop header содержит отдельную колонку группы');
+  assert.match(childrenHtml, /Школа №1 · Чт 14:00/, 'готовый enrollment.groupName отображается без пересборки');
+  assert.match(childrenHtml, /Без группы/, 'null groupName отображается как «Без группы»');
+  const ivanRowStart=childrenHtml.indexOf('data-child-id="101"');
+  const ivanRowEnd=childrenHtml.indexOf('data-child-id="102"',ivanRowStart);
+  const ivanRow=childrenHtml.slice(ivanRowStart,ivanRowEnd);
+  assert.ok(ivanRow.indexOf('Робототехника') < ivanRow.indexOf('Школа №1 · Чт 14:00'), 'первая группа относится к первому направлению');
+  assert.ok(ivanRow.indexOf('Школа №1 · Чт 14:00') < ivanRow.indexOf('Программирование'), 'направления не перепутаны');
+  assert.ok(ivanRow.indexOf('Программирование') < ivanRow.indexOf('Без группы'), 'вторая группа относится ко второму направлению');
+  assert.match(ivanRow, /child-group-mobile">Школа №1 · Чт 14:00<\/div>/, 'mobile показывает группу прямо под соответствующим направлением');
+  assert.match(ivanRow, /child-group-mobile">Без группы<\/div>/, 'mobile показывает fallback под направлением без группы');
 
   for (const [status, visible, hidden] of [
     ['Активный', 'Иван Роботов', 'Пётр Кодеров'],

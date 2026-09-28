@@ -418,6 +418,10 @@ img,svg,canvas{max-width:100%}
 
 /* ===== Итоговый каскад из mobile-fixes2.css ===== */
 /* Mobile refinement layer v1.1.20 */
+.page-children .list .row{grid-template-columns:minmax(0,1.5fr) minmax(0,.75fr) minmax(0,1fr) minmax(0,1.2fr) minmax(0,.7fr) auto}
+.page-children .child-enrollment-direction,.page-children .child-groups-desktop .mini{overflow-wrap:anywhere}
+.page-children .child-enrollment-direction+.child-enrollment-direction,.page-children .child-groups-desktop .mini+.mini{margin-top:4px}
+.page-children .child-group-mobile{display:none}
 html,body{overscroll-behavior-x:none}
 body.modal-open{overflow:hidden!important;touch-action:none}
 
@@ -432,10 +436,13 @@ body.modal-open{overflow:hidden!important;touch-action:none}
   .page-children .list .row:not(.header){display:grid!important;grid-template-columns:minmax(0,1fr) auto!important;gap:8px 12px!important;position:relative!important;padding:14px 40px 14px 14px!important;align-items:start!important}
   .page-children .list .row:not(.header)>*{margin:0!important;min-width:0!important;flex:none!important}
   .page-children .list .row:not(.header)>:nth-child(1){grid-column:1;grid-row:1}
-  .page-children .list .row:not(.header)>:nth-child(2){grid-column:2;grid-row:1;justify-self:end}
-  .page-children .list .row:not(.header)>:nth-child(3){grid-column:1;grid-row:2;color:var(--muted)}
-  .page-children .list .row:not(.header)>:nth-child(4){grid-column:2;grid-row:2;justify-self:end;text-align:right}
-  .page-children .list .row:not(.header)>:nth-child(5){position:absolute!important;right:14px!important;top:50%!important;transform:translateY(-50%)!important;font-size:22px!important;line-height:1!important}
+  .page-children .list .row:not(.header)>:nth-child(2){grid-column:2;grid-row:1;justify-self:end;display:block!important}
+  .page-children .list .row:not(.header)>:nth-child(3){grid-column:1;grid-row:2;color:var(--muted);display:block!important}
+  .page-children .list .row:not(.header)>:nth-child(4){display:none!important}
+  .page-children .list .row:not(.header)>:nth-child(5){grid-column:2;grid-row:2;justify-self:end;text-align:right;display:block!important}
+  .page-children .list .row:not(.header)>:nth-child(6){position:absolute!important;right:14px!important;top:50%!important;transform:translateY(-50%)!important;font-size:22px!important;line-height:1!important;display:block!important}
+  .page-children .child-group-mobile{display:block!important;margin-top:2px}
+  .page-children .child-enrollment-direction+.child-enrollment-direction{margin-top:8px}
 
   .page-balances .row:not(.header),.page-payments .row:not(.header),.page-refunds .row:not(.header){align-items:start!important}
   .page-balances .row:not(.header)>*,.page-payments .row:not(.header)>*,.page-refunds .row:not(.header)>*{line-height:1.35}
