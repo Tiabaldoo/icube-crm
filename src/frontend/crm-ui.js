@@ -89,12 +89,39 @@ function dashboard(){
 }
 function children(){
  const projectFilter=state.role==='partner'?'all':(state.childProjectFilter||'all');
- const rows=state.children.filter(c=>projectFilter==='all'||c.enrollments.some(e=>String(e.projectId)===String(projectFilter))).map(c=>`<div class="row clickable" onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(c.enrollments.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(c.status)}">${escapeHtml(c.status)}</span></div><div>${c.enrollments.map(e=>`<div class="mini">${escapeHtml(e.direction)}</div>`).join('')}</div><div>${c.enrollments.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`).join('');
+ const statusFilter=state.childStatusFilter||'all';
+ const directionFilter=state.childDirectionFilter||'all';
+ const searchFilter=String(state.childSearch||'').toLowerCase();
+ const filteredChildren=state.children.filter(c=>{
+   if(statusFilter!=='all'&&c.status!==statusFilter) return false;
+   if(projectFilter==='all'&&directionFilter==='all') return true;
+   return (c.enrollments||[]).some(e=>
+     (projectFilter==='all'||String(e.projectId)===String(projectFilter))&&
+     (directionFilter==='all'||e.direction===directionFilter)
+   );
+ });
+ const rows=filteredChildren.map(c=>{
+   const searchText=(String(c.name||'')+' '+String(c.parent||'')).toLowerCase();
+   const hidden=searchFilter&&!searchText.includes(searchFilter)?' style="display:none"':'';
+   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(c.enrollments.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(c.status)}">${escapeHtml(c.status)}</span></div><div>${c.enrollments.map(e=>`<div class="mini">${escapeHtml(e.direction)}</div>`).join('')}</div><div>${c.enrollments.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
+ }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
- return pageHead('Дети','Один ребёнок — одна карточка, направления и балансы хранятся отдельно','<button class="btn primary" onclick="childForm()">+ Добавить ребёнка</button>')+`<div class="toolbar"><input class="input search" placeholder="Поиск по имени или родителю" oninput="filterRows(this.value)">${projectSelect}<select class="select" style="max-width:180px"><option>Все статусы</option><option>Активный</option><option>Лид</option><option>Пауза</option></select></div><div class="card list" id="childRows"><div class="row header"><div>Ребёнок</div><div>Статус</div><div>Направления</div><div>Баланс</div><div></div></div>${rows}</div>`;
+ const statusSelect=`<select class="select" style="max-width:180px" onchange="setChildStatusFilter(this.value)"><option value="all" ${statusFilter==='all'?'selected':''}>Все статусы</option>${['Активный','Лид','Пауза','Закончил'].map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join('')}</select>`;
+ const directionSelect=`<select class="select" style="max-width:200px" onchange="setChildDirectionFilter(this.value)"><option value="all" ${directionFilter==='all'?'selected':''}>Все направления</option>${['Робототехника','Программирование'].map(d=>`<option value="${d}" ${directionFilter===d?'selected':''}>${d}</option>`).join('')}</select>`;
+ return pageHead('Дети','Один ребёнок — одна карточка, направления и балансы хранятся отдельно','<button class="btn primary" onclick="childForm()">+ Добавить ребёнка</button>')+`<div class="toolbar"><input class="input search" placeholder="Поиск по имени или родителю" value="${escapeAttr(state.childSearch||'')}" oninput="filterRows(this.value)">${projectSelect}${statusSelect}${directionSelect}</div><div class="card list" id="childRows"><div class="row header"><div>Ребёнок</div><div>Статус</div><div>Направления</div><div>Баланс</div><div></div></div>${rows}</div>`;
 }
 function setChildProjectFilter(value){state.childProjectFilter=value;render()}
-function filterRows(q){document.querySelectorAll('#childRows .row.clickable').forEach(el=>el.style.display=el.innerText.toLowerCase().includes(q.toLowerCase())?'grid':'none')}
+function setChildStatusFilter(value){state.childStatusFilter=value;render()}
+function setChildDirectionFilter(value){state.childDirectionFilter=value;render()}
+function filterRows(q){
+ state.childSearch=q;
+ const needle=String(q||'').toLowerCase();
+ document.querySelectorAll('#childRows .row.clickable').forEach(el=>{
+   const child=byId(state.children,el.dataset.childId);
+   const searchText=(String(child?.name||'')+' '+String(child?.parent||'')).toLowerCase();
+   el.style.display=searchText.includes(needle)?'grid':'none';
+ });
+}
 function childForm(id=null){
  const c=id?byId(state.children,id):null;
  modal(`<h3>${c?'Редактировать ребёнка':'Новый ребёнок'}</h3><div class="form-grid"><div class="field span-2"><label>ФИО</label><input class="input" id="cf-name" value="${escapeAttr(c?.name||'')}" placeholder="Фамилия Имя"></div><div class="field"><label>Дата рождения</label><input class="input" id="cf-birth" type="date" value="${escapeAttr(c?.birth||'')}"></div><div class="field"><label>Статус</label><select class="select" id="cf-status">${['Лид','Активный','Пауза','Закончил'].map(s=>`<option ${c?.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Школа</label><input class="input" id="cf-school" value="${escapeAttr(c?.school||'')}"></div><div class="field"><label>Класс</label><input class="input" id="cf-grade" value="${escapeAttr(c?.grade||'')}"></div><div class="field"><label>Родитель</label><input class="input" id="cf-parent" value="${escapeAttr(c?.parent||'')}"></div><div class="field"><label>Телефон</label><input class="input" id="cf-phone" value="${escapeAttr(c?.phone||'')}"></div><div class="field span-2"><label>Основная группа</label><select class="select" id="cf-group">${state.groups.map(g=>`<option value="${g.id}" ${c?.enrollments?.[0]?.groupId===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}<option value="new">+ Создать группу</option></select></div><div class="field span-2"><label>Примечание</label><textarea class="textarea" id="cf-note">${escapeHtml(c?.note||'')}</textarea></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveChild(${c?.id||'null'})">Сохранить</button></div>`);

@@ -107,6 +107,96 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.render();
   assert.match(app.innerHTML, /teacher-shell/);
 
+  const savedChildrenFilterState = {
+    role: context.__crmProbe.state.role,
+    children: context.__crmProbe.state.children,
+    projects: context.__crmProbe.state.projects,
+    childProjectFilter: context.__crmProbe.state.childProjectFilter,
+    childStatusFilter: context.__crmProbe.state.childStatusFilter,
+    childDirectionFilter: context.__crmProbe.state.childDirectionFilter,
+    childSearch: context.__crmProbe.state.childSearch,
+  };
+  context.__crmProbe.state.role = 'director';
+  context.__crmProbe.state.projects = [{ id: 1, name: 'iCubeRobots' }, { id: 2, name: 'Зебра' }];
+  context.__crmProbe.state.children = [
+    { id: 101, name: 'Иван Роботов', parent: 'Анна', school: '', grade: '', status: 'Активный', enrollments: [
+      { projectId: 2, project: 'Зебра', direction: 'Робототехника', balance: 1 },
+      { projectId: 1, project: 'iCubeRobots', direction: 'Программирование', balance: 1 },
+    ] },
+    { id: 102, name: 'Пётр Кодеров', parent: 'Иван Петров', school: '', grade: '', status: 'Лид', enrollments: [
+      { projectId: 2, project: 'Зебра', direction: 'Программирование', balance: 1 },
+    ] },
+    { id: 103, name: 'Мария Пауза', parent: 'Ольга', school: '', grade: '', status: 'Пауза', enrollments: [
+      { projectId: 1, project: 'iCubeRobots', direction: 'Робототехника', balance: 1 },
+    ] },
+    { id: 104, name: 'Финиш Закончил', parent: 'Светлана', school: '', grade: '', status: 'Закончил', enrollments: [
+      { projectId: 1, project: 'iCubeRobots', direction: 'Робототехника', balance: 1 },
+    ] },
+  ];
+  context.__crmProbe.state.childProjectFilter = 'all';
+  context.__crmProbe.state.childStatusFilter = 'all';
+  context.__crmProbe.state.childDirectionFilter = 'all';
+  context.__crmProbe.state.childSearch = '';
+  let childrenHtml = context.children();
+  for (const name of ['Иван Роботов', 'Пётр Кодеров', 'Мария Пауза', 'Финиш Закончил']) assert.match(childrenHtml, new RegExp(name));
+  assert.match(childrenHtml, /Все статусы/);
+  assert.match(childrenHtml, /Закончил/);
+  assert.match(childrenHtml, /Все направления/);
+
+  for (const [status, visible, hidden] of [
+    ['Активный', 'Иван Роботов', 'Пётр Кодеров'],
+    ['Лид', 'Пётр Кодеров', 'Иван Роботов'],
+    ['Пауза', 'Мария Пауза', 'Иван Роботов'],
+    ['Закончил', 'Финиш Закончил', 'Иван Роботов'],
+  ]) {
+    context.__crmProbe.state.childStatusFilter = status;
+    childrenHtml = context.children();
+    assert.match(childrenHtml, new RegExp(visible), `status ${status} показывает нужного ребёнка`);
+    assert.doesNotMatch(childrenHtml, new RegExp(hidden), `status ${status} скрывает остальных`);
+  }
+
+  context.__crmProbe.state.childStatusFilter = 'all';
+  context.__crmProbe.state.childDirectionFilter = 'Робототехника';
+  childrenHtml = context.children();
+  assert.match(childrenHtml, /Иван Роботов/);
+  assert.match(childrenHtml, /Мария Пауза/);
+  assert.doesNotMatch(childrenHtml, /Пётр Кодеров/);
+
+  context.__crmProbe.state.childDirectionFilter = 'Программирование';
+  childrenHtml = context.children();
+  assert.match(childrenHtml, /Иван Роботов/, 'ребёнок с двумя направлениями попадает в фильтр программирования');
+  assert.match(childrenHtml, /Пётр Кодеров/);
+
+  context.__crmProbe.state.childProjectFilter = '2';
+  context.__crmProbe.state.childStatusFilter = 'Активный';
+  context.__crmProbe.state.childDirectionFilter = 'Робототехника';
+  context.filterRows('иван');
+  childrenHtml = context.children();
+  assert.match(childrenHtml, /Иван Роботов/);
+  assert.doesNotMatch(childrenHtml, /Пётр Кодеров|Мария Пауза|Финиш Закончил/, 'проект, статус, направление и поиск работают совместно');
+
+  context.__crmProbe.state.childProjectFilter = 'all';
+  context.__crmProbe.state.childStatusFilter = 'all';
+  context.__crmProbe.state.childDirectionFilter = 'all';
+  context.filterRows('иван петров');
+  childrenHtml = context.children();
+  const parentSearchRow = childrenHtml.match(/<div class="row clickable"[^>]*data-child-id="102"[^>]*>/)?.[0] ?? '';
+  assert.ok(parentSearchRow, 'поиск учитывает родителя');
+  assert.doesNotMatch(parentSearchRow, /display:none/, 'совпадение по родителю остаётся видимым');
+
+  context.__crmProbe.state.childStatusFilter = 'Лид';
+  context.__crmProbe.state.childDirectionFilter = 'Программирование';
+  context.filterRows('');
+  assert.equal(context.__crmProbe.state.childStatusFilter, 'Лид', 'очистка поиска не сбрасывает статус');
+  assert.equal(context.__crmProbe.state.childDirectionFilter, 'Программирование', 'очистка поиска не сбрасывает направление');
+  childrenHtml = context.children();
+  assert.match(childrenHtml, /Пётр Кодеров/);
+
+  context.__crmProbe.state.role = 'partner';
+  childrenHtml = context.children();
+  assert.doesNotMatch(childrenHtml, /Все проекты/, 'у партнёра не появляется отдельный project select');
+  Object.assign(context.__crmProbe.state, savedChildrenFilterState);
+
   const savedChildren = context.__crmProbe.state.children;
   context.__crmProbe.state.children = [
     { status: 'Активный', enrollments: [{ groupId: 999, status: 'Пауза' }] },
