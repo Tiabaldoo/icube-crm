@@ -872,3 +872,55 @@ test('teacherLesson сохраняет frozen main roster, но subtitle extra �
   assert.equal(enrollment.groupId,77);
   assert.equal(Object.prototype.hasOwnProperty.call(enrollment,'__v146LiveGroupId'),false);
 });
+
+test('mixed UI renders real children, two package prices, mixed calendar label and shared teal class', async () => {
+  const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+  const app = { innerHTML: '' };
+  const fields = new Map();
+  const document = {
+    body: { style: {}, classList: { add() {}, remove() {}, contains() { return false; } } },
+    documentElement: { style: {} }, head: { appendChild() {} }, getElementById(id) { return id === 'app' ? app : null; },
+    createElement() { return { style: {}, appendChild() {} }; }, querySelector(s) { return s === '#app' ? app : fields.get(s) ?? null; }, querySelectorAll() { return []; }, addEventListener() {},
+  };
+  const context = vm.createContext({ console, document, alert() {}, requestAnimationFrame: (fn) => fn(), setTimeout: () => 0, clearTimeout() {},
+    scrollY: 0, pageYOffset: 0, scrollTo() {}, addEventListener() {}, Intl, Date, Math, Map, Set, Object, Array, Number, String, Boolean, RegExp, JSON,
+    MutationObserver: class { observe() {} disconnect() {} } });
+  context.window = context; context.globalThis = context;
+  vm.runInContext(`${source}\n;globalThis.__mixedProbe={state};`, context);
+  const state = context.__mixedProbe.state;
+  state.directions = [{ id: 1, name: 'Робототехника' }, { id: 2, name: 'Программирование' }];
+  state.projects = [{ id: 3, name: 'iCubeRobots' }]; state.sites = [{ id: 2, projectId: 3, name: 'Площадка', active: true }];
+  state.teachers = [{ id: 4, name: 'Учитель', active: true, projectSettings: [{ projectId: 3, active: true, directions: [{ id: 1, name: 'Робототехника' }] }] }];
+  state.groups = [{ id: 10, directionId: 1, direction: 'Смешанная', isMixed: true, name: 'Общая группа', project: 'iCubeRobots', projectId: 3,
+    siteId: 2, teacherId: 4, weekday: 1, day: 'Понедельник', startTime: '10:00', endTime: '11:00', time: '10:00–11:00', startsOn: '2026-01-01', active: true, mixedPrices: { 1: '1200.00', 2: '1250.00' } }];
+  state.children = [
+    { id: 50, name: 'Робототехник', status: 'Активный', enrollments: [{ id: 100, projectId: 3, direction: 'Робототехника', status: 'Активный', groupId: 10 }] },
+    { id: 51, name: 'Программист', status: 'Активный', enrollments: [{ id: 101, projectId: 3, direction: 'Программирование', status: 'Активный', groupId: 10 }] },
+  ];
+  state.selectedGroup = 10; state.role = 'director';
+  const listing = context.groups(); assert.match(listing, /Смешанная/); assert.match(listing, /badge mixed/);
+  const detail = context.group(); assert.match(detail, /Смешанная/); assert.match(detail, /Робототехник/); assert.match(detail, /Программист/);
+  fields.set('#gf-dir', { value: 'Смешанная' }); context.groupForm(10);
+  assert.match(state.modal, /gf-price-robot[^>]*value="4800"/); assert.match(state.modal, /gf-price-program[^>]*value="5000"/);
+  assert.match(state.modal, /Учитель/);
+  const ordinaryField = { hidden: false }; const mixedFields = [{ hidden: true }, { hidden: true }];
+  fields.set('#gf-price', { closest() { return ordinaryField; } }); document.querySelectorAll = (s) => s === '[data-mixed-price]' ? mixedFields : [];
+  context.refreshMixedGroupPriceFields(); assert.equal(ordinaryField.hidden, true); assert.ok(mixedFields.every((f) => !f.hidden));
+  fields.get('#gf-dir').value = 'Робототехника'; context.refreshMixedGroupPriceFields(); assert.equal(ordinaryField.hidden, false); assert.ok(mixedFields.every((f) => f.hidden));
+  assert.equal(context.crmDirectionClassV134('Смешанная'), 'crm-direction-mixed');
+  const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8'); assert.match(css, /--mixed-color:#0d9488/); assert.match(css, /\.event\.crm-direction-mixed/);
+  state.modal = null; state.role = 'teacher'; state.teacherId = 4; state.selectedLesson = 60;
+  state.lessons = [{ id: 60, groupId: 10, projectId: 3, teacherId: 4, direction: 'Смешанная', date: '14.09.2026', time: '10:00–11:00',
+    attendance: {}, trialChildren: {}, extras: [], photos: {}, started: false, done: false, effectiveGroupChildIds: [50, 51], groupRosterFrozenV146: false }];
+  const teacher = context.teacherLesson(); assert.match(teacher, /Робототехник/); assert.match(teacher, /Программист/); assert.match(teacher, /Смешанная/);
+  context.teacherQuickChildForm(); assert.match(state.modal, /tqc-direction/); assert.doesNotMatch(state.modal, /автоматически: Смешанная/);
+
+  state.groups[0].isMixed = false; state.groups[0].direction = 'Робототехника';
+  state.lessons[0].started = true; state.lessons[0].groupChildIdsV146 = [50];
+  state.children[1].enrollments[0].groupId = null;
+  const extraResults = { innerHTML: '' }; fields.set('#extraResults', extraResults);
+  context.showExtraResults('Программист'); assert.match(extraResults.innerHTML, /addExtra\(51\)/);
+  state.children[1].enrollments[0].projectId = 99;
+  context.showExtraResults('Программист'); assert.doesNotMatch(extraResults.innerHTML, /addExtra\(51\)/);
+
+});

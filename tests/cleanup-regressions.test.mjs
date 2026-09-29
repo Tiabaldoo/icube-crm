@@ -27,6 +27,8 @@ test('деактивация группы закрывает memberships, уда
   });
   const handler = async (sql, params = {}) => {
     if (sql.includes('FROM study_groups g JOIN directions')) return [[groupRow()]];
+    if (sql === 'SELECT id FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: 10 }]];
+    if (sql.startsWith('SELECT d.name FROM group_memberships')) return [[]];
     if (/^SELECT id FROM (directions|sites|projects|teachers)/.test(sql)) return [[{ id: 1 }]];
     if (sql.startsWith('SELECT s.id FROM sites s JOIN teacher_projects')) return [[{ id: 2 }]];
     if (sql.startsWith('SELECT teacher_id FROM teacher_project_directions')) return [[{ teacher_id: 4 }]];

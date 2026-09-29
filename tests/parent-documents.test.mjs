@@ -171,6 +171,6 @@ test('parent document UI is compact, hides versions, and opens escaped full text
   assert.doesNotMatch(index, /\?v=20260927-5/);
   const versions = [...index.matchAll(/\?v=([^"']+)/g)].map((match) => match[1]);
   assert.ok(versions.length > 0);
-  assert.ok(versions.every((version) => version === '20260928-2'));
-  assert.match(worker, /CACHE_NAME = 'icube-crm-shell-v2-20260928-2'/);
+  assert.ok(versions.every((version) => version === '20260929-1'));
+  assert.match(worker, /CACHE_NAME = 'icube-crm-shell-v2-20260929-1'/);
 });

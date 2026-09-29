@@ -204,10 +204,10 @@ function saveToDevice(file) {
   link.href = url; link.download = file.name || 'lesson-photo.jpg'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 
-function openFilePicker(childId, replacePhotoId = null) {
+function openFilePicker(childId, replacePhotoId = null, source = 'camera') {
   const lesson = currentLesson(); if (!lesson) return;
   if (photoItems(lesson, childId).filter((photo) => !photo.expired).length >= MAX_PHOTOS && !replacePhotoId) return window.alert('Можно добавить не больше 5 фотографий.');
-  const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/jpeg,image/png,image/webp'; input.capture = 'environment';
+  const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/jpeg,image/png,image/webp'; if (source === 'camera') input.capture = 'environment';
   input.onchange = async () => {
     const file = input.files?.[0]; if (!file) return;
     try {
@@ -363,8 +363,13 @@ if (typeof originalOpenLesson === 'function') window.openLesson = function (less
   originalOpenLesson(lessonId, teacher); loadLessonPhotos(lessonId);
 };
 
-window.togglePhoto = (childId) => openFilePicker(childId);
-window.icubePhotos = { capture: openFilePicker, confirm, retake, open: openPhoto, gallery: openGallery, remove: removePhoto, confirmRemove, retry, retryAll, download,
+window.togglePhoto = (childId) => choosePhotoSource(childId);
+function choosePhotoSource(childId, replacePhotoId = null) {
+  const replacement = replacePhotoId == null ? 'null' : `'${esc(replacePhotoId)}'`;
+  legacy.state.modal = `<h3>Добавить фото</h3><div class="modal-actions"><button class="btn primary" onclick="icubePhotos.camera(${Number(childId)},${replacement})">Сфотографировать</button><button class="btn" onclick="icubePhotos.pick(${Number(childId)},${replacement})">Выбрать из галереи</button></div>`;
+  legacy.render();
+}
+window.icubePhotos = { capture: choosePhotoSource, camera: openFilePicker, pick: (childId, replacement) => openFilePicker(childId, replacement, 'gallery'), confirm, retake, open: openPhoto, gallery: openGallery, remove: removePhoto, confirmRemove, retry, retryAll, download,
   loadLessonPhotos, hasPhoto, pendingCount, control, remapChildId };
 window.addEventListener('online', () => retryAll().catch(console.error));
 window.icubeAuthReady?.then((profile) => { if (profile) retryAll().catch(console.error); });

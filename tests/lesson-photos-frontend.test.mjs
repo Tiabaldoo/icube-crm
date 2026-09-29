@@ -258,3 +258,20 @@ test('frontend source keeps IndexedDB blobs, optimization and reconnect retry co
   assert.match(sync, /icubePhotos\?\.hasPhoto/); assert.match(sync, /фото ожидают загрузки/);
   assert.ok(index.indexOf('api-sync.mjs') < index.indexOf('lesson-photos.mjs'));
 });
+
+test('photo source chooser retains camera capture and gallery picker never forces camera', () => {
+  const saved = { lessons: state.lessons, selectedLesson: state.selectedLesson, createElement: document.createElement };
+  const inputs = [];
+  state.lessons = [{ id: 77, photos: {} }]; state.selectedLesson = 77;
+  document.createElement = () => { const input = { click() { this.clicked = true; } }; inputs.push(input); return input; };
+  try {
+    window.icubePhotos.capture(4);
+    assert.match(state.modal, /Сфотографировать/); assert.match(state.modal, /Выбрать из галереи/);
+    assert.match(state.modal, /icubePhotos.camera\(4,null\)/); assert.match(state.modal, /icubePhotos.pick\(4,null\)/);
+    window.icubePhotos.camera(4); assert.equal(inputs[0].capture, 'environment'); assert.equal(inputs[0].clicked, true);
+    window.icubePhotos.pick(4); assert.equal('capture' in inputs[1], false); assert.equal(inputs[1].clicked, true);
+    assert.equal(inputs[1].accept, inputs[0].accept); assert.equal(typeof inputs[1].onchange, 'function');
+    window.togglePhoto(4); assert.match(state.modal, /Выбрать из галереи/);
+    window.icubePhotos.capture(4, '99'); assert.match(state.modal, /icubePhotos.pick\(4,'99'\)/);
+  } finally { state.lessons = saved.lessons; state.selectedLesson = saved.selectedLesson; document.createElement = saved.createElement; }
+});

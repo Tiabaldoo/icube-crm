@@ -438,7 +438,7 @@ test('после изменения расписания удаляются то
       for (let index = lessons.length - 1; index >= 0; index -= 1) if (lessons[index].status === 'scheduled') lessons.splice(index, 1);
       return [{ affectedRows: 2 }];
     }
-    if (sql.startsWith('SELECT g.id,g.direction_id')) return [[group]];
+    if (sql.startsWith('SELECT g.id,g.is_mixed,g.direction_id')) return [[group]];
     if (sql.startsWith('INSERT IGNORE INTO lessons')) {
       const scheduled = `${params.date} ${params.start}:00`;
       if (!lessons.some((item) => item.scheduled_starts_at === scheduled)) lessons.push({ id: nextId++, status: 'scheduled', scheduled_starts_at: scheduled, starts_at: scheduled });

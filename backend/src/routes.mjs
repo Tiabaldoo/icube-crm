@@ -1,3 +1,4 @@
+import { createReleaseNotes } from './release-notes.mjs';
 import express, { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
 import { clearSessionCookieOptions, createAuthService, parseSessionCookie, SESSION_COOKIE, sessionCookieOptions } from './auth-service.mjs';
@@ -36,6 +37,7 @@ const run = (handler, status = 200) => async (request, response, next) => {
 };
 
 export function createApiRouter(pool, {
+  releaseNotes = createReleaseNotes(pool),
   notificationEvents = createNotificationEvents(pool),
   siteRent = createSiteRentService(pool),
   catalog = createMysqlCatalog(pool, { siteRent, notificationEvents }),
@@ -86,6 +88,9 @@ export function createApiRouter(pool, {
   }, authenticate);
   router.get('/auth/me', run((request) => ({ id: request.auth.userId, displayName: request.auth.displayName,
     roles: request.auth.roles, teacherId: request.auth.teacherId ?? null, projectIds: request.auth.projectIds ?? [] })));
+
+  router.get('/releases/current', run((request) => releaseNotes.current(request.auth)));
+  router.post('/releases/:version/dismiss', run((request) => releaseNotes.dismiss(request.params.version, request.auth)));
 
   router.get('/push/config', run(() => push.publicConfig()));
   router.post('/push/subscriptions', run((request) => push.bind(request.auth.userId, request.body, request.get('user-agent'))));

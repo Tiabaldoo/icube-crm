@@ -47,7 +47,7 @@ export function createEnrollmentChanges(pool, balanceTransfers, { notificationEv
         const targetGroupId = body.groupId == null || body.groupId === '' ? null : identifier(body.groupId, 'groupId');
         if (targetGroupId != null) {
           const [groups] = await connection.query(`SELECT id FROM study_groups
-            WHERE id=:groupId AND direction_id=:directionId AND project_id=:projectId AND deleted_at IS NULL`, {
+            WHERE id=:groupId AND (is_mixed=TRUE OR direction_id=:directionId) AND project_id=:projectId AND deleted_at IS NULL FOR UPDATE`, {
             groupId: targetGroupId, directionId: targetDirectionId, projectId: source.project_id,
           });
           if (!groups.length) throw new ApiProblem(400, 'GROUP_DIRECTION_MISMATCH', 'Группа относится к другому направлению или проекту');

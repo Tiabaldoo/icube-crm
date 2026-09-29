@@ -1,3 +1,4 @@
+import { showReleaseNote } from './release-notes.mjs';
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 import { createLessonActionQueue, createMemoryLessonActionStore } from '../data/lesson-action-queue.mjs';
 import { businessDate, calendarMonthPeriod } from '../shared/business-time.mjs';
@@ -86,7 +87,7 @@ const html = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '
 const operationKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function mapGroup(group) {
-  return { id: Number(group.id), name: group.name, direction: group.directionName, siteId: Number(group.siteId), teacherId: Number(group.teacherId),
+  return { id: Number(group.id), name: group.name, direction: group.isMixed ? 'Смешанная' : group.directionName, isMixed: Boolean(group.isMixed), directionId: Number(group.directionId), mixedPrices: group.mixedPrices ?? {}, siteId: Number(group.siteId), teacherId: Number(group.teacherId),
     day: dayNames[group.weekday - 1], startTime: group.startTime, endTime: group.endTime, time: `${group.startTime}–${group.endTime}`,
     project: group.projectName, projectId: Number(group.projectId), price: group.price == null ? null : Number(group.price), active: group.active,
     startDate: group.startsOn, endDate: group.endsOn };
@@ -111,7 +112,7 @@ function mapChild(child) {
 function mapLesson(lesson) {
   if (lesson.readOnly) {
     const date = isoToRu(timestampDate(lesson.startsAt));
-    return { id: Number(lesson.id), groupId: Number(lesson.groupId), groupName: lesson.groupName,
+    return { id: Number(lesson.id), groupId: Number(lesson.groupId), isMixed: Boolean(lesson.isMixed), direction: lesson.directionName, groupName: lesson.groupName,
       projectId: Number(lesson.projectId), project: lesson.projectName,
       teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId), teacherName: lesson.actualTeacherName ?? lesson.plannedTeacherName,
       siteId: Number(lesson.siteId), siteName: lesson.siteName, scheduledDate: isoToRu(timestampDate(lesson.scheduledStartsAt)),
@@ -129,10 +130,11 @@ function mapLesson(lesson) {
   const date = isoToRu(timestampDate(lesson.startsAt)); const time = `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`;
   const status = lesson.status === 'completed' ? 'Проведено' : lesson.status === 'in_progress' ? 'Идёт' : lesson.status === 'cancelled' ? 'Отменено' : 'Запланировано';
   return {
-    id: Number(lesson.id), groupId: Number(lesson.groupId), projectId: lesson.projectId == null ? null : Number(lesson.projectId), project: lesson.projectName ?? '',
+    id: Number(lesson.id), groupId: Number(lesson.groupId), isMixed: Boolean(lesson.isMixed), direction: lesson.directionName, projectId: lesson.projectId == null ? null : Number(lesson.projectId), project: lesson.projectName ?? '',
     teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
     plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
     siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
+    enrollmentByChild: Object.fromEntries(lesson.attendances.map((item) => [Number(item.childId), Number(item.enrollmentId)])),
     date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
     extras: extras.map((item) => ({ childId: Number(item.childId), enrollmentId: Number(item.enrollmentId), trial: item.trial, present: item.present })),
     photos: {}, started: ['in_progress', 'completed'].includes(lesson.status), done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
@@ -430,6 +432,7 @@ async function reload({ render = true } = {}) {
     api.list('balance-transfers'), partner ? Promise.resolve(null) : api.list('statistics', statisticsQuery), api.request('/dashboard/daily'), api.list('sites/venues'),
   ]);
   directories = { projects, directions };
+  legacy.state.directions = directions;
   legacy.state.projects = projects.map((project) => ({ ...project, id: Number(project.id) }));
   legacy.state.sites = sites.map((site) => ({ ...site, id: Number(site.id), projectId: Number(site.projectId) }));
   legacy.state.lessonVenues = venues.map((site) => ({ ...site, id: Number(site.id), active: Boolean(site.active) }));
@@ -570,16 +573,18 @@ async function saveGroup(resourceId) {
   groupSavePending = true;
   if (submit) submit.disabled = true;
   try {
-    const direction = byName(directories.directions, value('#gf-dir'));
+    const isMixed = value('#gf-dir') === 'Смешанная';
+    const currentGroup = legacy.state.groups.find((group) => Number(group.id) === Number(resourceId));
+    const direction = isMixed ? directories.directions.find((item) => Number(item.id) === currentGroup?.directionId) ?? directories.directions[0] : byName(directories.directions, value('#gf-dir'));
     const project = byName(directories.projects, value('#gf-project'));
     const startsOn = value('#gf-start-date'); const isActive = value('#gf-active') === 'true'; const endsOn = value('#gf-end-date') || null;
     if (!direction || !project) return window.alert('Не найден проект или направление в серверном справочнике');
     if (!startsOn) return window.alert('Укажите дату начала группы.');
     if (!isActive && !endsOn) return window.alert('Для неактивной группы укажите дату окончания.');
-    const startTime = value('#gf-start'); const directionLabel = direction.name === 'Программирование' ? 'Программирование' : 'Роботы';
+    const startTime = value('#gf-start'); const directionLabel = isMixed ? 'Смешанная' : direction.name === 'Программирование' ? 'Программирование' : 'Роботы';
     const weekday = dayNames.indexOf(value('#gf-day'));
     const body = { name: `${directionLabel} · ${dayShortNames[weekday]} ${startTime}`,
-      directionId: direction.id, siteId: Number(value('#gf-site')), projectId: project.id, teacherId: Number(value('#gf-teacher')),
+      isMixed, directionId: direction.id, mixedPrices: isMixed ? Object.fromEntries(directories.directions.map((item) => [item.id, value(item.name === 'Программирование' ? '#gf-price-program' : '#gf-price-robot') === '' ? null : String(Number(value(item.name === 'Программирование' ? '#gf-price-program' : '#gf-price-robot')) / 4)])) : undefined, siteId: Number(value('#gf-site')), projectId: project.id, teacherId: Number(value('#gf-teacher')),
       weekday: weekday + 1, startTime, endTime: value('#gf-end'), startsOn, endsOn: isActive ? null : endsOn,
       active: isActive, price: value('#gf-price') === '' ? null : Number(value('#gf-price')) };
     const saved = resourceId ? await api.update('groups', resourceId, body) : await api.create('groups', body);
@@ -1036,7 +1041,7 @@ function applyLessonAction(action) {
     if (extra) { extra.present = Boolean(action.body.present); extra.trial = Boolean(action.body.trial); }
     else { lesson.attendance[childId] = Boolean(action.body.present); lesson.trialChildren[childId] = Boolean(action.body.trial); }
   } else if (action.type === 'add-extra') {
-    if (!(lesson.extras ?? []).some((item) => Number(item.childId) === childId)) lesson.extras.push({ childId, present: true, trial: true });
+    if (!(lesson.extras ?? []).some((item) => Number(item.childId) === childId)) lesson.extras.push({ childId, enrollmentId: action.body?.enrollmentId, present: true, trial: true });
   } else if (action.type === 'remove-extra') {
     lesson.extras = (lesson.extras ?? []).filter((item) => Number(item.childId) !== childId);
   } else if (action.type === 'quick-child') {
@@ -1082,7 +1087,7 @@ async function sendLessonAction(action) {
   const lessonId = encodeURIComponent(action.lessonId); const childId = action.childId == null ? null : encodeURIComponent(action.childId);
   if (action.type === 'start') return api.request(`/lessons/${lessonId}/start`, { method: 'POST', body: action.body });
   if (action.type === 'attendance') return api.request(`/lessons/${lessonId}/attendance/${childId}`, { method: 'PUT', body: action.body });
-  if (action.type === 'add-extra') return api.request(`/lessons/${lessonId}/extras`, { method: 'POST', body: { childId: Number(action.childId) } });
+  if (action.type === 'add-extra') return api.request(`/lessons/${lessonId}/extras`, { method: 'POST', body: { childId: Number(action.childId), enrollmentId: action.body?.enrollmentId } });
   if (action.type === 'remove-extra') return api.request(`/lessons/${lessonId}/extras/${childId}`, { method: 'DELETE' });
   if (action.type === 'quick-child') return api.request(`/lessons/${lessonId}/quick-child`, { method: 'POST', body: action.body, idempotencyKey: action.id });
   if (action.type === 'finish') {
@@ -1222,7 +1227,15 @@ async function toggleTrialApi(childId, trial, isExtra) {
 
 async function addExtraApi(childId) {
   const lesson = currentLesson(); if (!lesson) return;
-  await queueLessonAction({ type: 'add-extra', lessonId: lesson.id, childId: Number(childId), body: { childId: Number(childId) } }, { closeModal: true });
+  const projectId = lesson.projectId ?? legacy.state.groups.find((group) => group.id === lesson.groupId)?.projectId;
+  const available = (legacy.state.children.find((child) => Number(child.id) === Number(childId))?.enrollments ?? []).filter((e) => Number(e.projectId) === Number(projectId) && ['Активный', 'active'].includes(e.status));
+  let selected = available[0];
+  if (available.length > 1) {
+    const answer = window.prompt('Выберите направление: ' + available.map((e, i) => `${i + 1} — ${e.direction}`).join('; '), '1');
+    selected = available[Number(answer) - 1];
+  }
+  if (!selected) return window.alert('Выберите доступное направление ребёнка.');
+  await queueLessonAction({ type: 'add-extra', lessonId: lesson.id, childId: Number(childId), body: { childId: Number(childId), enrollmentId: selected.id } }, { closeModal: true });
 }
 async function removeExtraApi(childId) {
   const lesson = currentLesson(); if (!lesson) return;
@@ -1234,7 +1247,7 @@ async function saveQuickChildApi() {
   const name = value('#tqc-name').trim(); const phone = value('#tqc-phone').trim();
   if (!name) return window.alert('Укажите фамилию и имя ребёнка.');
   const tempChildId = localChildId();
-  await queueLessonAction({ type: 'quick-child', lessonId: lesson.id, tempChildId: String(tempChildId), body: { name, phone: phone || null } }, { closeModal: true });
+  await queueLessonAction({ type: 'quick-child', lessonId: lesson.id, tempChildId: String(tempChildId), body: { name, phone: phone || null, ...(lesson.isMixed ? { directionName: value('#tqc-direction') || 'Робототехника' } : {}) } }, { closeModal: true });
 }
 
 async function confirmTeacherCreatedChildApi(childId) {
@@ -1268,11 +1281,22 @@ async function finishLessonApi() {
 async function cancelCurrentLessonApi() { await lessonCommand('cancel', {}, legacy.state.role === 'teacher' ? 'teacherLesson' : 'lesson'); }
 async function markCurrentLessonEmptyTripApi() { await lessonCommand('empty-trip', {}, 'lesson'); }
 
+function renderAddChildrenListApi() {
+  const group = legacy.state.groups.find((g) => Number(g.id) === Number(legacy.state.addChildrenGroupId));
+  const box = element('#ac-list'); if (!group || !box) return;
+  const filter = value('#ac-filter') || 'active';
+  const candidates = legacy.state.children.flatMap((child) => {
+    if (!['Активный', 'Лид'].includes(child.status) || filter === 'active' && child.status !== 'Активный' || filter === 'leads' && child.status !== 'Лид' || filter === 'pause') return [];
+    return child.enrollments.filter((e) => Number(e.projectId) === Number(group.projectId) && ['Активный','active'].includes(e.status) && e.groupId == null && (group.isMixed || e.direction === group.direction)).map((enrollment) => ({ child, enrollment }));
+  });
+  box.innerHTML = candidates.length ? candidates.map(({ child, enrollment }) => `<label class="student-check"><input type="checkbox" class="ac-check" value="${child.id}" data-enrollment="${enrollment.id}" onchange="updateAddChildrenCount()"><div><b>${html(child.name)}</b><div class="muted mini">${html(enrollment.direction)}</div></div></label>`).join('') : '<div class="empty">Нет подходящих детей без основной группы.</div>';
+  window.updateAddChildrenCount();
+}
 async function confirmAddChildrenApi() {
   const group = legacy.state.groups.find((item) => item.id === Number(legacy.state.addChildrenGroupId));
   if (!group) return;
   const childIds = Array.from(document.querySelectorAll('.ac-check:checked')).map((input) => Number(input.value));
-  const enrollments = childIds.map((childId) => legacy.state.children.find((child) => child.id === childId)?.enrollments.find((enrollment) => enrollment.direction === group.direction)).filter(Boolean);
+  const enrollments = Array.from(document.querySelectorAll('.ac-check:checked')).map((input) => legacy.state.children.find((child) => child.id === Number(input.value))?.enrollments.find((enrollment) => input.dataset?.enrollment ? Number(enrollment.id) === Number(input.dataset?.enrollment) : enrollment.direction === group.direction)).filter(Boolean);
   try {
     await Promise.all(enrollments.map((enrollment) => api.updateEnrollment(enrollment.id, { groupId: group.id })));
     await reload({ render: false });
@@ -1447,6 +1471,7 @@ function installPersistentNotificationUi() {
 }
 
 function showLogin(message = '') {
+  document.querySelector('[data-release-notice]')?.remove();
   authProfile = null;
   legacy.state.authUser = null;
   const app = element('#app');
@@ -1549,6 +1574,7 @@ async function handlePushDeepLink(profile = authProfile) {
 }
 
 async function afterAuthenticatedLoad(profile) {
+  await showReleaseNote(api, profile).catch((error) => console.error('Не удалось загрузить обновление', error));
   if (window.icubePush?.rebind) await window.icubePush.rebind(profile).catch(console.error);
   await handlePushDeepLink(profile).catch((error) => console.error('Не удалось открыть push destination', error));
 }
@@ -1850,6 +1876,7 @@ window.confirmTeacherCreatedChild = window.icubeApi.confirmTeacherCreatedChild;
 window.finishLesson = window.icubeApi.finishLesson;
 window.confirmFinish = window.icubeApi.confirmFinishLesson;
 window.confirmAddChildren = window.icubeApi.confirmAddChildren;
+window.renderAddChildrenList = renderAddChildrenListApi;
 window.deleteLessonConfirmed = window.icubeApi.deleteLesson;
 window.transferDirectionBalanceFormV142 = window.icubeApi.transferDirectionBalanceForm;
 window.refreshTransferPreviewV142 = window.icubeApi.refreshBalanceTransferPreview;
@@ -1889,6 +1916,13 @@ if (typeof teacherLessonBeforeOffline === 'function') window.teacherLesson = fun
   return `<div class="lesson-sync-status is-${tone}"><span>${message}</span>${retry}</div>${output}`;
 };
 
+window.icubeLessonChildDirection = (lesson, childId) => {
+  const child = legacy.state.children.find((item) => Number(item.id) === Number(childId));
+  const group = legacy.state.groups.find((item) => Number(item.id) === Number(lesson?.groupId));
+  const enrollmentId = lesson?.enrollmentByChild?.[childId] ?? lesson?.extras?.find((item) => Number(item.childId) === Number(childId))?.enrollmentId;
+  const enrollment = child?.enrollments.find((item) => enrollmentId ? Number(item.id) === Number(enrollmentId) : Number(item.groupId) === Number(group?.id));
+  return enrollment?.direction ?? lesson?.direction ?? group?.direction ?? null;
+};
 window.icubeLessonOffline = {
   sync: () => syncLessonActionsWithSession(), retry: () => retryLessonActionsWithSession(),
   pendingForLesson: (lessonId) => lessonActions.pendingForLesson(lessonId),

@@ -169,7 +169,7 @@ export function createParentPortal(pool, {
     const [rows] = await pool.query(`SELECT e.id,e.direction_id,e.balance_lessons,e.status,d.name direction_name,
       g.id group_id,g.name group_name,g.weekday,g.start_time,g.end_time,s.name site_name,t.full_name teacher_name,
       COALESCE(e.individual_price,
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=g.id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND pv.group_id=g.id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
           AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6))
           ORDER BY (pv.project_id IS NOT NULL) DESC,pv.valid_from DESC,pv.id DESC LIMIT 1)) current_price

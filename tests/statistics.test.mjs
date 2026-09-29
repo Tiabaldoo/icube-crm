@@ -61,10 +61,10 @@ test('statistics SQL исключает cancelled/deleted, использует 
   assert.equal(result.summary.completedLessons, 0); assert.deepEqual(result.groups, []);
   const attendanceSql = calls[0].sql;
   assert.match(attendanceSql, /l\.status='completed'/); assert.match(attendanceSql, /l\.deleted_at IS NULL/);
-  assert.match(attendanceSql, /l\.project_id_snapshot=:projectId/); assert.match(attendanceSql, /l\.direction_id_snapshot=:directionId/);
+  assert.match(attendanceSql, /l\.project_id_snapshot=:projectId/); assert.match(attendanceSql, /COALESCE\(ae\.direction_id,l\.direction_id_snapshot\)=:directionId/);
   assert.match(attendanceSql, /LEFT JOIN lesson_roster_members/); assert.doesNotMatch(attendanceSql, /a\.marked_at IS NOT NULL/);
   const firstSql = calls[1].sql;
-  assert.match(firstSql, /a\.present=TRUE AND a\.is_trial=FALSE/); assert.match(firstSql, /PARTITION BY a\.child_id,l\.project_id_snapshot,l\.direction_id_snapshot/);
+  assert.match(firstSql, /a\.present=TRUE AND a\.is_trial=FALSE/); assert.match(firstSql, /PARTITION BY a\.child_id,l\.project_id_snapshot,e\.direction_id/);
   const leftSql = calls[2].sql;
   assert.match(leftSql, /PARTITION BY h\.enrollment_id ORDER BY h\.changed_at DESC,h\.id DESC/);
   assert.match(leftSql, /new_status IN \('paused','finished'\)/);

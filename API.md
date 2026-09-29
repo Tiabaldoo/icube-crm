@@ -116,3 +116,11 @@ Quick child создаётся транзакционно с `needs_director_rev
 `home` возвращает существующий `child_enrollments.balance_lessons` и текущую стоимость абонемента из versioned price chain; финансовая логика повторно не рассчитывается на frontend. `attendance` возвращает только `present=TRUE`. `payments` объединяет существующие payments/refunds выбранного ребёнка. `photos` и файловый endpoint дополнительно проверяют parent-child link и исключают deleted/purged/expired файлы.
 
 Создание и сброс доступа возвращают случайный пароль только в ответе текущей директорской операции. В БД сохраняется bcrypt hash. Reset увеличивает `users.token_version` и отзывает все активные сессии. Один guardian account связывается с несколькими детьми через составной ключ `child_guardians(child_id, guardian_id)`; один ребёнок может иметь несколько таких аккаунтов.
+
+### CRM 1.1: mixed groups and release notes
+
+`groups` DTO/body adds `isMixed` (default false) and `mixedPrices`, a map of real direction IDs to optional **per-lesson** prices. The UI accepts mixed prices for four lessons and divides by four. Mixed is a group mode, never a direction. Existing `directionId` remains technical; display `directionName = Смешанная`. Conversion to an ordinary group rejects incompatible current members with `409 GROUP_MEMBERS_DIRECTION_MISMATCH`.
+
+`POST /lessons/:id/extras` accepts `childId` and optional `enrollmentId`. With multiple available directions the enrollment must be chosen explicitly. It must be active in the lesson project. A cross-direction extra never changes membership; attendance and debit use the chosen enrollment. For a mixed lesson, `POST /lessons/:id/quick-child` requires `directionName` from the real active directions; the UI offers robotics/programming. Ordinary quick-child and command idempotency remain unchanged.
+
+Authenticated `GET /releases/current` returns the unseen role-specific release 1.1 (or null). `POST /releases/:version/dismiss` records dismissal for the session user; no client-supplied user ID is used. Director/partner see all changes, teacher sees extras/photos, parent sees no release 1.1.

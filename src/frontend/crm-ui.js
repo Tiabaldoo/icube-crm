@@ -61,7 +61,7 @@ const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'|
  const effectiveId=Object.prototype.hasOwnProperty.call(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId;
  return Number(effectiveId)===Number(id)&&(!e.status||e.status==='Активный');
 }));
-const effectivePrice=e=>e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
+const effectivePrice=e=>e?.currentPrice ?? e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
 function openChild(id){state.selectedChild=id;state.page='child';render()}
 function openGroup(id){state.selectedGroup=id;state.page='group';render()}
@@ -713,7 +713,7 @@ render();
     const box = document.querySelector('#ef-group');
     if (!box) return;
     let html = '<option value="">Без группы</option>';
-    state.groups.filter(function(g){return g.direction===d && g.active;}).forEach(function(g){
+    state.groups.filter(function(g){return (g.isMixed || g.direction===d) && g.active;}).forEach(function(g){
       html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + groupTitle(g) + '</option>';
     });
     box.innerHTML = html;
@@ -774,7 +774,7 @@ render();
     if (!box) return;
     let html = '<option value="">Без группы</option>';
     const projectId=document.querySelector('#cf-project')?.value;
-    state.groups.filter(function(g){return g.direction===direction && g.active && (!projectId || String(g.projectId)===projectId);}).forEach(function(g){
+    state.groups.filter(function(g){return (g.isMixed || g.direction===direction) && g.active && (!projectId || String(g.projectId)===projectId);}).forEach(function(g){
       html += '<option value="' + g.id + '"' + (Number(selectedGroupId)===g.id?' selected':'') + '>' + escapeHtml(groupTitle(g)) + '</option>';
     });
     box.innerHTML = html;
@@ -1686,7 +1686,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const presentCount=Number(Object.values(l.attendance||{}).filter(Boolean).length)+Number((l.extras||[]).length);
     const stateBadges='<span class="badge '+(l.cancelled?'red':l.moved?'amber':l.done?'green':'blue')+'">'+(l.cancelled?'Отменено':l.moved&&!l.done?'Перенесено':l.done?'Проведено':'Запланировано')+'</span>';
     return '<button class="btn" style="margin-bottom:14px" onclick="navTo(\'calendar\')">← Календарь</button>'+
-      pageHead(l.date+' · '+g.direction,l.time+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||''),
+      pageHead(l.date+' · '+(l.direction||g.direction),l.time+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||''),
         '<div style="display:flex;gap:8px"><button class="btn" onclick="editLessonForm('+l.id+',\'director\')">Изменить занятие</button><button class="btn danger" onclick="deleteLessonPrompt('+l.id+')">Удалить занятие</button></div>')+
       '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div></div>'+
       (l.moved?'<div class="notice" style="margin-bottom:12px">Перенесено с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</div>':'')+
@@ -1830,7 +1830,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     });
 
     let html='<h3>'+(g?'Редактировать группу':'Новая группа')+'</h3><div class="form-grid">';
-    html+='<div class="field"><label>Направление</label><select class="select" id="gf-dir" onchange="refreshGroupProjectChoices()"><option'+(draft.direction==='Робототехника'?' selected':'')+'>Робототехника</option><option'+(draft.direction==='Программирование'?' selected':'')+'>Программирование</option></select></div>';
+    html+='<div class="field"><label>Направление</label><select class="select" id="gf-dir" onchange="refreshGroupProjectChoices()"><option'+(draft.direction==='Робототехника'?' selected':'')+'>Робототехника</option><option'+(draft.direction==='Программирование'?' selected':'')+'>Программирование</option><option'+(draft.direction==='Смешанная'?' selected':'')+'>Смешанная</option></select></div>';
 
     html+='<div class="field"><label>Площадка</label><select class="select" id="gf-site" onchange="groupRelatedSelectChanged(\'site\','+(id||'null')+')">';
     html+=selectOptions(activeSites(),draft.siteId,function(s){return s.name;});
@@ -2653,7 +2653,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const enrollment=child?.enrollments?.find(function(e){return e.direction===document.querySelector('#md-old-dir')?.value;});
     let html='<option value="">Без группы</option>';
     const projectId=explicitProjectId||enrollment?.projectId;
-    state.groups.filter(function(g){return g.active && g.direction===direction && (!projectId||g.projectId===projectId);}).forEach(function(g){
+    state.groups.filter(function(g){return g.active && (g.isMixed || g.direction===direction) && (!projectId||g.projectId===projectId);}).forEach(function(g){
       html+='<option value="'+g.id+'"'+(Number(selectedGroupId)===Number(g.id)?' selected':'')+'>'+groupTitle(g)+'</option>';
     });
     return html;
@@ -3447,7 +3447,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(active) return Number(effectivePrice(active)||0);
 
     const history=(child?.enrollmentHistory||[]).filter(function(e){
-      return e.direction===group.direction && Number(e.price)>0;
+      return (group.isMixed || e.direction===group.direction) && Number(e.price)>0;
     });
     if(history.length) return Number(history[history.length-1].price);
 
@@ -3613,7 +3613,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if((lesson.extras||[]).some(function(e){return Number(e.childId)===Number(id);})) return;
 
     const hasDirection=!!currentEnrollmentForDirection(child,group.direction) ||
-      (child.enrollmentHistory||[]).some(function(e){return e.direction===group.direction;});
+      (child.enrollmentHistory||[]).some(function(e){return (group.isMixed || e.direction===group.direction);});
     const extra={childId:id,trial:!hasDirection};
     lesson.extras=lesson.extras||[];
     lesson.extras.push(extra);
@@ -3672,6 +3672,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       startTime:document.querySelector('#gf-start')?.value||'13:00',
       endTime:document.querySelector('#gf-end')?.value||'14:30',
       project:document.querySelector('#gf-project')?.value||'iCubeRobots',
+      mixedPrices:Object.fromEntries((state.directions||[]).map(function(d){const v=document.querySelector(d.name==='Программирование'?'#gf-price-program':'#gf-price-robot')?.value;return [d.id,v?Number(v)/4:null];})),
       price:document.querySelector('#gf-price')?.value||'',
       active:document.querySelector('#gf-active')?.value!=='false'
     };
@@ -3702,13 +3703,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const projectTeachers=teachers.filter(function(t){
       if(!selectedProject) return t.active!==false;
       const setting=t.projectSettings?.find(function(item){return Number(item.projectId)===Number(selectedProject.id);});
-      return setting ? setting.active!==false && (setting.directions||[]).some(function(item){return (item.name||item)===draft.direction;}) : t.active!==false&&t.projectIds?.includes(selectedProject.id);
+      return setting ? setting.active!==false && (draft.direction==='Смешанная' || (setting.directions||[]).some(function(item){return (item.name||item)===draft.direction;})) : t.active!==false&&t.projectIds?.includes(selectedProject.id);
     });
     if(!projectSites.some(function(s){return s.id===draft.siteId;})) draft.siteId=projectSites[0]?.id||null;
     if(!projectTeachers.some(function(t){return t.id===draft.teacherId;})) draft.teacherId=projectTeachers[0]?.id||null;
 
     let html='<h3>'+(g?'Редактировать группу':'Новая группа')+'</h3><div class="form-grid">';
-    html+='<div class="field"><label>Направление</label><select class="select" id="gf-dir" onchange="refreshGroupProjectChoices()"><option'+(draft.direction==='Робототехника'?' selected':'')+'>Робототехника</option><option'+(draft.direction==='Программирование'?' selected':'')+'>Программирование</option></select></div>';
+    html+='<div class="field"><label>Направление</label><select class="select" id="gf-dir" onchange="refreshGroupProjectChoices()"><option'+(draft.direction==='Робототехника'?' selected':'')+'>Робототехника</option><option'+(draft.direction==='Программирование'?' selected':'')+'>Программирование</option><option'+(draft.direction==='Смешанная'?' selected':'')+'>Смешанная</option></select></div>';
 
     html+='<div class="field"><label>Площадка</label>';
     if(projectSites.length){
@@ -3737,6 +3738,12 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Время занятия</label><div style="display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center"><input class="input" id="gf-start" type="time" step="1800" value="'+draft.startTime+'" onchange="refreshGroupEndTime()"><span class="muted" style="font-size:18px">→</span><input class="input" id="gf-end" type="time" value="'+draft.endTime+'"></div></div>';
     html+='<div class="field"><label>Проект / владелец</label>'+(state.role==='partner'||g?'<input type="hidden" id="gf-project" value="'+escapeAttr(draft.project)+'"><b>'+escapeHtml(draft.project)+'</b>':'<select class="select" id="gf-project" onchange="refreshGroupProjectChoices()"><option'+(draft.project==='iCubeRobots'?' selected':'')+'>iCubeRobots</option><option'+(draft.project==='Зебра'?' selected':'')+'>Зебра</option></select>')+'</div>';
     html+='<div class="field"><label>Специальная цена, ₽</label><input class="input" id="gf-price" type="number" step="0.01" value="'+(draft.price??'')+'" placeholder="Пусто = цена направления"></div>';
+    ['Робототехника','Программирование'].forEach(function(direction){
+      const directory=(state.directions||[]).find(function(d){return d.name===direction;});
+      const prices=draft.mixedPrices||g?.mixedPrices||{};
+      const price=prices[directory?.id];
+      html+='<div class="field" data-mixed-price><label>Цена группы — '+direction+', ₽ за 4 занятия</label><input class="input" id="gf-price-'+(direction==='Программирование'?'program':'robot')+'" type="number" step="0.01" value="'+(price==null?'':Number(price)*4)+'" placeholder="Пусто = цена направления"></div>';
+    });
     html+='<div class="field"><label>Активность</label><select class="select" id="gf-active"><option value="true"'+(draft.active?' selected':'')+'>Активна</option><option value="false"'+(!draft.active?' selected':'')+'>Неактивна</option></select></div>';
     html+='</div>';
 
@@ -3746,9 +3753,18 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }
     html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.saveGroup('+(id||'null')+')"'+((!projectSites.length||!projectTeachers.length)?' disabled title="Сначала создайте площадку и преподавателя"':'')+'>'+(g?'Сохранить':'Создать группу')+'</button></div>';
     modal(html);
+    refreshMixedGroupPriceFields();
+  };
+
+  window.refreshMixedGroupPriceFields=function(){
+    const mixed=document.querySelector('#gf-dir')?.value==='Смешанная';
+    const ordinary=document.querySelector('#gf-price')?.closest('.field');
+    if(ordinary) ordinary.hidden=mixed;
+    document.querySelectorAll('[data-mixed-price]').forEach(function(field){field.hidden=!mixed;});
   };
 
   window.refreshGroupProjectChoices=function(){
+    refreshMixedGroupPriceFields();
     const project=(state.projects||[]).find(function(p){return p.name===document.querySelector('#gf-project')?.value;});
     if(!project) return;
     const direction=document.querySelector('#gf-dir')?.value;
@@ -3756,7 +3772,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(site?.tagName==='SELECT') site.innerHTML=activeSites().filter(function(s){return !s.projectId||s.projectId===project.id;}).map(function(s){return '<option value="'+s.id+'">'+escapeHtml(s.name)+'</option>';}).join('')+'<option value="new">+ Создать площадку</option>';
     if(teacher?.tagName==='SELECT') teacher.innerHTML=(state.teachers||[]).filter(function(t){
       const setting=t.projectSettings?.find(function(item){return Number(item.projectId)===Number(project.id);});
-      return setting?.active!==false&&(setting?.directions||[]).some(function(item){return (item.name||item)===direction;});
+      return setting?.active!==false&&(direction==='Смешанная'||(setting?.directions||[]).some(function(item){return (item.name||item)===direction;}));
     }).map(function(t){return '<option value="'+t.id+'">'+escapeHtml(t.name)+'</option>';}).join('')+'<option value="new">+ Создать преподавателя</option>';
   };
 
@@ -3768,7 +3784,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids=groupChildren(g.id);
       const site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
-      const dirBadge=g.direction==='Программирование'?'purple':'blue';
+      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(g.name)+'</h3>'+
@@ -3897,9 +3913,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const lessonProjectId=lesson.projectId!=null?lesson.projectId:group.projectId;
       results=(state.children||[]).filter(function(c){
         const matchingEnrollment=(c.enrollments||[]).some(function(enrollment){
-          return String(enrollment.projectId)===String(lessonProjectId) && enrollment.direction===group.direction;
+          return String(enrollment.projectId)===String(lessonProjectId) && ['Активный','active'].includes(enrollment.status);
         });
-        return matchingEnrollment && !lessonChildIds.has(Number(c.id)) &&
+        return ['Активный','Лид','active','lead'].includes(c.status) && matchingEnrollment && !lessonChildIds.has(Number(c.id)) &&
           (String(c.name||'').toLowerCase().includes(query) || String(c.phone||'').toLowerCase().includes(query));
       }).slice(0,4);
     }
@@ -4081,7 +4097,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Фамилия Имя</label><input class="input" id="tqc-name" placeholder="Иванов Иван"></div>';
     html+='<div class="field span-2"><label>Телефон родителя <span class="muted" style="font-weight:400">(необязательно)</span></label><input class="input" id="tqc-phone" placeholder="+7 900 000-00-00"></div>';
     html+='</div>';
-    html+='<div class="muted mini" style="margin-top:10px">Направление будет указано автоматически: '+escapeHtml(group.direction)+'. В основную группу ребёнок пока не зачисляется.</div>';
+    if(group.isMixed) html+='<div class="field"><label>Направление ребёнка</label><select class="select" id="tqc-direction"><option>Робототехника</option><option>Программирование</option></select></div>';
+    else html+='<div class="muted mini" style="margin-top:10px">Направление будет указано автоматически: '+escapeHtml(group.direction)+'. В основную группу ребёнок пока не зачисляется.</div>';
     html+='<div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveTeacherQuickChildV121()">Создать и отметить</button></div>';
     modal(html);
   };
@@ -4745,7 +4762,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids=groupChildren(g.id);
       const site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
-      const dirBadge=g.direction==='Программирование'?'purple':'blue';
+      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(g.name)+'</h3>'+
@@ -6043,13 +6060,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function calendarDirectionShort(direction){
     if(direction==='Робототехника') return 'Р';
     if(direction==='Программирование') return 'П';
+    if(direction==='Смешанная') return 'Смешанная';
     return String(direction||'').slice(0,1)||'—';
   }
   function eventHtml(e,role){
     const g=byId(state.groups,e.groupId)||(state.calendarForeignGroups||[]).find(function(group){return group.id===e.groupId;}); if(!g) return '';
     const siteName=e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'Без площадки';
     const eventTime=timeStart(e.time||g.time||g.startTime||'')||'—';
-    const eventMeta=calendarWeekdayShort(e.date,g.day)+' '+eventTime+' · ('+calendarDirectionShort(g.direction)+')';
+    const eventMeta=calendarWeekdayShort(e.date,g.day)+' '+eventTime+' · ('+calendarDirectionShort(e.lesson?.direction||g.direction)+')';
     return '<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\''+role+'\')">'+
       '<div class="calendar-event-site">'+siteName+'</div>'+
       '<div class="calendar-event-meta">'+eventMeta+'</div>'+
@@ -6333,7 +6351,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const projectId=document.querySelector('#ad-project')?.value;
     let html='<option value="">Без группы</option>';
     (state.groups||[]).filter(function(g){
-      return g.active!==false && g.direction===direction && (!projectId||String(g.projectId)===projectId);
+      return g.active!==false && (g.isMixed || g.direction===direction) && (!projectId||String(g.projectId)===projectId);
     }).forEach(function(g){
       html+='<option value="'+g.id+'">'+groupTitle(g)+'</option>';
     });
@@ -6418,7 +6436,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const rawGroup=document.querySelector('#ad-group')?.value;
     const groupId=rawGroup ? Number(rawGroup) : null;
     const group=groupId!=null ? byId(state.groups,groupId) : null;
-    if(group && group.direction!==direction){
+    if(group && !group.isMixed && group.direction!==direction){
       alert('Выбранная группа относится к другому направлению.');
       return;
     }
@@ -6479,13 +6497,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return new Date(p[2]||0,(p[1]||1)-1,p[0]||1);
   }
 
-  function lessonDirection(lesson){
+  function lessonDirection(lesson,childId){
+    if(window.icubeLessonChildDirection) return window.icubeLessonChildDirection(lesson,childId);
     const group=lesson?byId(state.groups,lesson.groupId):null;
     return group?.direction||null;
   }
 
   function hasPreviousVisitInDirection(childId,currentLesson){
-    const direction=lessonDirection(currentLesson);
+    const direction=lessonDirection(currentLesson,childId);
     if(!direction) return false;
     const currentDate=parseRuDate(currentLesson?.date);
 
@@ -6594,17 +6613,17 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function directionForLessonId(lessonId){
     const l=byId(state.lessons,Number(lessonId));
-    return l?directionForGroupId(l.groupId):'';
+    return l?(l.direction||directionForGroupId(l.groupId)):'';
   }
 
   function directionClass(direction){
-    return direction==='Программирование'?'crm-direction-program':direction==='Робототехника'?'crm-direction-robot':'';
+    return direction==='Смешанная'?'crm-direction-mixed':direction==='Программирование'?'crm-direction-program':direction==='Робототехника'?'crm-direction-robot':'';
   }
   window.crmDirectionClassV134=directionClass;
 
   function setDirectionClass(el,direction){
     if(!el) return;
-    el.classList.remove('crm-direction-robot','crm-direction-program');
+    el.classList.remove('crm-direction-robot','crm-direction-program','crm-direction-mixed');
     const cls=directionClass(direction);
     if(cls) el.classList.add(cls);
   }
@@ -6625,6 +6644,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function directionFromCardText(el){
     const text=(el.textContent||'').trim();
+    if(text.includes('Смешанная')) return 'Смешанная';
     if(text.includes('Программирование')) return 'Программирование';
     if(text.includes('Робототехника')) return 'Робототехника';
 
@@ -6645,7 +6665,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     document.querySelectorAll('.event, [onclick*="openUnifiedCalendarEvent"]').forEach(function(event){
       let direction='';
       const groupId=groupIdFromUnifiedEvent(event);
-      if(groupId!=null) direction=directionForGroupId(groupId);
+      if(groupId!=null){
+        const key=(event.getAttribute('onclick')||'').match(/openUnifiedCalendarEvent\s*\(\s*['"]([^'"]+)/)?.[1];
+        const lesson=(state.lessons||[]).find(function(l){return l.occurrenceKey===key;});
+        direction=lesson?.direction||directionForGroupId(groupId);
+      }
       if(!direction){
         const lessonId=extractId(event,'openLesson');
         if(lessonId!=null) direction=directionForLessonId(lessonId);
@@ -6859,7 +6883,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids=groupChildren(g.id);
       const site=byId(state.sites,g.siteId);
       const teacher=byId(state.teachers,g.teacherId);
-      const dirBadge=g.direction==='Программирование'?'purple':'blue';
+      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       const projectBadge=g.project==='Зебра'?'purple':'gray';
       return '<div class="card pad clickable group-card" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">'+
@@ -7915,7 +7939,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(!l || Number(l.id)===Number(currentLesson?.id) || l.cancelled || !l.done) return false;
       if(parseRuDate(l.date)>currentDate) return false;
       const g=byId(state.groups,l.groupId);
-      if(!g || g.direction!==direction) return false;
+      if(!g || (window.icubeLessonChildDirection?window.icubeLessonChildDirection(l,childId):g.direction)!==direction) return false;
       const main=!!(l.attendance&&l.attendance[childId]);
       const extra=(l.extras||[]).some(function(e){
         return Number(e.childId)===Number(childId) && extraPresent(e);
@@ -8170,7 +8194,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return (state.children||[]).filter(function(child){
       if(!childActive(child)) return false;
       return (child.enrollments||[]).some(function(e){
-        return e.direction===group.direction &&
+        return (group.isMixed || e.direction===group.direction) &&
           Number(e.groupId)===Number(group.id) &&
           enrollmentActive(e);
       });
@@ -8239,7 +8263,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     (state.children||[]).forEach(function(child){
       const shouldBe=wanted.has(Number(child.id));
-      const matching=(child.enrollments||[]).filter(function(e){return e.direction===group.direction;});
+      const matching=(child.enrollments||[]).filter(function(e){return (group.isMixed || e.direction===group.direction);});
       const inGroup=matching.some(function(e){return Number(renderedGroupId(e))===Number(group.id);});
 
       if(shouldBe){
@@ -8349,19 +8373,20 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const p=String(s||'').split('.').map(Number);
     return new Date(p[2]||0,(p[1]||1)-1,p[0]||1);
   }
-  function lessonDirection(lesson){
+  function lessonDirection(lesson,childId){
+    if(window.icubeLessonChildDirection) return window.icubeLessonChildDirection(lesson,childId);
     const g=lesson?byId(state.groups,lesson.groupId):null;
     return g?.direction||null;
   }
   function previousPresentVisitInDirection(childId,currentLesson){
-    const direction=lessonDirection(currentLesson);
+    const direction=lessonDirection(currentLesson,childId);
     if(!direction) return false;
     const currentDate=parseRuDate(currentLesson?.date);
     return (state.lessons||[]).some(function(l){
       if(!l || Number(l.id)===Number(currentLesson?.id) || l.cancelled || !l.done) return false;
       if(parseRuDate(l.date)>currentDate) return false;
       const g=byId(state.groups,l.groupId);
-      if(!g || g.direction!==direction) return false;
+      if(!g || (window.icubeLessonChildDirection?window.icubeLessonChildDirection(l,childId):g.direction)!==direction) return false;
       const main=!!(l.attendance&&l.attendance[childId]);
       const extra=(l.extras||[]).some(function(ex){
         return Number(ex.childId)===Number(childId) && extraPresent(ex);
@@ -8474,19 +8499,20 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const p=String(s||'').split('.').map(Number);
     return new Date(p[2]||0,(p[1]||1)-1,p[0]||1);
   }
-  function lessonDirection(lesson){
+  function lessonDirection(lesson,childId){
+    if(window.icubeLessonChildDirection) return window.icubeLessonChildDirection(lesson,childId);
     const group=lesson?byId(state.groups,lesson.groupId):null;
     return group?.direction||null;
   }
   function hasPreviousPresentVisitInDirection(childId,currentLesson){
-    const direction=lessonDirection(currentLesson);
+    const direction=lessonDirection(currentLesson,childId);
     if(!direction) return false;
     const currentDate=parseRuDate(currentLesson?.date);
     return (state.lessons||[]).some(function(l){
       if(!l || Number(l.id)===Number(currentLesson?.id) || l.cancelled || !l.done) return false;
       if(parseRuDate(l.date)>currentDate) return false;
       const g=byId(state.groups,l.groupId);
-      if(!g || g.direction!==direction) return false;
+      if(!g || (window.icubeLessonChildDirection?window.icubeLessonChildDirection(l,childId):g.direction)!==direction) return false;
       const main=!!(l.attendance&&l.attendance[childId]);
       const extra=(l.extras||[]).some(function(ex){
         return Number(ex.childId)===Number(childId) && extraPresent(ex);
@@ -8514,7 +8540,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const group=byId(state.groups,l.groupId);
       const lessonProjectId=l.projectId!=null?l.projectId:group?.projectId;
       const matchingEnrollments=(c.enrollments||[]).filter(function(enrollment){
-        return String(enrollment.projectId)===String(lessonProjectId) && enrollment.direction===group?.direction;
+        return String(enrollment.projectId)===String(lessonProjectId) && (ex?.enrollmentId ? Number(enrollment.id)===Number(ex.enrollmentId) : group?.isMixed || enrollment.direction===group?.direction);
       });
       const statusRank=function(enrollment){
         const status=String(enrollment?.status||'Активный').toLowerCase();

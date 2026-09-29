@@ -86,9 +86,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     const teacherId = await teacherForContext(connection, context);
     const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)
       AND EXISTS (SELECT 1 FROM teacher_projects tp
-        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
         WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
-          AND tpd.direction_id=l.direction_id_snapshot)` : '';
+          AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id=l.direction_id_snapshot))` : '';
     const [lessonRows] = await connection.query(`${baseSelect} WHERE (${where}) AND l.deleted_at IS NULL${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
     if (!lessonRows.length) return [];
     const partnerProject = partnerProjectId(context);
@@ -127,7 +127,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       const salary = salaryRows.find((item) => String(item.lesson_id) === String(row.id));
       return {
         id: String(row.id), groupId: String(row.group_id), groupName: row.group_name,
-        directionId: String(row.direction_id_snapshot), directionName: row.direction_name,
+        directionId: String(row.direction_id_snapshot), isMixed: bool(row.is_mixed_snapshot), directionName: bool(row.is_mixed_snapshot) ? 'Смешанная' : row.direction_name,
         projectId: String(row.project_id_snapshot), projectName: row.project_name,
         siteId: String(row.site_override_id ?? row.site_id_snapshot), siteName: row.site_override_name ?? row.site_name,
         siteOverrideId: row.site_override_id == null ? null : String(row.site_override_id),
@@ -163,7 +163,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         AND (g.deleted_at IS NOT NULL OR g.active=FALSE OR DATE(l.scheduled_starts_at)<g.starts_on
           OR (g.ends_on IS NOT NULL AND DATE(l.scheduled_starts_at)>g.ends_on)
           OR WEEKDAY(l.scheduled_starts_at)+1<>g.weekday OR TIME(l.scheduled_starts_at)<>g.start_time
-          OR TIME(l.scheduled_ends_at)<>g.end_time OR l.direction_id_snapshot<>g.direction_id
+          OR TIME(l.scheduled_ends_at)<>g.end_time OR l.direction_id_snapshot<>g.direction_id OR l.is_mixed_snapshot<>g.is_mixed
           OR l.project_id_snapshot<>g.project_id OR l.site_id_snapshot<>g.site_id
           OR l.planned_teacher_id<>g.default_teacher_id)${cleanupGroupFilter}`, params);
     const today = businessDate();
@@ -171,15 +171,15 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     if (to < occurrenceFrom) return;
     params.from = occurrenceFrom;
     const groupFilter = groupId == null ? '' : ' AND g.id=:groupId';
-    const [groups] = await pool.query(`SELECT g.id,g.direction_id,g.project_id,g.site_id,g.default_teacher_id,g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on
+    const [groups] = await pool.query(`SELECT g.id,g.is_mixed,g.direction_id,g.project_id,g.site_id,g.default_teacher_id,g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on
       FROM study_groups g WHERE g.deleted_at IS NULL AND g.active=TRUE AND g.starts_on<=:to AND (g.ends_on IS NULL OR g.ends_on>=:from)${groupFilter}`, params);
     for (const group of groups) {
       for (const date of occurrenceDates(group, occurrenceFrom, to)) {
         const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
         await pool.query(`INSERT IGNORE INTO lessons
-          (group_id,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
-          VALUES (:groupId,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
-          groupId: group.id, directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
+          (group_id,is_mixed_snapshot,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
+          VALUES (:groupId,:isMixed,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
+          groupId: group.id, isMixed: bool(group.is_mixed), directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
           date, start, end, teacherId: group.default_teacher_id,
         });
       }
@@ -207,7 +207,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
   async function create(body, context = {}) {
     if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав для создания занятия');
     const groupId = identifier(body.groupId, 'groupId'); const scheduledDate = dateOnly(body.scheduledDate, 'scheduledDate');
-    const [groups] = await pool.query(`SELECT id,direction_id,project_id,site_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on
+    const [groups] = await pool.query(`SELECT id,is_mixed,direction_id,project_id,site_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on
       FROM study_groups WHERE id=:groupId AND deleted_at IS NULL`, { groupId });
     const group = groups[0];
     if (group) assertProjectScope(context, group.project_id);
@@ -216,9 +216,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     }
     const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
     await pool.query(`INSERT IGNORE INTO lessons
-      (group_id,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
-      VALUES (:groupId,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
-      groupId: group.id, directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
+      (group_id,is_mixed_snapshot,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
+      VALUES (:groupId,:isMixed,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
+      groupId: group.id, isMixed: bool(group.is_mixed), directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
       date: scheduledDate, start, end, teacherId: group.default_teacher_id,
     });
     const [rows] = await pool.query(`SELECT l.id FROM lessons l WHERE l.group_id=:groupId
@@ -231,9 +231,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     const actorTeacherId = await teacherForContext(pool, context);
     const scope = actorTeacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)
       AND EXISTS (SELECT 1 FROM teacher_projects tp
-        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
         WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
-          AND tpd.direction_id=l.direction_id_snapshot)` : '';
+          AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id=l.direction_id_snapshot))` : '';
     const projectId = partnerProjectId(context);
     const projectScope = projectId ? ' AND project_id_snapshot=:projectId' : '';
     const [rows] = await pool.query(`SELECT l.group_id,l.scheduled_starts_at FROM lessons l
@@ -253,10 +253,10 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     if (actorTeacherId && ![lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id) === actorTeacherId)) throw new ApiProblem(403, 'FORBIDDEN', 'Занятие не назначено преподавателю');
     if (actorTeacherId) {
       const [access] = await connection.query(`SELECT tp.teacher_id FROM teacher_projects tp
-        JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+        LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
         WHERE tp.teacher_id=:teacherId AND tp.project_id=:projectId AND tp.active=TRUE
-          AND tpd.direction_id=:directionId LIMIT 1`, {
-        teacherId: actorTeacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot,
+          AND (:isMixed OR tpd.direction_id=:directionId) LIMIT 1`, {
+        teacherId: actorTeacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot, isMixed: bool(lesson.is_mixed_snapshot),
       });
       if (!access.length) throw new ApiProblem(403, 'FORBIDDEN', 'Преподаватель не активен в проекте или направлении занятия');
     }
@@ -288,9 +288,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         const teacherId = actorTeacherId ?? (body.actualTeacherId === undefined ? lesson.actual_teacher_id : identifier(body.actualTeacherId, 'actualTeacherId'));
         if (teacherId != null) {
           const [teachers] = await connection.query(`SELECT t.id FROM teachers t JOIN teacher_projects tp ON tp.teacher_id=t.id
-            JOIN teacher_project_directions tpd ON tpd.teacher_id=t.id AND tpd.project_id=tp.project_id
-            WHERE t.id=:id AND tp.project_id=:projectId AND tp.active=TRUE AND tpd.direction_id=:directionId AND t.deleted_at IS NULL`,
-          { id: teacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot });
+            LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=t.id AND tpd.project_id=tp.project_id
+            WHERE t.id=:id AND tp.project_id=:projectId AND tp.active=TRUE AND (:isMixed OR tpd.direction_id=:directionId) AND t.deleted_at IS NULL`,
+          { id: teacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot, isMixed: bool(lesson.is_mixed_snapshot) });
           if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Преподаватель не найден');
         }
         if (lesson.status === 'completed' && String(teacherId ?? '') !== String(lesson.actual_teacher_id ?? '')) {
@@ -338,9 +338,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (lesson.status !== 'scheduled') throw new ApiProblem(409, 'LESSON_FINAL', 'Отменённое занятие нельзя начать');
         const actualTeacherId = actorTeacherId ?? identifier(body.actualTeacherId ?? lesson.planned_teacher_id, 'actualTeacherId');
         const [teachers] = await connection.query(`SELECT t.id FROM teachers t JOIN teacher_projects tp ON tp.teacher_id=t.id
-          JOIN teacher_project_directions tpd ON tpd.teacher_id=t.id AND tpd.project_id=tp.project_id
-          WHERE t.id=:id AND tp.project_id=:projectId AND tp.active=TRUE AND tpd.direction_id=:directionId AND t.deleted_at IS NULL`, {
-          id: actualTeacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot,
+          LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=t.id AND tpd.project_id=tp.project_id
+          WHERE t.id=:id AND tp.project_id=:projectId AND tp.active=TRUE AND (:isMixed OR tpd.direction_id=:directionId) AND t.deleted_at IS NULL`, {
+          id: actualTeacherId, projectId: lesson.project_id_snapshot, directionId: lesson.direction_id_snapshot, isMixed: bool(lesson.is_mixed_snapshot),
         });
         if (!teachers.length) throw new ApiProblem(400, 'INVALID_REFERENCE', 'Фактический преподаватель не найден');
         const [members] = await connection.query(`SELECT gm.child_id,gm.enrollment_id FROM (
@@ -367,27 +367,27 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     } catch (error) { throw mysqlError(error); }
   }
 
-  async function enrollmentForAttendance(connection, lesson, childId) {
+  async function enrollmentForAttendance(connection, lesson, childId, enrollmentId = null) {
     const date = isoDate(lesson.starts_at);
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.balance_lessons,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
-        (SELECT pv.price FROM price_versions pv JOIN group_memberships gm ON gm.group_id=pv.group_id WHERE pv.scope_type='group' AND gm.enrollment_id=e.id AND gm.started_on<=:date AND (gm.ended_on IS NULL OR gm.ended_on>=:date) AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY gm.started_on DESC,pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv JOIN group_memberships gm ON gm.group_id=pv.group_id WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND gm.enrollment_id=e.id AND gm.started_on<=:date AND (gm.ended_on IS NULL OR gm.ended_on>=:date) AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY gm.started_on DESC,pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
           AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<=:startsAt
           AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt)
           ORDER BY (pv.project_id IS NOT NULL) DESC,pv.valid_from DESC,pv.id DESC LIMIT 1)
       ) current_price
-      FROM child_enrollments e WHERE e.child_id=:childId AND e.direction_id=:directionId
+      FROM child_enrollments e WHERE e.child_id=:childId AND (:enrollmentId IS NULL OR e.id=:enrollmentId)
         AND e.project_id=:projectId AND (e.superseded_at IS NULL OR e.superseded_at>:startsAt)
         AND (NOT EXISTS (SELECT 1 FROM enrollment_project_transfers pt WHERE pt.target_enrollment_id=e.id)
           OR e.created_at<=:startsAt)
-      ORDER BY e.id DESC LIMIT 1 FOR UPDATE`, {
-      childId: identifier(childId, 'childId'), directionId: lesson.direction_id_snapshot,
+      ORDER BY (e.direction_id=:directionId) DESC,e.id DESC FOR UPDATE`, {
+      childId: identifier(childId, 'childId'), enrollmentId, directionId: lesson.direction_id_snapshot, isMixed: bool(lesson.is_mixed_snapshot),
       projectId: lesson.project_id_snapshot, date, startsAt: lesson.starts_at,
     });
-    if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет направления этого занятия');
+    if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет доступного направления в проекте занятия');
     if (rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
     return rows[0];
   }
@@ -498,10 +498,11 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
         const [roster] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId: identifier(childId, 'childId') });
         if (!roster.length) throw new ApiProblem(409, 'CHILD_NOT_IN_LESSON', 'Ребёнок не входит в состав занятия');
-        const enrollment = await enrollmentForAttendance(connection, lesson, childId);
         const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
         if (!rows.length) throw new ApiProblem(409, 'ATTENDANCE_NOT_FOUND', 'Строка посещения не создана');
-        const attendance = rows[0]; const present = bool(body.present); const trial = body.trial === undefined ? bool(attendance.is_trial) : bool(body.trial);
+        const attendance = rows[0];
+        const enrollment = await enrollmentForAttendance(connection, lesson, childId, attendance.enrollment_id);
+        const present = bool(body.present); const trial = body.trial === undefined ? bool(attendance.is_trial) : bool(body.trial);
         if (attendance.marked_at != null && bool(attendance.present) === present && bool(attendance.is_trial) === trial && String(attendance.enrollment_id) === String(enrollment.id)) return;
         if (lesson.status === 'completed') await reverseAttendanceDebit(connection, attendance, context);
         await connection.query(`UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=:type,present=:present,is_trial=:trial,
@@ -535,7 +536,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           }
           for (const attendance of attendances) {
             if (!bool(attendance.present) || bool(attendance.is_trial)) continue;
-            const enrollment = await enrollmentForAttendance(connection, lesson, attendance.child_id);
+            const enrollment = await enrollmentForAttendance(connection, lesson, attendance.child_id, attendance.enrollment_id);
             if (!(await activeAttendanceDebit(connection, attendance.id))) await debitAttendance(connection, attendance, enrollment, lesson, context);
           }
         }
@@ -641,7 +642,12 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (lesson.status === 'completed' && hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
           throw new ApiProblem(403, 'FORBIDDEN', 'Состав проведённого занятия меняет только администратор проекта');
         }
-        const enrollment = await enrollmentForAttendance(connection, lesson, childId);
+        const [available] = await connection.query(`SELECT e.id,e.direction_id FROM child_enrollments e JOIN children c ON c.id=e.child_id
+          WHERE e.child_id=:childId AND e.project_id=:projectId AND e.status='active' AND e.superseded_at IS NULL
+            AND c.deleted_at IS NULL AND c.status IN ('lead','active') ORDER BY e.id FOR UPDATE`, { childId, projectId: lesson.project_id_snapshot });
+        const selected = body.enrollmentId == null ? (available.length === 1 ? available[0] : null) : available.find((e) => String(e.id) === identifier(body.enrollmentId, 'enrollmentId'));
+        if (!selected) throw new ApiProblem(409, 'ENROLLMENT_REQUIRED', 'Выберите доступное направление ребёнка в проекте занятия');
+        const enrollment = await enrollmentForAttendance(connection, lesson, childId, selected.id);
         const [existing] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
         if (existing.length) return;
         const trial = !(await priorVisit(connection, enrollment.id, lesson));
@@ -736,6 +742,12 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           operation: 'lesson.quick-child', projectId: lesson.project_id_snapshot, entity: lesson.id });
         const [existing] = await connection.query('SELECT id FROM children WHERE create_idempotency_key=:key FOR UPDATE', { key: commandKey });
         if (existing.length) { childId = existing[0].id; return; }
+        let directionId = lesson.direction_id_snapshot;
+        if (bool(lesson.is_mixed_snapshot)) {
+          const [directions] = await connection.query('SELECT id FROM directions WHERE name=:name AND active=TRUE', { name: String(body.directionName ?? '').trim() });
+          if (!directions.length) throw new ApiProblem(400, 'INVALID_DIRECTION', 'Выберите настоящее направление ребёнка');
+          directionId = directions[0].id;
+        }
         const [childResult] = await connection.query(`INSERT INTO children
           (full_name,status,needs_director_review,created_from_lesson_id,created_by_user_id,create_idempotency_key)
           VALUES (:name,'lead',TRUE,:lessonId,:actorId,:commandKey)`, { name, lessonId: lesson.id, actorId: context.userId ?? null, commandKey });
@@ -746,7 +758,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         }
         const [enrollment] = await connection.query(`INSERT INTO child_enrollments
           (child_id,direction_id,project_id,status,started_on) VALUES (:childId,:directionId,:projectId,'active',DATE(:startsAt))`, {
-          childId, directionId: lesson.direction_id_snapshot, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
+          childId, directionId, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
         });
         await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
           VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });

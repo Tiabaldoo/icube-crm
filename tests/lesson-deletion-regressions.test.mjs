@@ -20,7 +20,7 @@ test('явный клик директора создаёт только оди�
     planned_teacher_id: 6, actual_teacher_id: null, status: 'scheduled', scheduled_starts_at: '2026-09-14 10:00:00',
     scheduled_ends_at: '2026-09-14 11:00:00', starts_at: '2026-09-14 10:00:00', ends_at: '2026-09-14 11:00:00' });
   const handler = async (sql, params = {}) => {
-    if (sql.startsWith('SELECT id,direction_id,project_id')) return [[{ id: 4, direction_id: 1, project_id: 2, site_id: 3, default_teacher_id: 6,
+    if (sql.startsWith('SELECT id,is_mixed,direction_id,project_id')) return [[{ id: 4, direction_id: 1, project_id: 2, site_id: 3, default_teacher_id: 6,
       weekday: 1, start_time: '10:00:00', end_time: '11:00:00', starts_on: '2026-01-01', ends_on: null }]];
     if (sql.startsWith('INSERT IGNORE INTO lessons')) { inserted += 1; assert.equal(params.date, '2026-09-14'); return [{ insertId: 40 }]; }
     if (sql.startsWith('SELECT l.id FROM lessons l WHERE')) return [[{ id: 40 }]];
@@ -47,7 +47,7 @@ test('DELETE completed lesson восстанавливает lot/balance, чис
     if (sql.startsWith('INSERT INTO balance_entries')) return [{ insertId: 81 }];
     if (sql.startsWith('UPDATE lessons SET deleted_at=')) { deleted = true; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('DELETE l FROM lessons')) { assert.match(sql, /l\.deleted_at IS NULL/); return [{ affectedRows: 0 }]; }
-    if (sql.startsWith('SELECT g.id,g.direction_id')) return [[{ id: 4, direction_id: 1, project_id: 2, site_id: 3, default_teacher_id: 6,
+    if (sql.startsWith('SELECT g.id,g.is_mixed,g.direction_id')) return [[{ id: 4, direction_id: 1, project_id: 2, site_id: 3, default_teacher_id: 6,
       weekday: 1, start_time: '10:00:00', end_time: '11:00:00', starts_on: '2099-01-01', ends_on: null }]];
     if (sql.startsWith('INSERT IGNORE INTO lessons')) { insertAttempts += 1; return [{ affectedRows: 0 }]; }
     if (sql.includes('FROM lessons l JOIN study_groups')) return [deleted ? [] : [lesson]];

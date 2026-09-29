@@ -123,20 +123,22 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
   async function groups(context = {}) {
     const actorTeacherId = scopedTeacherId(context);
     const projectId = partnerProject(context);
-    const groupRows = await rows(`SELECT g.id, g.name, g.direction_id, d.name direction_name, g.site_id, s.name site_name,
+    const groupRows = await rows(`SELECT g.id, g.name, g.is_mixed, g.direction_id, d.name direction_name, g.site_id, s.name site_name,
       g.project_id, p.name project_name, g.default_teacher_id teacher_id, t.full_name teacher_name,
       g.weekday, g.start_time, g.end_time, g.starts_on, g.ends_on, g.active,
+      (SELECT JSON_OBJECTAGG(pv.direction_id,pv.price) FROM price_versions pv WHERE pv.scope_type='mixed_group' AND pv.group_id=g.id AND pv.valid_to IS NULL) mixed_prices,
       (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=g.id AND pv.valid_to IS NULL ORDER BY pv.valid_from DESC, pv.id DESC LIMIT 1) price
       FROM study_groups g JOIN directions d ON d.id=g.direction_id JOIN sites s ON s.id=g.site_id
       JOIN projects p ON p.id=g.project_id JOIN teachers t ON t.id=g.default_teacher_id
       WHERE g.deleted_at IS NULL AND (:projectId IS NULL OR g.project_id=:projectId)
         AND (:actorTeacherId IS NULL OR (EXISTS (SELECT 1 FROM teacher_projects tp
-          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
-          WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=g.project_id AND tp.active=TRUE AND tpd.direction_id=g.direction_id)
+          LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+          WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=g.project_id AND tp.active=TRUE AND (g.is_mixed=TRUE OR tpd.direction_id=g.direction_id))
         AND (g.default_teacher_id=:actorTeacherId
         OR EXISTS (SELECT 1 FROM lessons sl WHERE sl.group_id=g.id AND sl.deleted_at IS NULL
           AND (sl.planned_teacher_id=:actorTeacherId OR sl.actual_teacher_id=:actorTeacherId))))) ORDER BY g.name`, { actorTeacherId, projectId });
-    return groupRows.map((row) => ({ id: rowId(row), name: row.name, directionId: String(row.direction_id), directionName: row.direction_name,
+    return groupRows.map((row) => ({ id: rowId(row), name: row.name, directionId: String(row.direction_id), isMixed: Boolean(row.is_mixed), directionName: row.is_mixed ? 'Смешанная' : row.direction_name,
+      mixedPrices: typeof row.mixed_prices === 'string' ? JSON.parse(row.mixed_prices) : row.mixed_prices ?? {},
       siteId: String(row.site_id), siteName: row.site_name, projectId: String(row.project_id), projectName: row.project_name,
       teacherId: String(row.teacher_id), teacherName: row.teacher_name, weekday: Number(row.weekday), startTime: String(row.start_time).slice(0, 5),
       endTime: String(row.end_time).slice(0, 5), startsOn: isoDate(row.starts_on), endsOn: isoDate(row.ends_on), active: Boolean(row.active),
@@ -153,20 +155,21 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       LEFT JOIN guardians g ON g.id=cg.guardian_id WHERE c.deleted_at IS NULL
       AND (:projectId IS NULL OR EXISTS (SELECT 1 FROM child_enrollments pe WHERE pe.child_id=c.id
         AND pe.project_id=:projectId AND pe.superseded_at IS NULL)) AND (:actorTeacherId IS NULL
+        OR EXISTS (SELECT 1 FROM child_enrollments ce JOIN teacher_projects tp ON tp.project_id=ce.project_id AND tp.teacher_id=:actorTeacherId AND tp.active=TRUE WHERE ce.child_id=c.id AND ce.status='active' AND ce.superseded_at IS NULL)
         OR EXISTS (SELECT 1 FROM child_enrollments se JOIN group_memberships gm ON gm.enrollment_id=se.id
           JOIN study_groups sg ON sg.id=gm.group_id JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId
             AND tp.project_id=sg.project_id AND tp.active=TRUE
-          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=sg.direction_id
+          LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND (sg.is_mixed=TRUE OR tpd.direction_id=sg.direction_id)
           WHERE se.child_id=c.id AND gm.started_on<=:today AND (gm.ended_on IS NULL OR gm.ended_on>=:today)
-            AND sg.default_teacher_id=:actorTeacherId)
+            AND sg.default_teacher_id=:actorTeacherId AND (sg.is_mixed=TRUE OR tpd.direction_id IS NOT NULL))
         OR EXISTS (SELECT 1 FROM lesson_roster_members lrm JOIN lessons l ON l.id=lrm.lesson_id
           JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
-          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=l.direction_id_snapshot
-          WHERE lrm.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId))
+          LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id=l.direction_id_snapshot)
+          WHERE lrm.child_id=c.id AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id IS NOT NULL) AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId))
         OR EXISTS (SELECT 1 FROM attendances a JOIN lessons l ON l.id=a.lesson_id
           JOIN teacher_projects tp ON tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
-          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND tpd.direction_id=l.direction_id_snapshot
-          WHERE a.child_id=c.id AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)))
+          LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id=l.direction_id_snapshot)
+          WHERE a.child_id=c.id AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id IS NOT NULL) AND l.deleted_at IS NULL AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)))
       ORDER BY c.full_name`, { actorTeacherId, projectId, today });
     if (!childRows.length) return [];
     const visibleIds = childRows.map((row) => String(row.id));
@@ -175,7 +178,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       e.started_on, e.ended_on, gm.group_id,gm.started_on group_started_on,
       effective_gm.group_id effective_group_id,sg.name group_name,sg.weekday,sg.start_time,s.name site_name,
       COALESCE(e.individual_price,
-        (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='group' AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
           AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<=NOW(6)
           AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6))
@@ -188,8 +191,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       LEFT JOIN study_groups sg ON sg.id=gm.group_id LEFT JOIN sites s ON s.id=sg.site_id
       WHERE e.child_id IN (${visibleIds.join(',')}) AND e.superseded_at IS NULL
         AND (:actorTeacherId IS NULL OR EXISTS (SELECT 1 FROM teacher_projects tp
-          JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
-          WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=e.project_id AND tp.active=TRUE AND tpd.direction_id=e.direction_id))
+          LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
+          WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=e.project_id AND tp.active=TRUE ))
       ORDER BY e.child_id, e.id`, { projectId, actorTeacherId, today });
     return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
       createdAt: isoDate(row.created_at), status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
@@ -368,8 +371,18 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     await connection.query(`UPDATE price_versions SET valid_to=NOW(6) WHERE scope_type='group' AND group_id=:groupId AND valid_to IS NULL`, { groupId });
     if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,group_id,price,valid_from) VALUES ('group',:groupId,:price,NOW(6))`, { groupId, price: Number(price) });
   }
+  async function setMixedGroupPrice(connection, groupId, directionId, input) {
+    const price = input === '' || input == null ? null : String(input);
+    if (price !== null && !/^\d+(?:\.\d{1,2})?$/.test(price)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректная цена группы');
+    if (price !== null && !(Number(price)>0)) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Цена должна быть больше нуля');
+    const [current] = await connection.query(`SELECT id,price FROM price_versions WHERE scope_type='mixed_group' AND group_id=:groupId AND direction_id=:directionId AND valid_to IS NULL FOR UPDATE`, { groupId, directionId });
+    if ((current[0]?.price == null ? null : Number(current[0].price)) === (price == null ? null : Number(price))) return;
+    await connection.query(`UPDATE price_versions SET valid_to=NOW(6) WHERE scope_type='mixed_group' AND group_id=:groupId AND direction_id=:directionId AND valid_to IS NULL`, { groupId, directionId });
+    if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,group_id,direction_id,price,valid_from) VALUES ('mixed_group',:groupId,:directionId,:price,NOW(6))`, { groupId, directionId, price });
+  }
   async function writeGroup(connection, groupId, body, current = {}, context = {}) {
     const value = {
+      isMixed: body.isMixed === undefined ? Boolean(current.isMixed) : Boolean(body.isMixed),
       name: body.name === undefined ? current.name : text(body.name, 'name'), directionId: id(body.directionId ?? current.directionId, 'directionId'),
       siteId: id(body.siteId ?? current.siteId, 'siteId'), projectId: id(chosenProject(context, body.projectId ?? current.projectId) ?? current.projectId, 'projectId'), teacherId: id(body.teacherId ?? current.teacherId, 'teacherId'),
       weekday: Number(body.weekday ?? current.weekday), startTime: body.startTime ?? current.startTime, endTime: body.endTime ?? current.endTime,
@@ -385,14 +398,22 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     }
     if (!value.active && value.endsOn > businessDate()) throw new ApiProblem(400, 'GROUP_END_DATE_IN_FUTURE', 'Нельзя завершить группу будущей датой. Укажите сегодняшнюю дату или более раннюю');
     if (!Number.isInteger(value.weekday) || value.weekday < 1 || value.weekday > 7 || !/^\d\d:\d\d$/.test(value.startTime) || !/^\d\d:\d\d$/.test(value.endTime) || !value.startsOn) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Некорректное расписание группы');
+    if (groupId) await connection.query('SELECT id FROM study_groups WHERE id=:groupId FOR UPDATE', { groupId });
     await assertIds(connection, 'directions', [value.directionId], 'directionId'); await assertIds(connection, 'sites', [value.siteId], 'siteId'); await assertIds(connection, 'projects', [value.projectId], 'projectId'); await assertIds(connection, 'teachers', [value.teacherId], 'teacherId');
     const [ownership] = await connection.query(`SELECT s.id FROM sites s JOIN teacher_projects tp ON tp.teacher_id=:teacherId
       WHERE s.id=:siteId AND s.project_id=:projectId AND s.active=TRUE AND tp.project_id=:projectId AND tp.active=TRUE`, value);
     if (!ownership.length) throw new ApiProblem(400, 'PROJECT_MISMATCH', 'Площадка и преподаватель должны быть доступны проекту группы');
     const [teacherDirection] = await connection.query(`SELECT teacher_id FROM teacher_project_directions
       WHERE teacher_id=:teacherId AND project_id=:projectId AND direction_id=:directionId`, value);
-    if (!teacherDirection.length) throw new ApiProblem(400, 'TEACHER_DIRECTION_MISMATCH', 'Преподаватель не работает с направлением группы');
-    if (groupId && (String(value.directionId) !== String(current.directionId) || String(value.projectId) !== String(current.projectId))) {
+    if (!value.isMixed && !teacherDirection.length) throw new ApiProblem(400, 'TEACHER_DIRECTION_MISMATCH', 'Преподаватель не работает с направлением группы');
+    if (groupId && !value.isMixed) {
+      const [incompatible] = await connection.query(`SELECT d.name FROM group_memberships gm
+        JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN directions d ON d.id=e.direction_id
+        WHERE gm.group_id=:groupId AND gm.ended_on IS NULL AND e.superseded_at IS NULL
+          AND e.status IN ('active','paused') AND e.direction_id<>:directionId LIMIT 1 FOR UPDATE`, { groupId, directionId: value.directionId });
+      if (incompatible.length) throw new ApiProblem(409, 'GROUP_MEMBERS_DIRECTION_MISMATCH', `Нельзя изменить тип группы: в группе есть дети направления «${incompatible[0].name}». Сначала переведите их в другую группу.`);
+    }
+    if (groupId && !current.isMixed && !value.isMixed && (String(value.directionId) !== String(current.directionId) || String(value.projectId) !== String(current.projectId))) {
       const [lessons] = await connection.query(`SELECT l.id FROM lessons l WHERE l.group_id=:id AND l.deleted_at IS NULL AND NOT (
         l.status='scheduled' AND l.scheduled_starts_at>NOW(6) AND l.actual_starts_at IS NULL
         AND l.roster_frozen_at IS NULL AND l.attendance_applied_at IS NULL AND l.completed_at IS NULL AND l.cancelled_at IS NULL
@@ -403,8 +424,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       ) LIMIT 1`, { id: groupId });
       if (lessons.length) throw new ApiProblem(409, 'GROUP_HAS_HISTORY', 'Направление и проект группы с историей занятий менять нельзя');
     }
-    if (groupId) await connection.query(`UPDATE study_groups SET name=:name,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active WHERE id=:id`, { ...value, id: groupId });
-    else { const [result] = await connection.query(`INSERT INTO study_groups (name,direction_id,site_id,project_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,active,created_by_user_id) VALUES (:name,:directionId,:siteId,:projectId,:teacherId,:weekday,:startTime,:endTime,:startsOn,:endsOn,:active,:actorId)`, { ...value, actorId: context.userId ?? null }); groupId = result.insertId; }
+    if (groupId) await connection.query(`UPDATE study_groups SET name=:name,is_mixed=:isMixed,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active WHERE id=:id`, { ...value, id: groupId });
+    else { const [result] = await connection.query(`INSERT INTO study_groups (name,is_mixed,direction_id,site_id,project_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,active,created_by_user_id) VALUES (:name,:isMixed,:directionId,:siteId,:projectId,:teacherId,:weekday,:startTime,:endTime,:startsOn,:endsOn,:active,:actorId)`, { ...value, actorId: context.userId ?? null }); groupId = result.insertId; }
     if (groupId && current.active === true && value.active === false) {
       await connection.query('UPDATE group_memberships SET ended_on=:endedOn WHERE group_id=:groupId AND ended_on IS NULL', { groupId, endedOn: value.endsOn });
       await connection.query(`DELETE l FROM lessons l WHERE l.group_id=:groupId
@@ -416,7 +437,16 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
         AND NOT EXISTS (SELECT 1 FROM lesson_photos ph WHERE ph.lesson_id=l.id)
         AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)`, { groupId });
     }
-    if (body.price !== undefined) await setGroupPrice(connection, groupId, body.price === '' ? null : body.price);
+    if (groupId && Boolean(current.isMixed) !== value.isMixed) {
+      await connection.query(`UPDATE price_versions SET valid_to=NOW(6) WHERE group_id=:groupId AND scope_type=:scope AND valid_to IS NULL`, { groupId, scope: value.isMixed ? 'group' : 'mixed_group' });
+    }
+    if (!value.isMixed && body.price !== undefined) await setGroupPrice(connection, groupId, body.price === '' ? null : body.price);
+    if (value.isMixed && body.mixedPrices !== undefined) {
+      for (const [directionId, price] of Object.entries(body.mixedPrices)) {
+        await assertIds(connection, 'directions', [id(directionId, 'directionId')], 'directionId');
+        await setMixedGroupPrice(connection, groupId, directionId, price);
+      }
+    }
     return groupId;
   }
   async function createGroup(body, context = {}) { try { const groupId = await inTransaction(pool, (connection) => writeGroup(connection, null, body, {}, context)); return get('groups', groupId, context); } catch (error) { throw mysqlError(error); } }
@@ -441,7 +471,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     try { await inTransaction(pool, async (connection) => { const nextStatus = body.status ?? current.status; await connection.query(`UPDATE children SET full_name=:name,birth_date=:birthDate,school=:school,grade=:grade,status=:status,note=:note,needs_director_review=:review WHERE id=:id`, { id: current.id, name: body.name === undefined ? current.name : text(body.name, 'name'), birthDate: body.birthDate === undefined ? current.birthDate : nullable(body.birthDate), school: body.school === undefined ? current.school : nullable(body.school), grade: body.grade === undefined ? current.grade : nullable(body.grade), status: nextStatus, note: body.note === undefined ? current.note : nullable(body.note), review: body.needsDirectorReview === undefined ? current.needsDirectorReview : Boolean(body.needsDirectorReview) }); if (nextStatus !== current.status) await connection.query('INSERT INTO child_status_history (child_id,old_status,new_status) VALUES (:id,:old,:next)', { id: current.id, old: current.status, next: nextStatus }); await upsertGuardian(connection, current.id, body.guardian); }); return get('children', current.id, context); }
     catch (error) { throw mysqlError(error); }
   }
-  async function validateEnrollmentGroup(connection, directionId, groupId, projectId) { if (groupId == null) return; const [found] = await connection.query('SELECT id FROM study_groups WHERE id=:groupId AND direction_id=:directionId AND project_id=:projectId AND deleted_at IS NULL', { groupId: id(groupId, 'groupId'), directionId, projectId }); if (!found.length) throw new ApiProblem(400, 'GROUP_DIRECTION_MISMATCH', 'Группа относится к другому направлению или проекту'); }
+  async function validateEnrollmentGroup(connection, directionId, groupId, projectId) { if (groupId == null) return; const [found] = await connection.query('SELECT id FROM study_groups WHERE id=:groupId AND (is_mixed=TRUE OR direction_id=:directionId) AND project_id=:projectId AND deleted_at IS NULL FOR UPDATE', { groupId: id(groupId, 'groupId'), directionId, projectId }); if (!found.length) throw new ApiProblem(400, 'GROUP_DIRECTION_MISMATCH', 'Группа относится к другому направлению или проекту'); }
   async function resolvePendingOperationSnapshots(connection, enrollmentId, groupId) {
     if (groupId == null) return;
     await connection.query(`UPDATE payments p JOIN study_groups g ON g.id=:groupId SET

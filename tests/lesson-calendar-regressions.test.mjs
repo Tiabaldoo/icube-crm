@@ -20,19 +20,20 @@ test('поиск добавляемого ребёнка привязан к ros
   assert.doesNotMatch(block, /groupChildren\(group\.id\).*some/);
 });
 
-test('поиск ребёнка требует enrollment того же projectId и direction', () => {
+test('поиск extra требует активный enrollment того же проекта, допускает другое направление', () => {
   const start = uiSource.indexOf('window.showExtraResults=function(q)');
   const end = uiSource.indexOf('// Make the new-child action visible', start);
   const block = uiSource.slice(start, end);
   assert.match(block, /String\(enrollment\.projectId\)===String\(lessonProjectId\)/);
-  assert.match(block, /enrollment\.direction===group\.direction/);
+  assert.match(block, /includes\(enrollment\.status\)/);
+  assert.doesNotMatch(block, /enrollment\.direction===group\.direction/);
 });
 
-test('сервер выбирает enrollment по projectId + direction и completed extra использует debit + salary', () => {
+test('сервер выбирает собственный enrollment extra в проекте занятия и completed extra использует debit + salary', () => {
   const enrollmentStart = lessonSource.indexOf('async function enrollmentForAttendance');
   const enrollmentEnd = lessonSource.indexOf('async function activeAttendanceDebit', enrollmentStart);
   const enrollmentBlock = lessonSource.slice(enrollmentStart, enrollmentEnd);
-  assert.match(enrollmentBlock, /e\.direction_id=:directionId/);
+  assert.match(enrollmentBlock, /:enrollmentId IS NULL OR e\.id=:enrollmentId/);
   assert.match(enrollmentBlock, /e\.project_id=:projectId/);
   assert.match(enrollmentBlock, /directionId: lesson\.direction_id_snapshot/);
   assert.match(enrollmentBlock, /projectId: lesson\.project_id_snapshot/);

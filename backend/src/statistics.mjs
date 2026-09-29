@@ -84,23 +84,24 @@ export function createStatistics(pool) {
     if (from > to) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Дата начала периода должна быть не позже даты окончания');
     const projectId = optionalId(raw.projectId, 'projectId'); const directionId = optionalId(raw.directionId, 'directionId');
     const params = { from, to, projectId, directionId };
-    const historicalFilter = `${projectId ? ' AND l.project_id_snapshot=:projectId' : ''}${directionId ? ' AND l.direction_id_snapshot=:directionId' : ''}`;
+    const historicalFilter = `${projectId ? ' AND l.project_id_snapshot=:projectId' : ''}${directionId ? ' AND COALESCE(ae.direction_id,l.direction_id_snapshot)=:directionId' : ''}`;
     const snapshotFilter = `${projectId ? ' AND ranked.project_id_snapshot=:projectId' : ''}${directionId ? ' AND ranked.direction_id_snapshot=:directionId' : ''}`;
-    const currentFilter = `${projectId ? ' AND g.project_id=:projectId' : ''}${directionId ? ' AND g.direction_id=:directionId' : ''}`;
+    const currentFilter = `${projectId ? ' AND g.project_id=:projectId' : ''}${directionId ? ' AND (g.is_mixed=TRUE OR g.direction_id=:directionId)' : ''}`;
     const [[attendanceRows], [firstVisitRows], [leftRows], [currentRows]] = await Promise.all([
       pool.query(`SELECT l.id lesson_id,l.group_id,g.name group_name,l.project_id_snapshot,p.name project_name,
-          l.direction_id_snapshot,d.name direction_name,a.id attendance_id,COALESCE(a.attendance_type,r.roster_type) attendance_type,
+          l.direction_id_snapshot,CASE WHEN l.is_mixed_snapshot THEN 'Смешанная' ELSE d.name END direction_name,a.id attendance_id,COALESCE(a.attendance_type,r.roster_type) attendance_type,
           COALESCE(a.present,FALSE) present,COALESCE(a.is_trial,FALSE) is_trial,a.marked_at
         FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN projects p ON p.id=l.project_id_snapshot
         JOIN directions d ON d.id=l.direction_id_snapshot
         LEFT JOIN lesson_roster_members r ON r.lesson_id=l.id
         LEFT JOIN attendances a ON a.lesson_id=l.id AND a.child_id=r.child_id
+        LEFT JOIN child_enrollments ae ON ae.id=a.enrollment_id
         WHERE l.status='completed' AND l.deleted_at IS NULL AND DATE(l.starts_at) BETWEEN :from AND :to${historicalFilter}
         ORDER BY l.starts_at,l.id,a.id`, params),
       pool.query(`WITH ranked AS (
-          SELECT a.child_id,l.group_id,l.project_id_snapshot,l.direction_id_snapshot,l.starts_at,
-            ROW_NUMBER() OVER (PARTITION BY a.child_id,l.project_id_snapshot,l.direction_id_snapshot ORDER BY l.starts_at,l.id,a.id) AS rn
-          FROM attendances a JOIN lessons l ON l.id=a.lesson_id
+          SELECT a.child_id,l.group_id,l.project_id_snapshot,e.direction_id direction_id_snapshot,l.starts_at,
+            ROW_NUMBER() OVER (PARTITION BY a.child_id,l.project_id_snapshot,e.direction_id ORDER BY l.starts_at,l.id,a.id) AS rn
+          FROM attendances a JOIN lessons l ON l.id=a.lesson_id JOIN child_enrollments e ON e.id=a.enrollment_id
           WHERE l.status='completed' AND l.deleted_at IS NULL AND a.marked_at IS NOT NULL AND a.present=TRUE AND a.is_trial=FALSE
         ) SELECT child_id,group_id,project_id_snapshot,direction_id_snapshot,starts_at FROM ranked
         WHERE rn=1 AND DATE(starts_at) BETWEEN :from AND :to${snapshotFilter}`, params),
@@ -111,10 +112,10 @@ export function createStatistics(pool) {
           WHERE DATE(h.changed_at) BETWEEN :from AND :to
         ) SELECT enrollment_id,child_id,group_id,project_id_snapshot,direction_id_snapshot,new_status FROM ranked
         WHERE rn=1 AND new_status IN ('paused','finished')${snapshotFilter}`, params),
-      pool.query(`SELECT g.id group_id,g.name group_name,g.project_id,p.name project_name,g.direction_id,d.name direction_name,c.id child_id
+      pool.query(`SELECT g.id group_id,g.name group_name,g.project_id,p.name project_name,g.direction_id,CASE WHEN g.is_mixed THEN 'Смешанная' ELSE d.name END direction_name,c.id child_id
         FROM study_groups g JOIN projects p ON p.id=g.project_id JOIN directions d ON d.id=g.direction_id
         LEFT JOIN group_memberships gm ON gm.group_id=g.id AND gm.started_on<=CURDATE() AND (gm.ended_on IS NULL OR gm.ended_on>=CURDATE())
-        LEFT JOIN child_enrollments e ON e.id=gm.enrollment_id AND e.status='active'
+        LEFT JOIN child_enrollments e ON e.id=gm.enrollment_id AND e.status='active'${directionId ? ' AND e.direction_id=:directionId' : ''}
         LEFT JOIN children c ON c.id=e.child_id AND c.deleted_at IS NULL AND c.status IN ('lead','active')
         WHERE g.active=TRUE AND g.deleted_at IS NULL${currentFilter} ORDER BY g.name,g.id,e.child_id`, params),
     ]);
