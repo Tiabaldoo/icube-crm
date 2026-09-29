@@ -24,7 +24,7 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
     const options = type === 'child' ? ['Лид', 'Активный', 'Пауза', 'Закончил'] : ['true', 'false'];
     popover.innerHTML = options.map((value) => {
       const label = type === 'child' ? value : value === 'true' ? 'Активна' : 'Неактивна';
-      const tone = type === 'child' ? host.statusBadge(value) : value === 'true' ? 'green' : 'gray';
+      const tone = type === 'child' ? legacy.statusBadge(value) : value === 'true' ? 'green' : 'gray';
       return `<button type="button" class="badge ${tone}" data-quick-status="${esc(value)}" aria-pressed="${value === pending.initial}">${esc(label)}</button>`;
     }).join('');
     popover.addEventListener('click', (event) => {
@@ -47,6 +47,11 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
       close(); host.groupForm(id);
       const active = document.querySelector('#gf-active');
       if (active) { active.value = 'false'; active.onchange?.call(active); }
+      const endField = document.querySelector('#gf-end-date-wrap');
+      endField?.closest('.modal')?.classList.add('quick-group-deactivation');
+      endField?.classList.add('quick-deactivation-date');
+      document.querySelector('#gf-end-date')?.focus({ preventScroll: true });
+      endField?.scrollIntoView({ block: 'nearest' });
       return;
     }
     const root = popover; saving = true;

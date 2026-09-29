@@ -1494,3 +1494,7 @@ body.context-help-open{overflow:hidden}
 .quick-status-popover .badge{border:0;cursor:pointer;min-height:40px;min-width:140px;justify-content:center}
 .quick-status-popover .badge:disabled{cursor:wait;opacity:.6}
 .quick-status-popover .badge[aria-pressed=true]{outline:2px solid var(--line)}
+
+.quick-group-deactivation .form-grid > .field:not(.quick-deactivation-date){opacity:.65}
+.quick-group-deactivation .quick-deactivation-date{grid-column:1/-1;background:#fffaeb;border:2px solid #fdb022;border-radius:10px;padding:12px}
+.quick-group-deactivation .quick-deactivation-date > label{font-weight:700;color:#7a2e0e}

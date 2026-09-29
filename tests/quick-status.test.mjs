@@ -18,7 +18,7 @@ test('mixed group shows pinned enrollments independently, never first enrollment
     { groupId: 10, direction: 'Программирование', balanceText: '3.64444444' }] }, 10);
   assert.match(html, /title="Программирование">3.64444444/); assert.doesNotMatch(html, /Робототехника|>8</);
 });
-function fixture() {
+function fixture(statusBadge = (s) => ({ Лид: 'blue', Активный: 'green', Пауза: 'amber', Закончил: 'gray' })[s]) {
   const fields = new Map(); const saves = []; const listeners = {}; const roots = [];
   const state = { role: 'director', selectedChild: 8, selectedGroup: 10,
     children: [{ id: 8, status: 'Активный' }], groups: [{ id: 10, active: true }] };
@@ -34,17 +34,42 @@ function fixture() {
         contains(target) { return target === this; }, remove() { this.removed = true; },
       }; return root;
     } };
-  const host = { innerWidth: 360, innerHeight: 640, statusBadge: (s) => ({ 'Лид': 'blue', 'Активный': 'green', 'Пауза': 'amber', 'Закончил': 'gray' })[s],
+  const host = { innerWidth: 360, innerHeight: 640,
     child() { return `<span class="badge green">${state.children[0].status}</span>`; }, group() { return '<span class="badge green">Активна</span>'; },
-    childForm() { forms++; }, groupForm() { forms++; fields.set('#gf-active', { value: 'true', onchange() { changed++; } }); },
+    childForm() { forms++; }, groupForm() {
+      forms++;
+      const modal = { classList: new Set() };
+      fields.set('#gf-end-date-wrap', { classList: new Set(), closest: () => modal, scrollIntoView() {} });
+      fields.set('.modal', modal);
+      fields.set('#gf-end-date', { focus() { this.focused = true; } });
+      fields.set('#gf-active', { value: 'true', onchange() { changed++; } });
+    },
     icubeApi: { async saveChild(id, options) { saves.push(['child', id, options]); state.children[0].status = options.status; return { id }; },
       async saveGroup(id, options) { saves.push(['group', id, options]); state.groups[0].active = options.active; return { id }; } } };
   const childForm = host.childForm; const groupForm = host.groupForm;
-  installQuickStatusUi({ state }, host, document);
+  installQuickStatusUi({ state, statusBadge }, host, document);
   const anchor = { getBoundingClientRect: () => ({ left: 320, bottom: 620 }) };
   async function choose(value) { roots.at(-1).click({ target: { closest: () => ({ dataset: { quickStatus: value } }) } }); await new Promise((resolve) => setImmediate(resolve)); }
   return { state, host, fields, saves, roots, anchor, listeners, choose, childForm, groupForm, get forms() { return forms; }, get changed() { return changed; } };
 }
+test('child popover uses the real CRM lexical helper through its bridge, not window.statusBadge', async () => {
+  const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
+  const context = vm.createContext({ state: {}, effectivePrice() {}, pageHead() {} });
+  context.window = context;
+  vm.runInContext(source.match(/^const statusBadge=.*$/m)[0] + '\n' + source.match(/^window.icubeLegacy = .*$/m)[0], context);
+  assert.equal(context.statusBadge, undefined);
+  assert.equal(typeof context.icubeLegacy.statusBadge, 'function');
+  const f = fixture(context.icubeLegacy.statusBadge);
+  assert.equal(f.host.statusBadge, undefined);
+  f.host.icubeQuickChildStatus(8, f.anchor);
+  assert.equal(f.roots.length, 1);
+  for (const [color, label] of [['blue', 'Лид'], ['green', 'Активный'], ['amber', 'Пауза'], ['gray', 'Закончил']]) {
+    assert.match(f.roots[0].innerHTML, new RegExp(`class="badge ${color}"[^>]*>${label}`));
+  }
+  await f.choose('Пауза');
+  assert.deepEqual(f.saves, [['child', 8, { status: 'Пауза' }]]);
+  assert.equal(f.roots[0].removed, true);
+});
 test('child badge opens compact colored popover; immediate save delegates and updates badge without a form', async () => {
   const f = fixture(); assert.match(f.host.child(), /icubeQuickChildStatus\(8,this\)/);
   f.host.icubeQuickChildStatus(8, f.anchor);
@@ -69,6 +94,13 @@ test('group popover activation saves immediately; deactivation opens unchanged e
   f.host.icubeQuickGroupStatus(10, f.anchor); await f.choose('false');
   assert.equal(f.saves.length, 1); assert.equal(f.forms, 1); assert.equal(f.changed, 1);
   assert.equal(f.fields.get('#gf-active').value, 'false'); assert.equal(f.host.groupForm, f.groupForm);
+  assert.ok(f.fields.get('.modal').classList.has('quick-group-deactivation'));
+  assert.ok(f.fields.get('#gf-end-date-wrap').classList.has('quick-deactivation-date'));
+  assert.equal(f.fields.get('#gf-end-date').focused, true);
+  f.host.groupForm(10);
+  assert.equal(f.fields.get('.modal').classList.has('quick-group-deactivation'), false);
+  assert.equal(f.fields.get('#gf-end-date-wrap').classList.has('quick-deactivation-date'), false);
+  assert.equal(f.fields.get('#gf-end-date').focused, undefined);
 });
 test('failed save retains the popover and re-enables choices', async () => {
   const f = fixture(); f.host.icubeApi.saveChild = async () => undefined;
