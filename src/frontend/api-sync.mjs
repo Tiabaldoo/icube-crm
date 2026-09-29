@@ -1,4 +1,4 @@
-import { installAdvancedGroupUi } from './advanced-groups.mjs';
+import { groupScheduleLabel, installAdvancedGroupUi } from './advanced-groups.mjs';
 import { installScreenHistory } from './screen-history.mjs';
 import { installQuickStatusUi } from './quick-status.mjs';
 import { openReleaseNote } from './release-notes.mjs';
@@ -848,7 +848,12 @@ function settlementContent({ partnerView = false } = {}) {
     finalBlock = `<div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'Перевести партнёру' : 'Партнёр должен передать iCube'}</span><b>${amount}</b></div>`;
   }
 
-  const customBreakdown = (result.customGroups ?? []).map((group) => `<div class="card pad advanced-settlement"><b>${html(group.groupName)} — долевой расчёт</b><div class="info-list"><div class="info-line"><span>Посещений</span><b>${group.visits}</b></div>${[['gross','Заработанная стоимость'],['teacher','Преподавателю'],['partner','Партнёру'],['tax','Налог'],['icube','iCube']].map(([field,label]) => `<div class="info-line"><span>${label}</span><b>${displayMoney(group[field])}</b></div>`).join('')}</div></div>`).join('');
+  const customGroups = result.customGroups ?? [];
+  const customBreakdown = customGroups.length ? `<details class="advanced-group-settings"><summary>Расчёт индивидуальных групп · ${customGroups.length}</summary>${customGroups.map((group) => {
+    const current = legacy.state.groups.find((item) => String(item.id) === String(group.groupId));
+    const title = current ? `${current.direction} · ${groupScheduleLabel(current)}` : group.groupName;
+    return `<div class="card pad advanced-settlement"><b>${html(title)}</b><div class="info-list"><div class="info-line"><span>Посещений</span><b>${group.visits}</b></div>${[['gross','Заработанная стоимость'],['teacher','Преподавателю'],['partner','Партнёру'],['tax','Налог'],['icube','iCube']].map(([field,label]) => `<div class="info-line"><span>${label}</span><b>${displayMoney(group[field])}</b></div>`).join('')}</div></div>`;
+  }).join('')}</details>` : '';
   return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>${rows}${customBreakdown}${finalBlock}</div>`;
 }
 

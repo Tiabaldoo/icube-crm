@@ -6898,10 +6898,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
             '<span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span>'+
             '<span class="badge '+projectBadge+'">'+escapeHtml(g.project||'—')+'</span>'+
+            (g.isIndividual===true?'<span class="badge purple">Индивидуальная</span>':'')+
           '</div>'+
           '<span class="badge '+(g.active!==false?'green':'gray')+'">'+(g.active!==false?'Активна':'Неактивна')+'</span>'+
         '</div>'+
-        '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
+        '<h3 style="margin:14px 0 5px">'+escapeHtml(window.icubeAdvancedGroups?.cardTitle?.(g)||groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+escapeHtml(g.startTime||String(g.time||'').split('–')[0]||'—')+'–'+escapeHtml(g.endTime||String(g.time||'').split('–')[1]||'—')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+escapeHtml(site?.shortName||site?.name||'—')+'</b></div>'+

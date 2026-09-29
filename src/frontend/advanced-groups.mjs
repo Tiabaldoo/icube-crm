@@ -1,5 +1,12 @@
 const html = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const days = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
+const shortDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+
+export function groupScheduleLabel(group) {
+  return [{ weekday: group.weekday ?? days.indexOf(group.day) + 1, startTime: group.startTime || '—' }, ...(group.scheduleSlots ?? [])]
+    .sort((a, b) => Number(a.weekday) - Number(b.weekday) || String(a.startTime).localeCompare(String(b.startTime)))
+    .map((slot) => `${shortDays[Number(slot.weekday) - 1] || group.day || '—'} ${slot.startTime}`).join(' · ');
+}
 
 export function advancedGroupFields(group = {}) {
   const count = group.packageLessonCount ?? 4;
@@ -50,7 +57,10 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
       scheduleSlots: slots.map((slot) => ({ ...slot })),
       ...(packageEdited && value('#gf-dir') !== 'Смешанная' ? { packagePrice: value('#gf-package-price') || null } : {}) };
   }
-  host.icubeAdvancedGroups = { payload, draft: payload, refresh, addSlot() { slots.push({ weekday: 5, startTime: value('#gf-start') || '16:00', endTime: value('#gf-end') || '17:30' }); drawSlots(); },
+  host.icubeAdvancedGroups = { cardTitle(group) {
+    const title = host.groupTitle(group);
+    return group?.scheduleSlots?.length ? `${title.slice(0, title.lastIndexOf(' · '))} · ${groupScheduleLabel(group)}` : title;
+  }, payload, draft: payload, refresh, addSlot() { slots.push({ weekday: 5, startTime: value('#gf-start') || '16:00', endTime: value('#gf-end') || '17:30' }); drawSlots(); },
     setSlot(index, key, next) { slots[index][key] = key === 'weekday' ? Number(next) : next; }, removeSlot(index) { slots.splice(index, 1); drawSlots(); } };
   const original = host.groupForm;
   host.groupForm = function (id, suppliedDraft) {

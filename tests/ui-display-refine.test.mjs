@@ -18,7 +18,7 @@ test('group display title uses site name, short weekday and start time only', as
   assert.doesNotMatch(helper, /DIR_SHORT|shortName|g\.direction/);
 });
 
-test('both child group selectors and group cards use the shared display title', async () => {
+test('child group selectors use the shared title and group cards extend it with schedule slots', async () => {
   const ui = await readFile(uiUrl, 'utf8');
 
   const childStart = ui.indexOf('window.refreshChildGroupOptions = function');
@@ -41,7 +41,7 @@ test('both child group selectors and group cards use the shared display title', 
   const groupsEnd = ui.indexOf('\n\n  render();', groupsStart);
   const groupsPage = ui.slice(groupsStart, groupsEnd);
   assert.ok(groupsStart >= 0 && groupsEnd > groupsStart);
-  assert.match(groupsPage, /<h3[^>]*>'\+escapeHtml\(groupTitle\(g\)\)/);
+  assert.match(groupsPage, /<h3[^>]*>'\+escapeHtml\(window\.icubeAdvancedGroups\?\.cardTitle\?\.\(g\)\|\|groupTitle\(g\)\)/);
   assert.doesNotMatch(groupsPage, /<h3[^>]*>'\+g\.name/);
   assert.match(groupsPage, /g\.direction/);
   assert.match(groupsPage, /g\.project/);
