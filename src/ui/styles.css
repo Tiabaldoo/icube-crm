@@ -1484,3 +1484,11 @@ body.context-help-open{overflow:hidden}
 .mixed-group-price-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .release-detail p{line-height:1.5;overflow-wrap:anywhere}
 @media(max-width:760px){.mixed-group-price-grid{grid-template-columns:minmax(0,1fr)}}
+
+.group-child-badges{display:flex;align-items:center;justify-content:flex-end;gap:6px;flex-wrap:wrap;flex-shrink:0}
+.quick-status-badge{border:0;cursor:pointer;font:inherit;font-size:12px;font-weight:700}
+.quick-status-badge:hover{filter:brightness(.95)}
+.quick-status-modal .form-grid>[hidden]{display:none!important}
+.quick-status-modal .form-grid{grid-template-columns:minmax(0,1fr)!important}
+.quick-status-modal .select{min-height:44px}
+@media(max-width:760px){.group-child-badges{max-width:50%}.group-child-badges .badge{white-space:nowrap}}

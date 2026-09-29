@@ -15,6 +15,8 @@ const STATIC_PATHS = [
   './src/frontend/push-panel-click.mjs',
   './src/frontend/offline-teacher-snapshot.mjs',
   './src/frontend/release-notes.mjs',
+  './src/frontend/screen-history.mjs',
+  './src/frontend/quick-status.mjs',
   versioned('./src/frontend/parent-portal.mjs'),
   versioned('./src/frontend/api-sync.mjs'),
   versioned('./src/frontend/parent-access.mjs'),

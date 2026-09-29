@@ -1,3 +1,5 @@
+import { installScreenHistory } from './screen-history.mjs';
+import { installQuickStatusUi } from './quick-status.mjs';
 import { openReleaseNote } from './release-notes.mjs';
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 import { createLessonActionQueue, createMemoryLessonActionStore } from '../data/lesson-action-queue.mjs';
@@ -106,6 +108,7 @@ function mapChild(child) {
         : enrollment.effectiveGroupId == null ? null : Number(enrollment.effectiveGroupId),
       status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
       individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
+      balanceText: enrollment.balanceLessons == null ? null : String(enrollment.balanceLessons),
       balance: enrollment.balanceLessons == null ? null : Number(enrollment.balanceLessons) })) };
 }
 
@@ -592,7 +595,7 @@ async function saveGroup(resourceId) {
   } catch (error) { fail(error); }
   finally {
     groupSavePending = false;
-    if (submit?.isConnected !== false) submit.disabled = false;
+    if (submit && submit.isConnected !== false) submit.disabled = false;
   }
 }
 
@@ -1524,7 +1527,7 @@ function clearPushLinkParams() {
   if (!globalThis.history?.replaceState || !globalThis.location) return;
   const url = new URL(globalThis.location.href);
   for (const key of ['pushNotification', 'destination', 'entityType', 'entityId']) url.searchParams.delete(key);
-  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  history.replaceState(history.state, '', `${url.pathname}${url.search}${url.hash}`);
 }
 
 async function openNotificationDestination(link, profile = authProfile, { clearUrl = false } = {}) {
@@ -1940,6 +1943,8 @@ installPersistentCalendarBridge();
 installPersistentNotificationUi();
 installAuthenticatedShells();
 installTeacherAccessUi();
+installScreenHistory(legacy);
+installQuickStatusUi(legacy);
 if (element('#app')) {
   window.icubeAuthReady = new Promise((resolve) => { resolveAuthReady = resolve; });
   bootstrapAuth();

@@ -1,3 +1,4 @@
+import { installQuickStatusUi } from '../src/frontend/quick-status.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -898,8 +899,17 @@ test('mixed UI renders real children, two package prices, mixed calendar label a
     { id: 51, name: 'Программист', status: 'Активный', enrollments: [{ id: 101, projectId: 3, direction: 'Программирование', status: 'Активный', groupId: 10 }] },
   ];
   state.selectedGroup = 10; state.role = 'director';
+  state.children[0].enrollments.unshift({ id: 99, groupId: 999, direction: 'Программирование', balance: 99 });
+  state.children[0].enrollments[1].balanceText = '4.00000000';
+  state.children[1].enrollments[0].balanceText = '1.23333333';
+  installQuickStatusUi({ state }, context, document);
   const listing = context.groups(); assert.match(listing, /Смешанная/); assert.match(listing, /badge mixed/);
   const detail = context.group(); assert.match(detail, /Смешанная/); assert.match(detail, /Робототехник/); assert.match(detail, /Программист/);
+  assert.match(detail, /badge green group-balance-badge[^>]*>4<\/span>/);
+  assert.match(detail, /badge amber group-balance-badge[^>]*>1.23333333<\/span>/);
+  assert.doesNotMatch(detail, />99<\/span>/);
+  assert.match(detail, /icubeQuickGroupStatus\(10\)/);
+  assert.match(detail, /icubeGoBack\(\).*← Назад/);
   fields.set('#gf-dir', { value: 'Смешанная' }); context.groupForm(10);
   assert.match(state.modal, /gf-price-robot[^>]*value="4800"/); assert.match(state.modal, /gf-price-program[^>]*value="5000"/);
   assert.match(state.modal, /Учитель/);
