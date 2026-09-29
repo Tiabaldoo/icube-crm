@@ -210,3 +210,24 @@ test('parent calendar and about labels use complete schedule through the common 
   const single = { ...enrollment, schedule: 'Понедельник, 15:30–16:15' };
   assert.equal(parentGroupDisplayName(single), 'Программирование · Пн 15:30');
 });
+
+
+test('parent attendance renders a multi-slot group title once, without a direction prefix', async () => {
+  const source = await readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8');
+  const renderer = source.slice(source.indexOf('function attendanceHtml('), source.indexOf('export function paymentsHtml'));
+  const context = vm.createContext({ parentGroupDisplayName, escapeHtml: String, dateRu: String, empty: String });
+  vm.runInContext(renderer, context);
+  const output = context.attendanceHtml([{ direction: 'Программирование', group: 'Программирование · Пн 15:30',
+    schedule: 'Понедельник, 15:30–16:15; Среда, 16:15–17:00', startsAt: '2026-09-30 16:15:00', trial: false }]);
+  assert.match(output, /<span>Программирование · Пн 15:30 · Ср 16:15<\/span>/);
+  assert.doesNotMatch(output, /Программирование · Программирование/);
+  assert.doesNotMatch(renderer, /escapeHtml\(row\.direction\)/);
+});
+
+test('UI display helpers and their groupTitle alias have no adjacent manual direction prefix', async () => {
+  const parentSource = await readFile(new URL('../src/frontend/parent-portal.mjs', import.meta.url), 'utf8');
+  const templatePrefix = /\$\{(?:html|escapeHtml)\([^}]*\.direction(?:Name)?\)\} · \$\{(?:html|escapeHtml)\((?:groupDisplayName|displayGroup|parentGroupDisplayName)\(/;
+  assert.doesNotMatch(parentSource, templatePrefix);
+  assert.doesNotMatch(apiSource, templatePrefix);
+  assert.doesNotMatch(crmSource, /esc\([^)]*\.direction\)\+' · '\+esc\(groupTitle\(/);
+});

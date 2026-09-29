@@ -3981,7 +3981,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const group=lesson?byId(state.groups,lesson.groupId):null;
       return '<div class="kpi-line"><div><b>'+esc(c.name)+'</b><div class="muted mini">'+
         (teacher?'Создал: '+esc(teacher.name):'Создан преподавателем')+
-        (group?' · '+esc(group.direction)+' · '+esc(groupTitle(group)):'')+
+        (group?' · '+esc(groupTitle(group)):'')+
         '</div><div class="muted mini">'+esc(c.phone||'Телефон не указан')+'</div></div>'+
         '<button class="btn soft" onclick="openChild('+c.id+')">Проверить</button></div>';
     }).join('');
@@ -7130,7 +7130,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     const rows=issues.map(function(item){
       return '<div class="kpi-line"><div><b>'+esc(item.child.name)+'</b>'+
-        '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(item.group.direction)+' · '+esc(groupTitle(item.group)||'')+'</div>'+
+        '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(groupTitle(item.group)||'')+'</div>'+
         '<div class="mini" style="margin-top:3px">Добавьте направление «'+esc(item.group.direction)+'» в карточку ребёнка.</div></div>'+
         '<button class="btn soft" onclick="openChild('+item.child.id+')">Открыть карточку</button></div>';
     }).join('');
@@ -8710,7 +8710,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           ? 'Нужно назначить группу и проверить направление «'+esc(item.group.direction)+'».'
           : 'Нужно добавить направление «'+esc(item.group.direction)+'» в карточку ребёнка.';
         return '<div class="kpi-line"><div><b>'+esc(item.child.name)+'</b>'+
-          '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(item.group.direction)+' · '+esc(groupTitle(item.group)||'')+'</div>'+
+          '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(groupTitle(item.group)||'')+'</div>'+
           '<div class="mini" style="margin-top:3px">'+setupText+(teacher?' Добавил: '+esc(teacher.name)+'.':'')+'</div></div>'+
           '<button class="btn soft" onclick="openChild('+item.child.id+')">Открыть карточку</button></div>';
       }).join('');

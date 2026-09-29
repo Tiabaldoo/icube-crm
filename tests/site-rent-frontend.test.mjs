@@ -251,3 +251,21 @@ test('desktop and mobile navigation expose rent only outside partner filter', as
   assert.match(ui, /\['rent','Расчёты аренды'\]/);
   assert.match(ui, /\['partner','rent','stats','settings'\]/);
 });
+
+
+test('rent detail renders the multi-slot group display name without duplicating direction', async () => {
+  const setup = setupFrontend();
+  try {
+    setup.state.groups = [{ id: 7, name: 'Сохранённое имя', direction: 'Программирование', day: 'Понедельник', startTime: '15:30',
+      endTime: '16:15', scheduleSlots: [{ weekday: 3, startTime: '16:15', endTime: '17:00' }] }];
+    setup.state.rentReport = { ...report, details: [{ ...report.details[0], directionName: 'Программирование' }] };
+    await loadApi('group-display-no-prefix');
+    setup.state.rentDetailsOpen = true;
+    const output = globalThis.window.icubeRentPage();
+    assert.match(output, /<div class="muted mini">Программирование · Пн 15:30 · Ср 16:15<\/div>/);
+    assert.doesNotMatch(output, /Программирование · Программирование/);
+    const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
+    const rent = source.slice(source.indexOf('function rentPage()'), source.indexOf('window.icubeRentPage = rentPage'));
+    assert.doesNotMatch(rent, /html\(detail\.directionName\)/);
+  } finally { setup.restore(); }
+});

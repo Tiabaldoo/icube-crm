@@ -426,7 +426,7 @@ function rentPage() {
         output += `<div class="card pad rent-detail-group"><div class="section-title"><h2>${html(group.name)}</h2></div><div class="rent-detail-list">`;
         output += group.rows.map((detail) => {
           const time = detail.endsAt ? `${timestampTime(detail.startsAt)}–${timestampTime(detail.endsAt)}` : timestampTime(detail.startsAt);
-          return `<div class="rent-detail-row"><div><b>${isoToRu(timestampDate(detail.startsAt))} · ${time}</b><div class="muted mini">${html(detail.directionName)} · ${html(displayGroup(detail.groupId, detail.groupName))}</div><div class="muted mini">${html(detail.siteName)}</div></div><div class="rent-detail-side">${detail.introGroup ? '<span class="badge amber">Ознакомительное</span>' : ''}<b>${displayMoney(detail.rentRate)}</b></div></div>`;
+          return `<div class="rent-detail-row"><div><b>${isoToRu(timestampDate(detail.startsAt))} · ${time}</b><div class="muted mini">${html(displayGroup(detail.groupId, detail.groupName))}</div><div class="muted mini">${html(detail.siteName)}</div></div><div class="rent-detail-side">${detail.introGroup ? '<span class="badge amber">Ознакомительное</span>' : ''}<b>${displayMoney(detail.rentRate)}</b></div></div>`;
         }).join('');
         output += '</div></div>';
       }
