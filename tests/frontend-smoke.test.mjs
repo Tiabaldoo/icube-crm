@@ -910,6 +910,36 @@ test('mixed UI renders real children, two package prices, mixed calendar label a
   assert.doesNotMatch(detail, />99<\/span>/);
   assert.match(detail, /icubeQuickGroupStatus\(10,this\)/);
   assert.match(detail, /icubeGoBack\(\).*← Назад/);
+  // Reload DTOs: closed memberships retain a date-effective group, but have no open groupId.
+  const historicalLesson = { id: 59, groupId: 10, projectId: 3, teacherId: 4, direction: 'Смешанная',
+    date: '14.09.2026', time: '10:00–11:00', started: true, done: true,
+    attendance: { 50: true, 51: false }, trialChildren: {}, extras: [], photos: {},
+    groupChildIdsV146: [50, 51], groupRosterFrozenV146: true };
+  state.lessons = [historicalLesson]; state.selectedLesson = 59;
+  const historicalBefore = JSON.stringify(historicalLesson);
+  state.groups[0].active = false; state.groupStatusFilterV136 = 'all';
+  const inactiveDetail = context.group();
+  assert.doesNotMatch(inactiveDetail, /Робототехник|Программист|group-balance-badge/);
+  assert.match(context.groups(), /<span>Детей<\/span><b>0<\/b>/);
+  state.children[0].enrollments[1].groupId = null;
+  state.children[0].enrollments[1].effectiveGroupId = 10;
+  state.children[1].enrollments[0].groupId = null;
+  state.children[1].enrollments[0].effectiveGroupId = 10;
+  const inactiveHistory = context.teacherLesson();
+  assert.match(inactiveHistory, /Робототехник/); assert.match(inactiveHistory, /Программист/);
+  assert.equal(JSON.stringify(historicalLesson), historicalBefore);
+  assert.doesNotMatch(context.group(), /group-balance-badge|Робототехник|Программист/);
+  state.groups[0].active = true;
+  assert.doesNotMatch(context.group(), /Робототехник|Программист|group-balance-badge/);
+  assert.match(context.groups(), /<span>Детей<\/span><b>0<\/b>/);
+  // A newly assigned open membership returns the child without changing enrollment history or balance.
+  state.children[0].enrollments[1].groupId = 10;
+  const reassigned = context.group();
+  assert.match(reassigned, /Робототехник/); assert.doesNotMatch(reassigned, /Программист/);
+  assert.match(reassigned, /badge green group-balance-badge[^>]*>4<\/span>/);
+  assert.equal(JSON.stringify(historicalLesson), historicalBefore);
+  assert.equal(state.children[0].enrollments[1].balanceText, '4.00000000');
+  state.children[1].enrollments[0].groupId = 10;
   state.groups.push({ id: 11, direction: 'Робототехника', active: true, projectId: 3 },
     { id: 12, direction: 'Программирование', active: true, projectId: 3 },
     { id: 13, direction: 'Смешанная', isMixed: true, active: true, projectId: 4 },

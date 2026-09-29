@@ -57,9 +57,10 @@ const escapeInlineJs=value=>escapeAttr(String(value??'').replace(/\\/g,'\\\\').r
 const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
-const groupChildren=id=>state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>{
+let lessonRosterRendering=false;
+const groupChildren=id=>!lessonRosterRendering&&byId(state.groups,id)?.active===false?[]:state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>{
  const effectiveId=Object.prototype.hasOwnProperty.call(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId;
- return Number(effectiveId)===Number(id)&&(!e.status||e.status==='Активный');
+ return e.groupId!=null&&Number(effectiveId)===Number(id)&&(!e.status||e.status==='Активный');
 }));
 const effectivePrice=e=>e?.currentPrice ?? e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
@@ -8318,8 +8319,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       }
     });
 
+    const previousRosterRendering=lessonRosterRendering;
+    lessonRosterRendering=true;
     try{return fn();}
     finally{
+      lessonRosterRendering=previousRosterRendering;
       for(let i=restores.length-1;i>=0;i--) restores[i]();
     }
   }
