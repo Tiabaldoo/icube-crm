@@ -1,3 +1,4 @@
+import { assertGroupCapacity } from './group-settings.mjs';
 import { addCalendarDays, businessDate, parseCalendarDate } from '../../src/shared/business-time.mjs';
 
 const problem = (status, code, message) => Object.assign(new Error(message), { status, code });
@@ -23,6 +24,7 @@ export async function changeGroupMembership(connection, {
   actorUserId = null,
   notificationEvents = null,
 } = {}) {
+  await assertGroupCapacity(connection, targetGroupId, { childId, enrollmentId });
   const effectiveDate = membershipDate(startedOn, operationDate);
   const [rawRows] = await connection.query(`SELECT id,group_id,started_on,ended_on FROM group_memberships
     WHERE enrollment_id=:id ORDER BY started_on,id FOR UPDATE`, { id: enrollmentId });

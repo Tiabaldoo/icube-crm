@@ -81,7 +81,7 @@ test('календарь разрешает lesson по scheduled occurrence ide
   assert.match(block, /mapped\.occurrenceKey === key/);
   assert.doesNotMatch(block, /loaded\.find\(\(item\) => String\(item\.groupId\)/);
   assert.match(block, /api\.list\('lessons'/);
-  assert.match(block, /api\.create\('lessons', \{ groupId, scheduledDate: date \}\)/);
+  assert.match(block, /api\.create\('lessons', \{ groupId, scheduledDate: date, \.\.\.\(scheduledStartTime/);
   assert.match(block, /created\.occurrenceKey !== key/);
   assert.match(block, /cacheCalendarLesson/);
 });

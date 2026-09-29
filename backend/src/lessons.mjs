@@ -4,6 +4,7 @@ import { assertProjectScope, partnerProjectId } from './project-scope.mjs';
 import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
 import { addCalendarDays, businessDate, parseCalendarDate, BUSINESS_UTC_OFFSET } from '../../src/shared/business-time.mjs';
 import { scopedIdempotencyKey } from './idempotency.mjs';
+import { attendanceShares, groupSlots } from './group-settings.mjs';
 
 const DAY = 86400000;
 const identifier = (value, field = 'id') => {
@@ -162,8 +163,10 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         AND NOT EXISTS (SELECT 1 FROM salary_accruals sa WHERE sa.lesson_id=l.id)
         AND (g.deleted_at IS NOT NULL OR g.active=FALSE OR DATE(l.scheduled_starts_at)<g.starts_on
           OR (g.ends_on IS NOT NULL AND DATE(l.scheduled_starts_at)>g.ends_on)
-          OR WEEKDAY(l.scheduled_starts_at)+1<>g.weekday OR TIME(l.scheduled_starts_at)<>g.start_time
-          OR TIME(l.scheduled_ends_at)<>g.end_time OR l.direction_id_snapshot<>g.direction_id OR l.is_mixed_snapshot<>g.is_mixed
+          OR NOT ((WEEKDAY(l.scheduled_starts_at)+1=g.weekday AND TIME(l.scheduled_starts_at)=g.start_time AND TIME(l.scheduled_ends_at)=g.end_time)
+            OR EXISTS (SELECT 1 FROM group_schedule_slots gs WHERE gs.group_id=g.id AND gs.weekday=WEEKDAY(l.scheduled_starts_at)+1 AND gs.start_time=TIME(l.scheduled_starts_at) AND gs.end_time=TIME(l.scheduled_ends_at)))
+          OR l.calculation_mode_snapshot<>g.calculation_mode OR l.teacher_share_percent_snapshot<>g.teacher_share_percent
+          OR l.partner_share_percent_snapshot<>g.partner_share_percent OR l.custom_tax_enabled_snapshot<>g.custom_tax_enabled OR l.direction_id_snapshot<>g.direction_id OR l.is_mixed_snapshot<>g.is_mixed
           OR l.project_id_snapshot<>g.project_id OR l.site_id_snapshot<>g.site_id
           OR l.planned_teacher_id<>g.default_teacher_id)${cleanupGroupFilter}`, params);
     const today = businessDate();
@@ -171,16 +174,19 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     if (to < occurrenceFrom) return;
     params.from = occurrenceFrom;
     const groupFilter = groupId == null ? '' : ' AND g.id=:groupId';
-    const [groups] = await pool.query(`SELECT g.id,g.is_mixed,g.direction_id,g.project_id,g.site_id,g.default_teacher_id,g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on
+    const [groups] = await pool.query(`SELECT g.id,g.is_mixed,g.direction_id,g.project_id,g.site_id,g.default_teacher_id,g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on,g.calculation_mode,g.teacher_share_percent,g.partner_share_percent,g.custom_tax_enabled,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('weekday',gs.weekday,'startTime',LEFT(gs.start_time,5),'endTime',LEFT(gs.end_time,5))) FROM group_schedule_slots gs WHERE gs.group_id=g.id) schedule_slots
       FROM study_groups g WHERE g.deleted_at IS NULL AND g.active=TRUE AND g.starts_on<=:to AND (g.ends_on IS NULL OR g.ends_on>=:from)${groupFilter}`, params);
     for (const group of groups) {
-      for (const date of occurrenceDates(group, occurrenceFrom, to)) {
-        const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
+      for (const slot of groupSlots(group)) for (const date of occurrenceDates({ ...group, weekday: slot.weekday }, occurrenceFrom, to)) {
+        const start = slot.startTime; const end = slot.endTime;
         await pool.query(`INSERT IGNORE INTO lessons
-          (group_id,is_mixed_snapshot,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
-          VALUES (:groupId,:isMixed,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
+          (group_id,is_mixed_snapshot,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status,calculation_mode_snapshot,teacher_share_percent_snapshot,partner_share_percent_snapshot,custom_tax_enabled_snapshot,tax_percent_snapshot)
+          VALUES (:groupId,:isMixed,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled',:calculationMode,:teacherShare,:partnerShare,:customTax,
+            IF(:customTax,(SELECT tax_percent FROM partner_agreement_versions WHERE project_id=:projectId AND valid_from<=CONCAT(:date,' ',:start,':00') AND (valid_to IS NULL OR valid_to>CONCAT(:date,' ',:start,':00')) ORDER BY valid_from DESC,id DESC LIMIT 1),0))`, {
           groupId: group.id, isMixed: bool(group.is_mixed), directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
           date, start, end, teacherId: group.default_teacher_id,
+          calculationMode: group.calculation_mode ?? 'standard', teacherShare: group.teacher_share_percent ?? '0', partnerShare: group.partner_share_percent ?? '0', customTax: bool(group.custom_tax_enabled),
         });
       }
     }
@@ -207,22 +213,27 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
   async function create(body, context = {}) {
     if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Недостаточно прав для создания занятия');
     const groupId = identifier(body.groupId, 'groupId'); const scheduledDate = dateOnly(body.scheduledDate, 'scheduledDate');
-    const [groups] = await pool.query(`SELECT id,is_mixed,direction_id,project_id,site_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on
+    const [groups] = await pool.query(`SELECT id,is_mixed,direction_id,project_id,site_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,calculation_mode,teacher_share_percent,partner_share_percent,custom_tax_enabled,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('weekday',gs.weekday,'startTime',LEFT(gs.start_time,5),'endTime',LEFT(gs.end_time,5))) FROM group_schedule_slots gs WHERE gs.group_id=study_groups.id) schedule_slots
       FROM study_groups WHERE id=:groupId AND deleted_at IS NULL`, { groupId });
     const group = groups[0];
     if (group) assertProjectScope(context, group.project_id);
-    if (!group || occurrenceDates(group, scheduledDate, scheduledDate).length !== 1) {
+    const slots = group ? groupSlots(group).filter((slot) => occurrenceDates({ ...group, weekday: slot.weekday }, scheduledDate, scheduledDate).length === 1) : [];
+    const slot = body.startTime ? slots.find((slot) => slot.startTime === timeOnly(body.startTime, 'startTime')) : slots.length === 1 ? slots[0] : null;
+    if (!slot) {
       throw new ApiProblem(409, 'OCCURRENCE_OUTSIDE_SCHEDULE', 'На эту дату занятие группы не запланировано');
     }
-    const start = timeOnly(group.start_time); const end = timeOnly(group.end_time);
+    const start = slot.startTime; const end = slot.endTime;
     await pool.query(`INSERT IGNORE INTO lessons
-      (group_id,is_mixed_snapshot,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status)
-      VALUES (:groupId,:isMixed,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled')`, {
+      (group_id,is_mixed_snapshot,direction_id_snapshot,project_id_snapshot,site_id_snapshot,scheduled_starts_at,scheduled_ends_at,starts_at,ends_at,planned_teacher_id,status,calculation_mode_snapshot,teacher_share_percent_snapshot,partner_share_percent_snapshot,custom_tax_enabled_snapshot,tax_percent_snapshot)
+      VALUES (:groupId,:isMixed,:directionId,:projectId,:siteId,CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),CONCAT(:date,' ',:start,':00'),CONCAT(:date,' ',:end,':00'),:teacherId,'scheduled',:calculationMode,:teacherShare,:partnerShare,:customTax,
+            IF(:customTax,(SELECT tax_percent FROM partner_agreement_versions WHERE project_id=:projectId AND valid_from<=CONCAT(:date,' ',:start,':00') AND (valid_to IS NULL OR valid_to>CONCAT(:date,' ',:start,':00')) ORDER BY valid_from DESC,id DESC LIMIT 1),0))`, {
       groupId: group.id, isMixed: bool(group.is_mixed), directionId: group.direction_id, projectId: group.project_id, siteId: group.site_id,
       date: scheduledDate, start, end, teacherId: group.default_teacher_id,
+      calculationMode: group.calculation_mode ?? 'standard', teacherShare: group.teacher_share_percent ?? '0', partnerShare: group.partner_share_percent ?? '0', customTax: bool(group.custom_tax_enabled),
     });
     const [rows] = await pool.query(`SELECT l.id FROM lessons l WHERE l.group_id=:groupId
-      AND DATE(l.scheduled_starts_at)=:scheduledDate AND l.deleted_at IS NULL`, { groupId, scheduledDate });
+      AND DATE(l.scheduled_starts_at)=:scheduledDate AND TIME(l.scheduled_starts_at)=:start AND l.deleted_at IS NULL`, { groupId, scheduledDate, start });
     if (!rows.length) throw new ApiProblem(409, 'LESSON_DELETED', 'Это занятие было явно удалено и не может быть создано повторно');
     return get(rows[0].id, context);
   }
@@ -238,7 +249,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     const projectScope = projectId ? ' AND project_id_snapshot=:projectId' : '';
     const [rows] = await pool.query(`SELECT l.group_id,l.scheduled_starts_at FROM lessons l
       WHERE l.deleted_at IS NOT NULL${scope}${projectScope} ORDER BY l.scheduled_starts_at,l.id`, { actorTeacherId, projectId });
-    return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at) }));
+    return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at), startTime: timeOnly(row.scheduled_starts_at) }));
   }
 
   async function lockLesson(connection, lessonId) {
@@ -349,6 +360,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           WHERE gm.group_id=:groupId AND gm.started_on<=DATE(:startsAt) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(:startsAt))
             AND e.status='active' AND c.deleted_at IS NULL AND c.status IN ('lead','active')
         ) gm ORDER BY gm.child_id`, { groupId: lesson.group_id, startsAt: lesson.starts_at });
+        if (lesson.calculation_mode_snapshot === 'attendance_share' && bool(lesson.custom_tax_enabled_snapshot)) {
+          const [taxRates] = await connection.query(`SELECT tax_percent FROM partner_agreement_versions
+            WHERE project_id=:projectId AND valid_from<=:startsAt AND (valid_to IS NULL OR valid_to>:startsAt)
+            ORDER BY valid_from DESC,id DESC LIMIT 1`, { projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at });
+          if (!taxRates.length) throw new ApiProblem(409, 'TAX_RATE_NOT_CONFIGURED', 'На дату занятия не настроена налоговая ставка проекта');
+          await connection.query('UPDATE lessons SET tax_percent_snapshot=:tax WHERE id=:id', { id: lesson.id, tax: taxRates[0].tax_percent });
+        }
         const roster = freezeRosterMembers(members);
         for (const member of roster) {
           await connection.query(`INSERT IGNORE INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
@@ -478,10 +496,19 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       if (old) await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE id=:id', { id: old.id });
       return;
     }
-    const rate = await salaryRate(connection, lesson);
-    const salary = calculateSalary(lessonKind(lesson), Number(countRows[0].present_count), rate);
+    let rate; let salary;
+    if (lesson.calculation_mode_snapshot === 'attendance_share') {
+      const [earned] = await connection.query(`SELECT price_snapshot,charged_lessons FROM attendances
+        WHERE lesson_id=:lessonId AND present=TRUE AND is_trial=FALSE AND charged_lessons>0`, { lessonId: lesson.id });
+      const total = earned.reduce((sum, attendance) => sum + moneyCents(attendanceShares(String(attendance.price_snapshot), String(attendance.charged_lessons), lesson).teacher), 0n);
+      rate = { id: null };
+      salary = { kind: 'attendance_share', presentCount: earned.length, fixed: '0.00', children: moneyDecimal(total), total: moneyDecimal(total) };
+    } else {
+      rate = await salaryRate(connection, lesson);
+      salary = calculateSalary(lessonKind(lesson), Number(countRows[0].present_count), rate);
+    }
     const teacherId = lesson.actual_teacher_id ?? lesson.planned_teacher_id;
-    if (old && String(old.teacher_id) === String(teacherId) && String(old.rate_version_id) === String(rate.id) && old.accrual_type === salary.kind && Number(old.present_children) === salary.presentCount && String(old.total_amount) === salary.total) return;
+    if (old && String(old.teacher_id) === String(teacherId) && String(old.rate_version_id ?? '') === String(rate.id ?? '') && old.accrual_type === salary.kind && Number(old.present_children) === salary.presentCount && String(old.total_amount) === salary.total) return;
     if (old) await connection.query('UPDATE salary_accruals SET reversed_at=NOW(6) WHERE id=:id', { id: old.id });
     await connection.query(`INSERT INTO salary_accruals
       (lesson_id,teacher_id,rate_version_id,accrual_type,present_children,fixed_amount,children_amount,total_amount,supersedes_accrual_id)

@@ -6,6 +6,8 @@ import { createApiRouter } from '../backend/src/routes.mjs';
 function settlementPool() {
   const calls = [];
   const query = async (sql, params = {}) => {
+    if (sql.includes('FROM attendances a JOIN lessons l') && sql.includes("calculation_mode_snapshot='attendance_share'")) return [[]];
+    if (sql.includes(') custom_cash')) return [[{ custom_cash: '0.00' }]];
     calls.push({ sql, params });
     if (sql.includes('FROM projects p LEFT JOIN partners')) {
       const own = String(params.projectId) === '2';

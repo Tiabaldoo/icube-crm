@@ -1,5 +1,6 @@
 import { ApiProblem } from './catalog.mjs';
 import { moneyCents, moneyDecimal } from './lesson-rules.mjs';
+import { attendanceShares } from './group-settings.mjs';
 
 const PERCENT_SCALE = 1000n;
 const HUNDRED_PERCENT = 100n * PERCENT_SCALE;
@@ -59,22 +60,56 @@ export function createPartnerSettlements(pool) {
       ORDER BY valid_from DESC,id DESC LIMIT 1`, { projectId, partnerId: project.partner_id });
     const agreement = agreements[0];
     if (!agreement) throw new ApiProblem(409, 'PARTNER_AGREEMENT_NOT_CONFIGURED', 'Для выбранного проекта не настроены партнёрские условия');
-    const [[paymentRows], [refundRows], [salaryRows]] = await Promise.all([
+    const [[paymentRows], [refundRows], [salaryRows], [customRows], [customCashRows]] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(amount),0) payments_amount,
           COALESCE(SUM(CASE WHEN method='cash' THEN amount ELSE 0 END),0) cash_held_by_partner
-        FROM payments WHERE project_id_snapshot=:projectId AND paid_on BETWEEN :from AND :to AND deleted_at IS NULL`, { projectId, from, to }),
-      pool.query(`SELECT COALESCE(SUM(amount),0) refunds_amount FROM refunds
-        WHERE project_id_snapshot=:projectId AND refunded_on BETWEEN :from AND :to AND deleted_at IS NULL`, { projectId, from, to }),
+        FROM payments WHERE calculation_mode_snapshot='standard' AND project_id_snapshot=:projectId AND paid_on BETWEEN :from AND :to AND deleted_at IS NULL`, { projectId, from, to }),
+      pool.query(`SELECT COALESCE(SUM(r.amount),0) refunds_amount FROM refunds r JOIN payments p ON p.id=r.payment_id
+        WHERE p.calculation_mode_snapshot='standard' AND r.project_id_snapshot=:projectId AND r.refunded_on BETWEEN :from AND :to AND r.deleted_at IS NULL`, { projectId, from, to }),
       pool.query(`SELECT COALESCE(SUM(sa.total_amount),0) salary_amount FROM salary_accruals sa
         JOIN lessons l ON l.id=sa.lesson_id WHERE sa.reversed_at IS NULL AND l.project_id_snapshot=:projectId
-          AND DATE(l.starts_at) BETWEEN :from AND :to AND l.deleted_at IS NULL`, { projectId, from, to }),
+          AND DATE(l.starts_at) BETWEEN :from AND :to AND l.deleted_at IS NULL AND l.calculation_mode_snapshot='standard'`, { projectId, from, to }),
+      pool.query(`SELECT l.group_id,g.name group_name,l.teacher_share_percent_snapshot,l.partner_share_percent_snapshot,
+          l.custom_tax_enabled_snapshot,l.tax_percent_snapshot,a.price_snapshot,a.charged_lessons
+        FROM attendances a JOIN lessons l ON l.id=a.lesson_id JOIN study_groups g ON g.id=l.group_id
+        WHERE l.calculation_mode_snapshot='attendance_share' AND l.status='completed' AND l.deleted_at IS NULL
+          AND l.project_id_snapshot=:projectId AND DATE(l.starts_at) BETWEEN :from AND :to
+          AND a.present=TRUE AND a.is_trial=FALSE AND a.charged_lessons>0 ORDER BY g.name,l.id,a.id`, { projectId, from, to }),
+      pool.query(`SELECT
+        (SELECT COALESCE(SUM(amount),0) FROM payments WHERE calculation_mode_snapshot='attendance_share'
+          AND project_id_snapshot=:projectId AND paid_on BETWEEN :from AND :to AND deleted_at IS NULL AND method='cash')
+        - (SELECT COALESCE(SUM(r.amount),0) FROM refunds r JOIN payments p ON p.id=r.payment_id
+          WHERE p.calculation_mode_snapshot='attendance_share' AND p.method='cash' AND r.project_id_snapshot=:projectId
+            AND r.refunded_on BETWEEN :from AND :to AND r.deleted_at IS NULL) custom_cash,
+        (SELECT COALESCE(SUM(amount),0) FROM payments WHERE calculation_mode_snapshot='attendance_share' AND project_id_snapshot=:projectId AND paid_on BETWEEN :from AND :to AND deleted_at IS NULL) custom_payments,
+        (SELECT COALESCE(SUM(r.amount),0) FROM refunds r JOIN payments p ON p.id=r.payment_id WHERE p.calculation_mode_snapshot='attendance_share' AND r.project_id_snapshot=:projectId AND r.refunded_on BETWEEN :from AND :to AND r.deleted_at IS NULL) custom_refunds`, { projectId, from, to }),
     ]);
     const amounts = calculatePartnerSettlement({
       paymentsAmount: String(paymentRows[0]?.payments_amount ?? '0.00'), refundsAmount: String(refundRows[0]?.refunds_amount ?? '0.00'),
       cashHeldByPartner: String(paymentRows[0]?.cash_held_by_partner ?? '0.00'), salaryAmount: String(salaryRows[0]?.salary_amount ?? '0.00'),
       taxPercent: agreement.tax_percent, icubePercent: agreement.icube_percent, partnerPercent: agreement.partner_percent,
     });
+    const customGroups = new Map();
+    for (const row of customRows) {
+      const key = String(row.group_id);
+      const group = customGroups.get(key) ?? { groupId: key, groupName: row.group_name, visits: 0, gross: '0.00', teacher: '0.00', partner: '0.00', tax: '0.00', icube: '0.00' };
+      const earned = attendanceShares(String(row.price_snapshot), String(row.charged_lessons), row);
+      group.visits++;
+      for (const field of ['gross','teacher','partner','tax','icube']) group[field] = moneyDecimal(moneyCents(group[field]) + moneyCents(earned[field]));
+      customGroups.set(key, group);
+    }
+    const custom = [...customGroups.values()];
+    const sum = (field) => custom.reduce((total, group) => total + moneyCents(group[field]), 0n);
+    const customCash = moneyCents(String(customCashRows[0]?.custom_cash ?? '0.00'));
+    const add = (field, cents) => { amounts[field] = moneyDecimal(moneyCents(amounts[field]) + cents); };
+    add('paymentsAmount', moneyCents(String(customCashRows[0]?.custom_payments ?? '0.00')));
+    add('refundsAmount', moneyCents(String(customCashRows[0]?.custom_refunds ?? '0.00')));
+    add('incomeAmount', sum('gross')); add('taxAmount', sum('tax')); add('salaryAmount', sum('teacher'));
+    add('distributableAmount', sum('partner') + sum('icube'));
+    add('partnerShareAmount', sum('partner')); add('icubeShareAmount', sum('icube'));
+    add('cashHeldByPartner', customCash); add('transferAmount', sum('partner') - customCash);
     return {
+      customGroups: custom,
       projectId: String(project.id), projectName: project.name, partnerId: String(project.partner_id), partnerName: project.partner_name,
       periodFrom: from, periodTo: to, agreementVersionId: String(agreement.id), taxPercent: String(agreement.tax_percent),
       icubePercent: String(agreement.icube_percent), partnerPercent: String(agreement.partner_percent), ...amounts,

@@ -9,6 +9,7 @@ function fixture(initial) {
   const rows = structuredClone(initial); let nextId = Math.max(0, ...rows.map((row) => row.id)) + 1;
   const calls = [];
   const connection = { query: async (sql, params = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
     calls.push({ sql, params: structuredClone(params) });
     if (sql.startsWith('SELECT id,group_id,started_on,ended_on')) return [structuredClone(rows.sort((a, b) => a.started_on.localeCompare(b.started_on) || a.id - b.id))];
     if (sql.startsWith('UPDATE group_memberships SET ended_on=')) {

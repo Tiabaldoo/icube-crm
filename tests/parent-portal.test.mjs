@@ -573,7 +573,8 @@ test('parent UI moves price and child data to their sections and removes email a
   const payments = portal.slice(portal.indexOf('function paymentsHtml'), portal.indexOf('function aboutHtml'));
   assert.doesNotMatch(home, /Стоимость абонемента|Здравствуйте/);
   assert.match(payments, /Текущая стоимость занятий/);
-  assert.match(payments, /\/ 4 занятия/);
+  assert.match(payments, /item\.packageLessonCount \?\? 4/);
+  assert.match(payments, /lessonNoun\(BigInt\(item\.packageLessonCount/);
   assert.match(payments, /Выбрать файл/);
   assert.match(payments, /receipt-preview/); assert.match(payments, /receipt-remove/);
   assert.doesNotMatch(payments, /Загруженные чеки|parent-receipt-history/);

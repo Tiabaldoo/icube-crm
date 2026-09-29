@@ -1498,3 +1498,12 @@ body.context-help-open{overflow:hidden}
 .quick-group-deactivation .form-grid > .field:not(.quick-deactivation-date){opacity:.65}
 .quick-group-deactivation .quick-deactivation-date{grid-column:1/-1;background:#fffaeb;border:2px solid #fdb022;border-radius:10px;padding:12px}
 .quick-group-deactivation .quick-deactivation-date > label{font-weight:700;color:#7a2e0e}
+
+.advanced-group-settings{border:1px solid var(--line);border-radius:12px;padding:12px;margin-top:16px}
+.advanced-group-settings summary{cursor:pointer;font-weight:700}
+.advanced-group-settings .form-grid{margin-top:14px}
+.advanced-group-settings [hidden]{display:none}
+.advanced-schedule-slot{display:grid;grid-template-columns:minmax(130px,1fr) 100px 100px 40px;gap:8px;margin-bottom:10px}
+.advanced-schedule-slot .input{min-width:0}
+.advanced-settlement{margin-top:14px}
+@media(max-width:760px){.advanced-schedule-slot{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 40px}.advanced-schedule-slot .select{grid-column:1/-1}}

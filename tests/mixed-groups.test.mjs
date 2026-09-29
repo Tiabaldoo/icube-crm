@@ -16,6 +16,7 @@ function catalogFixture(mixed = false) {
   const settings = { teacherDirections: true };
   const names = { 1: 'Робототехника', 2: 'Программирование' };
   const handler = async (sql, p = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: p.groupId, is_individual: 0 }]];
     calls.push({ sql, p });
     if (sql.includes('FROM study_groups g JOIN directions')) return [[{ ...group }]];
     if (sql === 'SELECT id FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: group.id }]];
@@ -88,6 +89,7 @@ function lessonFixture({ mixed = true, projectId = 3, price1 = '1200.00', price2
   const enrollments = [{ id: 100, child_id: 50, direction_id: 1, project_id: projectId }, { id: 101, child_id: 51, direction_id: 2, project_id: projectId }];
   const attendance = []; const commands = new Map();
   const query = async (sql, p = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: p.groupId, is_individual: 0 }]];
     calls.push({ sql, p });
     if (sql.startsWith('SELECT id FROM children WHERE create_idempotency_key')) return [commands.has(p.key) ? [{ id: commands.get(p.key) }] : []];
     if (sql.startsWith('SELECT id FROM directions WHERE name=')) return [['Робототехника','Программирование'].includes(p.name) ? [{ id: p.name === 'Программирование' ? 2 : 1 }] : []];

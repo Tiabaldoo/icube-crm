@@ -122,7 +122,7 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
     return mapPayment(row);
   }
   async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = businessDate() } = {}) {
-    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,g.calculation_mode,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
@@ -160,10 +160,10 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
         const lotLessons = fundedLessons(lessons, enrollment.balance_lessons);
         const method = paymentMethod(body.method);
         const [result] = await connection.query(`INSERT INTO payments
-          (enrollment_id,child_id,direction_id,group_id_snapshot,project_id_snapshot,paid_on,amount,price_snapshot,lessons_credit,method,note,created_by_user_id)
-          VALUES (:enrollmentId,:childId,:directionId,:groupId,:projectId,:paidOn,:amount,:price,:lessons,:method,:note,:actorId)`, {
+          (enrollment_id,child_id,direction_id,group_id_snapshot,project_id_snapshot,paid_on,amount,price_snapshot,lessons_credit,method,note,created_by_user_id,calculation_mode_snapshot)
+          VALUES (:enrollmentId,:childId,:directionId,:groupId,:projectId,:paidOn,:amount,:price,:lessons,:method,:note,:actorId,:calculationMode)`, {
           enrollmentId: enrollment.id, childId: enrollment.child_id, directionId: enrollment.direction_id,
-          groupId: enrollment.group_id, projectId: enrollment.project_id, paidOn: date, amount, price, lessons, method,
+          groupId: enrollment.group_id, projectId: enrollment.project_id, paidOn: date, amount, price, lessons, method, calculationMode: enrollment.calculation_mode ?? 'standard',
           note: body.note == null || body.note === '' ? null : String(body.note).trim(), actorId: context.actorUserId ?? null,
         });
         const [entryResult] = await connection.query(`INSERT INTO balance_entries

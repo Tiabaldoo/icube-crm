@@ -118,3 +118,13 @@ MySQL автоматически фиксирует многие DDL-опера�
 CRM 1.1 uses migration `023_mixed_groups_release_notes.sql`: default-false `study_groups.is_mixed` and `lessons.is_mixed_snapshot`, the `mixed_group` price-version scope (group + real direction), and `user_release_views` with unique user/version. Existing direction IDs, normal-group prices and financial history remain unchanged. The current-price uniqueness key from migration 018 already distinguishes group/direction scopes. Apply 023 on test before running the new backend; it has not been applied by this task.
 
 Release 1.1 follow-up uses existing `notifications.user_id`, `dedup_key` and `read_at` (unique user/dedup key from migration 016). `user_release_views` is retained unchanged but is no longer used; no new migration is needed.
+
+### Расширенные группы — 024
+
+`024_advanced_group_settings.sql` сохраняет основной недельный слот в `study_groups`; дополнительные находятся в `group_schedule_slots` (FK group с cascade, unique group/weekday/start, проверка weekday и end>start). Удаление/изменение слотов не затрагивает исторические lessons. Materializer удаляет только будущие untouched scheduled занятия, больше не соответствующие расписанию или snapshot-настройкам группы.
+
+Новые поля группы: `is_individual=false`, `package_lesson_count=4`, `calculation_mode='standard'`, доли преподавателя/партнёра `DECIMAL(7,4)`, `custom_tax_enabled=false`. Ограничения исключают individual + mixed, долевой режим обычной группы и сумму долей >100%. Individual capacity проверяется под `FOR UPDATE` на группе всеми writers membership; закрытые memberships не занимают место.
+
+`lessons` хранит snapshot режима, долей и налоговой настройки. Налоговая ставка берётся из существующей истории `partner_agreement_versions` на timestamp занятия и фиксируется при старте; отсутствие исторической ставки при tax ON блокирует старт. `payments.calculation_mode_snapshot` фиксирует режим при создании оплаты; refunds используют snapshot исходной payment. Только ранее пустой group snapshot payment разрешается заполнить при первом назначении группы, вместе с режимом.
+
+Долевое начисление использует прежнюю `salary_accruals` с `accrual_type='attendance_share'`, нулевой fixed и `rate_version_id=NULL`; history/reversal/idempotency остаются общими. Баланс, lots, consumptions, price snapshots и ledger не имеют параллельной модели. До применения 024 все прежние записи получают стандартные defaults, исторические цены/зарплаты не меняются. Миграция подготовлена, не применена этой задачей; 001–023 не редактировались.

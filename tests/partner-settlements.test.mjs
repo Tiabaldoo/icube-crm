@@ -20,6 +20,9 @@ test('отрицательный income имеет нулевой налог, о
 test('live calculation агрегирует только historical project snapshots и актуальную salary', async () => {
   const calls = [];
   const pool = { query: async (sql, params = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
+    if (sql.includes('FROM attendances a JOIN lessons l') && sql.includes("calculation_mode_snapshot='attendance_share'")) return [[]];
+    if (sql.includes(') custom_cash')) return [[{ custom_cash: '0.00' }]];
     calls.push({ sql, params });
     if (sql.includes('FROM projects p LEFT JOIN partners')) return [[{ id: 2, name: 'Зебра', partner_id: 9, partner_name: 'Партнёр' }]];
     if (sql.includes('FROM partner_agreement_versions')) return [[{ id: 5, tax_percent: '4.000', icube_percent: '40.000', partner_percent: '60.000' }]];
@@ -38,11 +41,15 @@ test('live calculation агрегирует только historical project snap
   const salarySql = calls.find(({ sql }) => sql.includes('FROM salary_accruals')).sql;
   assert.match(salarySql, /sa\.reversed_at IS NULL/); assert.match(salarySql, /l\.project_id_snapshot=:projectId/);
   assert.match(salarySql, /DATE\(l\.starts_at\) BETWEEN :from AND :to/); assert.match(salarySql, /l\.deleted_at IS NULL/);
-  assert.equal(calls.some(({ sql }) => /study_groups/.test(sql)), false);
+  assert.ok(calls.filter(({ sql }) => /study_groups/.test(sql)).every(({ sql }) => sql.includes("calculation_mode_snapshot='attendance_share'")));
+  assert.match(paymentSql, /calculation_mode_snapshot='standard'/);
+  assert.match(salarySql, /calculation_mode_snapshot='standard'/);
 });
 
 test('пустой период возвращает корректные нули', async () => {
   const pool = { query: async (sql) => {
+    if (sql.includes('FROM attendances a JOIN lessons l') && sql.includes("calculation_mode_snapshot='attendance_share'")) return [[]];
+    if (sql.includes(') custom_cash')) return [[{ custom_cash: '0.00' }]];
     if (sql.includes('FROM projects p LEFT JOIN partners')) return [[{ id: 2, name: 'Проект', partner_id: 9, partner_name: 'Партнёр' }]];
     if (sql.includes('FROM partner_agreement_versions')) return [[{ id: 5, tax_percent: '4.000', icube_percent: '40.000', partner_percent: '60.000' }]];
     if (sql.includes('FROM payments WHERE')) return [[{ payments_amount: '0.00', cash_held_by_partner: '0.00' }]];
@@ -57,6 +64,9 @@ test('пустой период возвращает корректные нул
 test('первое назначение группы заполняет только пустые snapshots payment и refund', async () => {
   const snapshotSql = [];
   const query = async (sql, params = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
+    if (sql.includes('FROM attendances a JOIN lessons l') && sql.includes("calculation_mode_snapshot='attendance_share'")) return [[]];
+    if (sql.includes(') custom_cash')) return [[{ custom_cash: '0.00' }]];
     if (sql.startsWith('SELECT * FROM child_enrollments')) return [[{ id: 9, child_id: 8, direction_id: 1, status: 'active', individual_price: null }]];
     if (sql.startsWith('SELECT id,group_id FROM group_memberships')) return [[]];
     if (sql.startsWith('SELECT id,group_id,started_on,ended_on FROM group_memberships')) return [[]];

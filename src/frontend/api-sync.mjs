@@ -1,3 +1,4 @@
+import { installAdvancedGroupUi } from './advanced-groups.mjs';
 import { installScreenHistory } from './screen-history.mjs';
 import { installQuickStatusUi } from './quick-status.mjs';
 import { openReleaseNote } from './release-notes.mjs';
@@ -89,7 +90,7 @@ const html = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '
 const operationKey = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 function mapGroup(group) {
-  return { id: Number(group.id), name: group.name, direction: group.isMixed ? 'Смешанная' : group.directionName, isMixed: Boolean(group.isMixed), directionId: Number(group.directionId), mixedPrices: group.mixedPrices ?? {}, siteId: Number(group.siteId), teacherId: Number(group.teacherId),
+  return { id: Number(group.id), name: group.name, isIndividual: Boolean(group.isIndividual), packageLessonCount: group.packageLessonCount ?? 4, scheduleSlots: group.scheduleSlots ?? [], calculationMode: group.calculationMode ?? 'standard', teacherSharePercent: group.teacherSharePercent, partnerSharePercent: group.partnerSharePercent, customTaxEnabled: Boolean(group.customTaxEnabled), direction: group.isMixed ? 'Смешанная' : group.directionName, isMixed: Boolean(group.isMixed), directionId: Number(group.directionId), mixedPrices: group.mixedPrices ?? {}, siteId: Number(group.siteId), teacherId: Number(group.teacherId),
     day: dayNames[group.weekday - 1], startTime: group.startTime, endTime: group.endTime, time: `${group.startTime}–${group.endTime}`,
     project: group.projectName, projectId: Number(group.projectId), price: group.price == null ? null : Number(group.price), active: group.active,
     startDate: group.startsOn, endDate: group.endsOn };
@@ -112,6 +113,12 @@ function mapChild(child) {
       balance: enrollment.balanceLessons == null ? null : Number(enrollment.balanceLessons) })) };
 }
 
+function calendarOccurrenceKey(groupId, date, startTime) {
+  const group = legacy.state.groups.find((group) => Number(group.id) === Number(groupId));
+  // Removed slots retain their identity after reload, including historical lessons and tombstones.
+  const timed = group?.scheduleSlots?.length || (startTime && startTime !== group?.startTime);
+  return `${Number(groupId)}|${date}${timed && startTime ? `|${startTime}` : ''}`;
+}
 function mapLesson(lesson) {
   if (lesson.readOnly) {
     const date = isoToRu(timestampDate(lesson.startsAt));
@@ -121,7 +128,7 @@ function mapLesson(lesson) {
       siteId: Number(lesson.siteId), siteName: lesson.siteName, scheduledDate: isoToRu(timestampDate(lesson.scheduledStartsAt)),
       scheduledTime: `${timestampTime(lesson.scheduledStartsAt)}–${timestampTime(lesson.scheduledEndsAt)}`,
       date, time: `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`,
-      occurrenceKey: `${Number(lesson.groupId)}|${isoToRu(timestampDate(lesson.scheduledStartsAt))}`, readOnly: true,
+      occurrenceKey: calendarOccurrenceKey(lesson.groupId, isoToRu(timestampDate(lesson.scheduledStartsAt)), timestampTime(lesson.scheduledStartsAt)), readOnly: true,
       attendance: {}, extras: [], photos: [], status: 'Занято' };
   }
   const main = lesson.attendances.filter((item) => item.type === 'main');
@@ -136,7 +143,7 @@ function mapLesson(lesson) {
     id: Number(lesson.id), groupId: Number(lesson.groupId), isMixed: Boolean(lesson.isMixed), direction: lesson.directionName, projectId: lesson.projectId == null ? null : Number(lesson.projectId), project: lesson.projectName ?? '',
     teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
     plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
-    siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: `${Number(lesson.groupId)}|${scheduledDate}`,
+    siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: calendarOccurrenceKey(lesson.groupId, scheduledDate, timestampTime(lesson.scheduledStartsAt)),
     enrollmentByChild: Object.fromEntries(lesson.attendances.map((item) => [Number(item.childId), Number(item.enrollmentId)])),
     date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
     extras: extras.map((item) => ({ childId: Number(item.childId), enrollmentId: Number(item.enrollmentId), trial: item.trial, present: item.present })),
@@ -154,6 +161,7 @@ const salaryTypeLabel = {
   regular: 'Обычное занятие',
   intro: 'Ознакомительное занятие',
   empty_trip: 'Пустой выезд',
+  attendance_share: 'Долевой расчёт',
 };
 
 function decimalCents(value) {
@@ -471,7 +479,7 @@ async function reload({ render = true } = {}) {
   legacy.state.calendarForeignGroups = legacy.state.lessons.filter((lesson) => lesson.readOnly).map((lesson) => ({
     id: lesson.groupId, name: lesson.groupName, project: lesson.project,
   }));
-  legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
+  legacy.state.deletedOccurrences = lessonDeletions.map((item) => calendarOccurrenceKey(item.groupId, isoToRu(item.scheduledDate), item.startTime));
   legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
   if (!legacy.state.groups.some((group) => group.id === Number(legacy.state.selectedGroup))) legacy.state.selectedGroup = legacy.state.groups[0]?.id ?? null;
@@ -498,7 +506,7 @@ async function reloadTeacher({ render = true } = {}) {
   legacy.state.balanceTransfers = [];
   legacy.state.statistics = null;
   legacy.state.lessons = lessons.map(mapLesson);
-  legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
+  legacy.state.deletedOccurrences = lessonDeletions.map((item) => calendarOccurrenceKey(item.groupId, isoToRu(item.scheduledDate), item.startTime));
   legacy.state.notifications = notifications;
   legacy.state.prototypeTeacherId = Number(authProfile.teacherId);
   legacy.state.offlineBootstrap = false;
@@ -591,10 +599,12 @@ async function saveGroup(resourceId, { active } = {}) {
     if (!isActive && !endsOn) return window.alert('Для неактивной группы укажите дату окончания.');
     const startTime = value('#gf-start'); const directionLabel = isMixed ? 'Смешанная' : direction.name === 'Программирование' ? 'Программирование' : 'Роботы';
     const weekday = dayNames.indexOf(value('#gf-day'));
+    const advanced = window.icubeAdvancedGroups?.payload() ?? {};
     const body = { name: `${directionLabel} · ${dayShortNames[weekday]} ${startTime}`,
       isMixed, directionId: direction.id, mixedPrices: isMixed ? Object.fromEntries(directories.directions.map((item) => [item.id, value(item.name === 'Программирование' ? '#gf-price-program' : '#gf-price-robot') === '' ? null : String(Number(value(item.name === 'Программирование' ? '#gf-price-program' : '#gf-price-robot')) / 4)])) : undefined, siteId: Number(value('#gf-site')), projectId: project.id, teacherId: Number(value('#gf-teacher')),
       weekday: weekday + 1, startTime, endTime: value('#gf-end'), startsOn, endsOn: isActive ? null : endsOn,
-      active: isActive, price: value('#gf-price') === '' ? null : Number(value('#gf-price')) };
+      active: isActive, price: value('#gf-price') === '' ? null : Number(value('#gf-price')), ...advanced,
+      ...(isMixed && advanced.packageLessonCount !== undefined && advanced.packageLessonCount !== 4 ? { mixedPackagePrices: Object.fromEntries(directories.directions.map((item) => [item.id, value(item.name === 'Программирование' ? '#gf-price-program' : '#gf-price-robot') || null])) } : {}) };
     const saved = resourceId ? await api.update('groups', resourceId, body) : await api.create('groups', body);
     legacy.state.selectedGroup = saved.id; legacy.state.modal = null; legacy.state.page = 'group'; await reload();
   } catch (error) { fail(error); }
@@ -815,12 +825,12 @@ function settlementContent({ partnerView = false } = {}) {
   const rows = `<div class="partner-lines">
     <div class="partner-line"><span>Оплаты</span><b>${displayMoney(result.paymentsAmount)}</b></div>
     <div class="partner-line"><span>Возвраты</span><b>${displayMoney(result.refundsAmount)}</b></div>
-    <div class="partner-line"><span>Доход после возвратов</span><b>${displayMoney(result.incomeAmount)}</b></div>
-    <div class="partner-line"><span>Налог ${percent(result.taxPercent)}%</span><b>− ${displayMoney(result.taxAmount)}</b></div>
+    <div class="partner-line"><span>${result.customGroups?.length ? 'Доход для расчёта (долевые группы — по посещениям)' : 'Доход после возвратов'}</span><b>${displayMoney(result.incomeAmount)}</b></div>
+    <div class="partner-line"><span>Налог${result.customGroups?.length ? ' по режимам групп' : ` ${percent(result.taxPercent)}%`}</span><b>− ${displayMoney(result.taxAmount)}</b></div>
     <div class="partner-line"><span>Зарплата преподавателей</span><b>− ${displayMoney(result.salaryAmount)}</b></div>
     <div class="partner-line partner-divider"><span>Остаток к распределению</span><b>${displayMoney(result.distributableAmount)}</b></div>
-    <div class="partner-line"><span>Доля iCube ${percent(result.icubePercent)}%</span><b>${displayMoney(result.icubeShareAmount)}</b></div>
-    <div class="partner-line"><span>Доля партнёра ${percent(result.partnerPercent)}%</span><b>${displayMoney(result.partnerShareAmount)}</b></div>
+    <div class="partner-line"><span>Доля iCube${result.customGroups?.length ? '' : ` ${percent(result.icubePercent)}%`}</span><b>${displayMoney(result.icubeShareAmount)}</b></div>
+    <div class="partner-line"><span>Доля партнёра${result.customGroups?.length ? '' : ` ${percent(result.partnerPercent)}%`}</span><b>${displayMoney(result.partnerShareAmount)}</b></div>
     <div class="partner-line"><span>Наличные у партнёра</span><b>${displayMoney(result.cashHeldByPartner)}</b></div>
   </div>`;
 
@@ -838,7 +848,8 @@ function settlementContent({ partnerView = false } = {}) {
     finalBlock = `<div class="partner-final ${positive ? 'partner-final-pay' : 'partner-final-return'}"><span>${positive ? 'Перевести партнёру' : 'Партнёр должен передать iCube'}</span><b>${amount}</b></div>`;
   }
 
-  return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>${rows}${finalBlock}</div>`;
+  const customBreakdown = (result.customGroups ?? []).map((group) => `<div class="card pad advanced-settlement"><b>${html(group.groupName)} — долевой расчёт</b><div class="info-list"><div class="info-line"><span>Посещений</span><b>${group.visits}</b></div>${[['gross','Заработанная стоимость'],['teacher','Преподавателю'],['partner','Партнёру'],['tax','Налог'],['icube','iCube']].map(([field,label]) => `<div class="info-line"><span>${label}</span><b>${displayMoney(group[field])}</b></div>`).join('')}</div></div>`).join('');
+  return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>${rows}${customBreakdown}${finalBlock}</div>`;
 }
 
 function partnerPage() {
@@ -1169,7 +1180,7 @@ function serverLessonForOccurrence(items, key) {
 async function openCalendarEvent(key, role) {
   try {
     const [groupId, ...dateParts] = String(key).split('|');
-    const scheduledRuDate = dateParts.join('|');
+    const [scheduledRuDate, scheduledStartTime] = dateParts;
     if (!groupId || !scheduledRuDate) throw new Error('Некорректное событие календаря');
     const date = ruToIso(scheduledRuDate);
 
@@ -1180,7 +1191,7 @@ async function openCalendarEvent(key, role) {
       if (lesson) cacheCalendarLesson(lesson);
     }
     if (!lesson && role === 'director') {
-      const created = mapLesson(await api.create('lessons', { groupId, scheduledDate: date }));
+      const created = mapLesson(await api.create('lessons', { groupId, scheduledDate: date, ...(scheduledStartTime ? { startTime: scheduledStartTime } : {}) }));
       if (created.occurrenceKey !== key) {
         const loaded = await api.list('lessons', `?from=${encodeURIComponent(date)}&to=${encodeURIComponent(date)}`);
         lesson = serverLessonForOccurrence(loaded, key);
@@ -1307,6 +1318,10 @@ async function confirmAddChildrenApi() {
   const group = legacy.state.groups.find((item) => item.id === Number(legacy.state.addChildrenGroupId));
   if (!group) return;
   const childIds = Array.from(document.querySelectorAll('.ac-check:checked')).map((input) => Number(input.value));
+  if (group.isIndividual) {
+    const currentIds = legacy.state.children.filter((child) => child.enrollments.some((enrollment) => Number(enrollment.groupId) === Number(group.id))).map((child) => child.id);
+    if (new Set([...currentIds, ...childIds]).size > 1) return window.alert('В индивидуальной группе может быть только один текущий ребёнок');
+  }
   const enrollments = Array.from(document.querySelectorAll('.ac-check:checked')).map((input) => legacy.state.children.find((child) => child.id === Number(input.value))?.enrollments.find((enrollment) => input.dataset?.enrollment ? Number(enrollment.id) === Number(input.dataset?.enrollment) : enrollment.direction === group.direction)).filter(Boolean);
   try {
     await Promise.all(enrollments.map((enrollment) => api.updateEnrollment(enrollment.id, { groupId: group.id })));
@@ -1363,7 +1378,7 @@ async function deleteVisitApi(childId, lessonId) {
 function salaryCalculationApi(lesson) {
   const salary = lesson?.salaryAccrual;
   if (!salary) return { type: 'Не начисляется', children: 0, fixed: 0, childrenPay: 0, total: 0, rates: {} };
-  return { type: salary.type === 'empty_trip' ? 'Пустой выезд' : salary.type === 'intro' ? 'Ознакомительное занятие' : 'Обычное занятие',
+  return { type: salary.type === 'empty_trip' ? 'Пустой выезд' : salary.type === 'intro' ? 'Ознакомительное занятие' : salary.type === 'attendance_share' ? 'Долевой расчёт' : 'Обычное занятие',
     children: salary.presentChildren, fixed: Number(salary.fixedAmount), childrenPay: Number(salary.childrenAmount), total: Number(salary.totalAmount), rates: {} };
 }
 const deleteChildPaymentPrompt = (_childId, paymentId) => deletePaymentPrompt(paymentId);
@@ -1953,6 +1968,7 @@ installAuthenticatedShells();
 installTeacherAccessUi();
 installScreenHistory(legacy);
 installQuickStatusUi(legacy);
+installAdvancedGroupUi(legacy);
 if (element('#app')) {
   window.icubeAuthReady = new Promise((resolve) => { resolveAuthReady = resolve; });
   bootstrapAuth();

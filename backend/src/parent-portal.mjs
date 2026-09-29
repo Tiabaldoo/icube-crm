@@ -167,7 +167,8 @@ export function createParentPortal(pool, {
   async function enrollmentRows(childId) {
     const today = localDate();
     const [rows] = await pool.query(`SELECT e.id,e.direction_id,e.balance_lessons,e.status,d.name direction_name,
-      g.id group_id,g.name group_name,g.weekday,g.start_time,g.end_time,s.name site_name,t.full_name teacher_name,
+      g.id group_id,g.name group_name,g.package_lesson_count,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('weekday',gs.weekday,'startTime',LEFT(gs.start_time,5),'endTime',LEFT(gs.end_time,5))) FROM group_schedule_slots gs WHERE gs.group_id=g.id) schedule_slots,g.weekday,g.start_time,g.end_time,s.name site_name,t.full_name teacher_name,
       COALESCE(e.individual_price,
         (SELECT pv.price FROM price_versions pv WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND pv.group_id=g.id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
@@ -180,9 +181,9 @@ export function createParentPortal(pool, {
       LEFT JOIN study_groups g ON g.id=gm.group_id LEFT JOIN sites s ON s.id=g.site_id LEFT JOIN teachers t ON t.id=g.default_teacher_id
       WHERE e.child_id=:childId AND e.superseded_at IS NULL AND e.status='active' ORDER BY e.id`, { childId, today });
     return rows.map((row) => ({ id: String(row.id), directionId: String(row.direction_id), direction: row.direction_name,
-      status: row.status, balanceLessons: String(row.balance_lessons), subscriptionPrice: row.current_price == null ? null : moneyDecimal(moneyCents(row.current_price) * 4n),
+      packageLessonCount: Number(row.package_lesson_count ?? 4), status: row.status, balanceLessons: String(row.balance_lessons), subscriptionPrice: row.current_price == null ? null : moneyDecimal(moneyCents(row.current_price) * BigInt(row.package_lesson_count ?? 4)),
       groupId: row.group_id == null ? null : String(row.group_id), group: row.group_name, teacher: row.teacher_name, site: row.site_name,
-      schedule: row.group_id == null ? null : `${weekdayNames[Number(row.weekday)]}, ${String(row.start_time).slice(0, 5)}–${String(row.end_time).slice(0, 5)}` }));
+      schedule: row.group_id == null ? null : [{ weekday: row.weekday, startTime: String(row.start_time).slice(0,5), endTime: String(row.end_time).slice(0,5) }, ...(typeof row.schedule_slots === 'string' ? JSON.parse(row.schedule_slots) : row.schedule_slots ?? [])].map((slot) => `${weekdayNames[Number(slot.weekday)]}, ${slot.startTime}–${slot.endTime}`).join('; ') }));
   }
 
   async function membershipGroupIds(childId, from, to) {

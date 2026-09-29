@@ -124,3 +124,18 @@ Quick child создаётся транзакционно с `needs_director_rev
 `POST /lessons/:id/extras` accepts `childId` and optional `enrollmentId`. With multiple available directions the enrollment must be chosen explicitly. It must be active in the lesson project. A cross-direction extra never changes membership; attendance and debit use the chosen enrollment. For a mixed lesson, `POST /lessons/:id/quick-child` requires `directionName` from the real active directions; the UI offers robotics/programming. Ordinary quick-child and command idempotency remain unchanged.
 
 Authenticated `GET /releases/current` returns the role-specific release 1.1 (or null), including after it has been read. `GET /notifications` lazily creates one personal `crm_release` notification per user/version using the existing unique dedup key. Opening it uses ordinary notification read/read-all endpoints; the read notification remains reopenable in history. Release notifications never enqueue Web Push. Director/partner see all changes, teacher sees extras/photos, parent sees no release 1.1.
+
+## Расширенные группы (миграция 024)
+
+Существующие `POST /groups`, `PATCH /groups/:id`, `GET /groups` поддерживают:
+
+- `scheduleSlots: [{weekday: 1..7, startTime: "16:00", endTime: "17:30"}]` — дополнительные слоты; основной остаётся в `weekday/startTime/endTime`. Пересечения запрещены. Передача `[]` удаляет только дополнительные слоты расписания.
+- `isIndividual` (по умолчанию `false`), `packageLessonCount` (целое 1–1000, по умолчанию 4).
+- `packagePrice` — сумма пакета в рублях строкой; сервер переводит её в цену занятия с округлением до копеек и записывает обычную `price_versions`. Прежнее поле `price` по-прежнему означает цену одного занятия. Для mixed-пакетов используется `mixedPackagePrices`, keyed by реальный direction ID; прежние `mixedPrices` остаются ценами одного занятия.
+- `calculationMode: "standard" | "attendance_share"`, `teacherSharePercent`, `partnerSharePercent` (строки, до четырёх десятичных знаков), `customTaxEnabled`. Долевой режим разрешён только individual, individual + mixed запрещены; сумма долей ≤100%.
+
+Teacher получает расписание и размер пакета, без финансовых настроек долей. Права и project scope прежние. Все существующие операции membership сериализуют проверку individual capacity блокировкой группы. Второй текущий ребёнок даёт `409 INDIVIDUAL_GROUP_FULL`.
+
+`POST /lessons` принимает прежние `groupId/scheduledDate` и необязательный `startTime`. Дата должна соответствовать одному из слотов. Если в один день два слота, `startTime` обязателен. Идентичность занятия в БД остаётся `(group_id, scheduled_starts_at)`; явно удалённые occurrences не восстанавливаются. Исторические занятия и frozen roster при смене расписания не изменяются.
+
+`GET /partner-settlements` дополнительно возвращает `customGroups`, строки `{groupId, groupName, visits, gross, teacher, partner, tax, icube}`. Стандартная часть считается прежней формулой; долевая — по completed non-trial present attendance и snapshot-параметрам занятия. `paymentsAmount/refundsAmount` включают собранные суммы обоих режимов; `incomeAmount` для долевой части включает только заработанную посещениями стоимость. `cashHeldByPartner` включает наличные долевых оплат за вычетом их наличных возвратов; `transferAmount` учитывает этот фактический денежный поток. Безналичные долевые оплаты не считаются наличными у партнёра.

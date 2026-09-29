@@ -6,6 +6,7 @@ import { createMysqlCatalog } from '../backend/src/catalog.mjs';
 function atomicFixture({ failMembership = false } = {}) {
   const state = { childId: null, enrollmentId: null, key: null, inserts: 0, commits: 0, rollbacks: 0 };
   const query = async (sql, params = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
     if (sql.startsWith('SELECT id FROM directions') || sql.startsWith('SELECT id FROM projects')) return [[{ id: params.id }]];
     if (sql.startsWith('SELECT id FROM study_groups WHERE id=')) return [[{ id: params.groupId }]];
     if (sql.startsWith('SELECT id FROM children WHERE create_idempotency_key=')) return [state.key === params.key ? [{ id: state.childId }] : []];

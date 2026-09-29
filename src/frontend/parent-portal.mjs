@@ -210,7 +210,7 @@ export function paymentsHtml(data) {
   const prices = homes.map((home) => {
     const enrollments = (home.enrollments ?? []).filter((item) => item.subscriptionPrice != null);
     if (!enrollments.length) return '';
-    return `<div class="parent-payment-child"><b>${escapeHtml(home.child?.name ?? 'Ребёнок')}</b>${enrollments.map((item) => `<span>${escapeHtml(item.direction)} — <strong>${money(item.subscriptionPrice)}</strong> / 4 занятия</span>`).join('')}</div>`;
+    return `<div class="parent-payment-child"><b>${escapeHtml(home.child?.name ?? 'Ребёнок')}</b>${enrollments.map((item) => `<span>${escapeHtml(item.direction)} — <strong>${money(item.subscriptionPrice)}</strong> / ${item.packageLessonCount ?? 4} ${lessonNoun(BigInt(item.packageLessonCount ?? 4) * 100000000n)}</span>`).join('')}</div>`;
   }).join('');
   const selectedReceipt = state.receiptFile ? `<div class="parent-receipt-selected"><span>Выбран файл</span><b>${escapeHtml(state.receiptFile.name)}</b><div><button class="parent-secondary" data-action="receipt-preview">Посмотреть</button><button class="parent-secondary danger" data-action="receipt-remove">Удалить</button></div></div>` : '';
   return `<section class="parent-title"><h1>Оплаты</h1></section>

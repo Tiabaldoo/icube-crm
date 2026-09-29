@@ -28,6 +28,7 @@ function fixture({ existingTarget = false, failTransfer = false, sourceStartedOn
   const currentPrice = (item) => item.individual_price ?? (Number(item.direction_id) === 2 ? '1125.00' : '1025.00');
 
   const query = async (sql, params = {}) => {
+    if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
     state.calls.push({ sql, params: clone(params) });
     if (sql === 'SELECT * FROM child_enrollments WHERE id=:id FOR UPDATE') return [[clone(enrollment(params.id))].filter(Boolean)];
     if (sql === 'SELECT id FROM directions WHERE id=:id AND active=TRUE') return [[{ id: params.id }]];

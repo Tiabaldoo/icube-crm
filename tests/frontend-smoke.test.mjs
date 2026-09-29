@@ -541,10 +541,10 @@ test('серверные прошлые и перенесённые провед
     // The mocked GET returns another lesson of the same group first, so groupId-only lookup would open the wrong occurrence.
     globalThis.window.icubeLegacy.state.lessons = [];
     resources.lessons = [resources.lessons[1], resources.lessons[0]];
-    await globalThis.window.icubeApi.openCalendarEvent('4|14.09.2026', 'director');
+    await globalThis.window.icubeApi.openCalendarEvent(moved.key, 'director');
     assert.equal(globalThis.window.icubeLegacy.state.selectedLesson, 50);
     assert.equal(globalThis.window.icubeLegacy.state.page, 'lesson');
-    await globalThis.window.icubeApi.openCalendarEvent('4|10.08.2026', 'teacher');
+    await globalThis.window.icubeApi.openCalendarEvent(events.find((event) => event.lesson?.id === 51).key, 'teacher');
     assert.equal(globalThis.window.icubeLegacy.state.selectedLesson, 51);
     assert.equal(globalThis.window.icubeLegacy.state.page, 'teacherLesson');
     const uiSource = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');

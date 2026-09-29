@@ -3665,6 +3665,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function groupDraft(id){
     return {
+      ...window.icubeAdvancedGroups?.draft(),
       id:id||null,
       direction:document.querySelector('#gf-dir')?.value||'Робототехника',
       siteId:(function(){const v=document.querySelector('#gf-site')?.value;return v&&v!=='new'?Number(v):null;})(),
@@ -3673,7 +3674,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       startTime:document.querySelector('#gf-start')?.value||'13:00',
       endTime:document.querySelector('#gf-end')?.value||'14:30',
       project:document.querySelector('#gf-project')?.value||'iCubeRobots',
-      mixedPrices:Object.fromEntries((state.directions||[]).map(function(d){const v=document.querySelector(d.name==='Программирование'?'#gf-price-program':'#gf-price-robot')?.value;return [d.id,v?Number(v)/4:null];})),
+      mixedPrices:Object.fromEntries((state.directions||[]).map(function(d){const v=document.querySelector(d.name==='Программирование'?'#gf-price-program':'#gf-price-robot')?.value;return [d.id,v?Number(v)/Number(document.querySelector('#gf-package-count')?.value||4):null];})),
       price:document.querySelector('#gf-price')?.value||'',
       active:document.querySelector('#gf-active')?.value!=='false'
     };
@@ -3744,7 +3745,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const directory=(state.directions||[]).find(function(d){return d.name===direction;});
       const prices=draft.mixedPrices||g?.mixedPrices||{};
       const price=prices[directory?.id];
-      html+='<div class="field" data-mixed-price><label>Цена группы — '+direction+', ₽ за 4 занятия</label><input class="input" id="gf-price-'+(direction==='Программирование'?'program':'robot')+'" type="number" step="0.01" value="'+(price==null?'':Number(price)*4)+'" placeholder="Пусто = цена направления"></div>';
+      html+='<div class="field" data-mixed-price><label>Цена группы — '+direction+', ₽ за '+(draft.packageLessonCount||g?.packageLessonCount||4)+((draft.packageLessonCount||g?.packageLessonCount||4)===4?' занятия':' занятий')+'</label><input class="input" id="gf-price-'+(direction==='Программирование'?'program':'robot')+'" type="number" step="0.01" value="'+(price==null?'':Number(price)*(draft.packageLessonCount||g?.packageLessonCount||4))+'" placeholder="Пусто = цена направления"></div>';
     });
     html+='</div></section>';
     html+='<div class="field"><label>Активность</label><select class="select" id="gf-active"><option value="true"'+(draft.active?' selected':'')+'>Активна</option><option value="false"'+(!draft.active?' selected':'')+'>Неактивна</option></select></div>';
@@ -5686,7 +5687,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return 'Неделя '+pad(start.getDate())+' '+m[start.getMonth()]+' — '+pad(end.getDate())+' '+m[end.getMonth()]+' '+end.getFullYear();
   }
   function timeStart(t){return String(t||'').split('–')[0]||'';}
-  function occurrenceKey(groupId,date){return Number(groupId)+'|'+date;}
+  function occurrenceKey(groupId,date,time){return Number(groupId)+'|'+date+(time?'|'+time:'');}
   function isDeleted(key){return (state.deletedOccurrences||[]).includes(key);}
   function currentTeacherId(){
     if(typeof window.currentPrototypeTeacherId==='function') return Number(window.currentPrototypeTeacherId()||0);
@@ -5726,17 +5727,20 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const start=new Date(startDate), end=new Date(endDate);
 
     (state.groups||[]).forEach(function(g){
+      const slots=[{weekday:DAY_NAMES.indexOf(g.day)||7,startTime:g.startTime,endTime:g.endTime},...(g.scheduleSlots||[])];
+      slots.forEach(function(slot){
       for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
         if(!dateWithinGroup(g,d)) continue;
-        if(DAY_NAMES[d.getDay()]!==g.day) continue;
+        if((d.getDay()||7)!==Number(slot.weekday)) continue;
 
         const scheduledDate=formatRuDate(d);
-        const key=occurrenceKey(g.id,scheduledDate);
+        const scheduledTime=slot.startTime+'–'+slot.endTime;
+        const key=occurrenceKey(g.id,scheduledDate,g.scheduleSlots?.length?slot.startTime:null);
         if(isDeleted(key)) continue;
 
         const l=(state.lessons||[]).find(function(x){
           return x.occurrenceKey===key ||
-            (Number(x.groupId)===Number(g.id) && (x.scheduledDate||x.date)===scheduledDate);
+            (Number(x.groupId)===Number(g.id) && (x.scheduledDate||x.date)===scheduledDate && timeStart(x.scheduledTime||x.time)===slot.startTime);
         });
         const effectiveTeacherId=l?Number(l.teacherId):Number(g.teacherId);
         if(teacherId && effectiveTeacherId!==Number(teacherId)) continue;
@@ -5744,7 +5748,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         if(l){
           if(!l.occurrenceKey) l.occurrenceKey=key;
           if(!l.scheduledDate) l.scheduledDate=scheduledDate;
-          if(!l.scheduledTime) l.scheduledTime=g.startTime+'–'+g.endTime;
+          if(!l.scheduledTime) l.scheduledTime=scheduledTime;
           if(l.date===scheduledDate){
             events.push({
               key:key,groupId:g.id,project:g.project,teacherId:effectiveTeacherId,
@@ -5754,7 +5758,6 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
             });
           }
         }else{
-          const scheduledTime=g.startTime+'–'+g.endTime;
           events.push({
             key:key,groupId:g.id,project:g.project,teacherId:effectiveTeacherId,
             scheduledDate:scheduledDate,scheduledTime:scheduledTime,
@@ -5763,23 +5766,23 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           });
         }
       }
+      });
     });
 
-    // Moved lessons appear once on their factual date, even if moved outside the normal weekday.
+    // Persisted history remains visible when slots or group dates later change.
     (state.lessons||[]).forEach(function(l){
-      if(!l.moved || l.date===(l.scheduledDate||l.date) || isDeleted(l.occurrenceKey)) return;
+      if(isDeleted(l.occurrenceKey)) return;
       const actual=parseRuDate(l.date);
       if(actual<start||actual>end) return;
       const g=byId(state.groups,l.groupId);
       if(!g) return;
       if(teacherId && Number(l.teacherId)!==Number(teacherId)) return;
-      if(!dateWithinGroup(g,actual)) return;
       if(events.some(function(e){return e.lesson&&Number(e.lesson.id)===Number(l.id);})) return;
       events.push({
         key:l.occurrenceKey||occurrenceKey(g.id,l.scheduledDate||l.date),
         groupId:g.id,project:g.project,teacherId:Number(l.teacherId),
         scheduledDate:l.scheduledDate||l.date,scheduledTime:l.scheduledTime||l.time,
-        date:l.date,time:l.time,lesson:l,cancelled:!!l.cancelled,moved:true,done:!!l.done
+        date:l.date,time:l.time,lesson:l,cancelled:!!l.cancelled,moved:!!l.moved,done:!!l.done
       });
     });
 
