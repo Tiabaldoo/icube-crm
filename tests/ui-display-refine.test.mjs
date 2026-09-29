@@ -6,16 +6,11 @@ const uiUrl = new URL('../src/frontend/crm-ui.js', import.meta.url);
 const apiUrl = new URL('../src/frontend/api-sync.mjs', import.meta.url);
 const cssUrl = new URL('../src/ui/styles.css', import.meta.url);
 
-test('group display title uses site name, short weekday and start time only', async () => {
-  const ui = await readFile(uiUrl, 'utf8');
-  const start = ui.indexOf('window.groupTitle = function (g)');
-  const end = ui.indexOf('\n  };', start) + 5;
-  const helper = ui.slice(start, end);
-  assert.ok(start >= 0 && end > start);
-  assert.match(helper, /site\?\.name \|\| 'Без площадки'/);
-  assert.match(helper, /DAY_SHORT\[g\.day\]/);
-  assert.match(helper, /g\.startTime/);
-  assert.doesNotMatch(helper, /DIR_SHORT|shortName|g\.direction/);
+test('all group UI titles delegate to the common direction and schedule helper', async () => {
+  const source = await readFile(new URL('../src/frontend/advanced-groups.mjs', import.meta.url), 'utf8');
+  assert.match(source, /host\.groupTitle = groupDisplayName/);
+  assert.match(source, /group\.direction \|\| 'Группа'/);
+  assert.match(source, /groupScheduleLabel\(group\)/);
 });
 
 test('child group selectors use the shared title and group cards extend it with schedule slots', async () => {
@@ -41,7 +36,7 @@ test('child group selectors use the shared title and group cards extend it with 
   const groupsEnd = ui.indexOf('\n\n  render();', groupsStart);
   const groupsPage = ui.slice(groupsStart, groupsEnd);
   assert.ok(groupsStart >= 0 && groupsEnd > groupsStart);
-  assert.match(groupsPage, /<h3[^>]*>'\+escapeHtml\(window\.icubeAdvancedGroups\?\.cardTitle\?\.\(g\)\|\|groupTitle\(g\)\)/);
+  assert.match(groupsPage, /<h3[^>]*>'\+escapeHtml\(groupTitle\(g\)\)/);
   assert.doesNotMatch(groupsPage, /<h3[^>]*>'\+g\.name/);
   assert.match(groupsPage, /g\.direction/);
   assert.match(groupsPage, /g\.project/);

@@ -1,3 +1,4 @@
+import { groupDisplayName } from './advanced-groups.mjs';
 import { ApiClient } from '../data/api-client.mjs';
 import { addCalendarDays, businessDate, BUSINESS_TIME_ZONE } from '../shared/business-time.mjs';
 
@@ -148,7 +149,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     ).filter((lesson) => lesson.status !== 'Отменено').slice(0, 3);
     const content = rows.length ? rows.map((lesson) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
-      const groupName = String(group?.name ?? '');
+      const groupName = groupDisplayName(group, '');
       const lessonStart = startTime(lesson);
       const schedule = lessonStart && !groupName.includes(lessonStart)
         ? [group?.day, lessonStart].filter(Boolean).join(' · ')
@@ -163,7 +164,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     const lessons = dashboardLessonsForDate({ lessons: state.lessons, groups: state.groups }, today, allowedProjectIds());
     const cards = lessons.map((lesson) => {
       const group = groupFor(lesson); const project = projectFor(group); const teacher = teacherFor(lesson);
-      return `<div class="dashboard-lesson-card ${directionCardClass(group)}"><div class="dashboard-lesson-top"><div class="dashboard-lesson-site">${safe(siteFor(lesson, group))}</div><span class="badge ${statusBadgeClass(lesson.status)}">${safe(lesson.status)}</span></div><div class="dashboard-lesson-title">${safe(group?.name ?? 'Занятие')}</div><div class="dashboard-lesson-details"><div>${safe(group?.direction ?? '')}</div><div class="muted mini">${safe(teacher?.name ?? 'Преподаватель не указан')}</div><div><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div><div class="dashboard-lesson-actions"><button class="btn soft" onclick="openLesson(${lesson.id})">Открыть занятие</button></div></div>`;
+      return `<div class="dashboard-lesson-card ${directionCardClass(group)}"><div class="dashboard-lesson-top"><div class="dashboard-lesson-site">${safe(siteFor(lesson, group))}</div><span class="badge ${statusBadgeClass(lesson.status)}">${safe(lesson.status)}</span></div><div class="dashboard-lesson-title">${safe(groupDisplayName(group, 'Занятие'))}</div><div class="dashboard-lesson-details"><div>${safe(group?.direction ?? '')}</div><div class="muted mini">${safe(teacher?.name ?? 'Преподаватель не указан')}</div><div><span class="badge ${projectBadgeClass(project?.name)}">${safe(projectLabel(project))}</span></div></div><div class="dashboard-lesson-actions"><button class="btn soft" onclick="openLesson(${lesson.id})">Открыть занятие</button></div></div>`;
     }).join('');
     return `<div class="card pad dashboard-today"><div class="section-title"><h2>Сегодня · ${lessons.length} занятий</h2></div>${lessons.length ? `<div class="dashboard-today-grid">${cards}</div>` : '<div class="dashboard-empty">Сегодня занятий нет</div>'}</div>`;
   }

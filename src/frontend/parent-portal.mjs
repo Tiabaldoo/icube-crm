@@ -1,3 +1,4 @@
+import { groupDisplayName } from './advanced-groups.mjs';
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 import { ageOnDate, businessDate } from '../shared/business-time.mjs';
 
@@ -7,7 +8,7 @@ const tabs = [
   ['home', 'Главная'], ['schedule', 'Расписание'], ['photos', 'Фото'],
   ['attendance', 'Посещения'], ['payments', 'Оплаты'], ['about', 'О ребёнке'], ['settings', 'Настройки'],
 ];
-const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, documentViewer: null, consentDocuments: [], lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '', receiptFile: null, receiptPreviewUrl: null };
+const state = { profile: null, childId: null, tab: 'home', data: null, notifications: [], loading: false, loadVersion: 0, error: null, viewer: null, documentViewer: null, consentDocuments: [], lessonInfo: null, notificationMessage: null, scheduleCursor: null, menuOpen: false, touchX: null, receiptMessage: '', receiptFile: null, receiptPreviewUrl: null, groupEnrollments: [] };
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const dateRu = (value) => value ? String(value).slice(0, 10).split('-').reverse().join('.') : '—';
 const time = (value) => value ? String(value).slice(11, 16) : '—';
@@ -159,12 +160,29 @@ export function parentAbsenceAction(lesson) {
     : { action: 'absence-set', label: 'Ребёнка не будет', className: 'parent-primary' };
 }
 
+// Parent DTOs already include the complete weekly schedule as text. Adapt that
+// metadata to the common display helper without changing API contracts.
+export function parentGroupDisplayName(row, enrollments = state.groupEnrollments) {
+  const enrollment = row.schedule ? row : enrollments.find((item) =>
+    row.groupId != null ? String(item.groupId) === String(row.groupId) : item.group === row.group);
+  if (!enrollment?.schedule) return groupDisplayName(null, row.group ?? '—');
+  const days = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
+  const slots = enrollment.schedule.split(';').map((part) => {
+    const match = part.trim().match(/^([^,]+),\s*(\d{2}:\d{2})–(\d{2}:\d{2})$/);
+    return match ? { weekday: days.indexOf(match[1]) + 1, startTime: match[2], endTime: match[3] } : null;
+  }).filter(Boolean);
+  if (!slots.length) return groupDisplayName(null, row.group ?? '—');
+  const [primary, ...scheduleSlots] = slots;
+  const direction = String(enrollment.group ?? '').split(' · ')[0];
+  return groupDisplayName({ ...primary, scheduleSlots, direction: ['Робототехника','Программирование','Смешанная'].includes(direction) ? direction : enrollment.direction });
+}
+
 function scheduleEventHtml(lesson) {
   const status = parentScheduleStatus(lesson);
   const statusClass = ['Отменено', 'Отсутствовал'].includes(status) ? 'red' : ['Перенесено', 'Ребёнка не будет'].includes(status) ? 'amber' : 'green';
   return `<button class="event parent-calendar-event${status === 'Проведено' ? ' done' : ''}" data-action="lesson-info" data-lesson="${lesson.id}">
     <span class="calendar-event-site">${escapeHtml(lesson.site ?? 'Площадка не указана')}</span>
-    <span class="calendar-event-meta">${time(lesson.startsAt)} · ${escapeHtml(lesson.group)}</span>
+    <span class="calendar-event-meta">${time(lesson.startsAt)} · ${escapeHtml(parentGroupDisplayName(lesson))}</span>
     ${status ? `<span class="calendar-event-status"><span class="badge ${statusClass}">${status}</span></span>` : ''}
   </button>`;
 }
@@ -201,7 +219,7 @@ function scheduleHtml(rows) {
 }
 
 function attendanceHtml(rows) {
-  return `<section class="parent-title"><h1>Посещения</h1><span>Фактически посещённые занятия</span></section>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${dateRu(row.startsAt)}</b><span>${escapeHtml(row.direction)} · ${escapeHtml(row.group)}</span></div>${row.trial ? '<em>Ознакомительное</em>' : ''}</article>`).join('')}</div>` : empty('Посещений пока нет.')}`;
+  return `<section class="parent-title"><h1>Посещения</h1><span>Фактически посещённые занятия</span></section>${rows.length ? `<div class="parent-list">${rows.map((row) => `<article class="parent-card parent-row"><div><b>${dateRu(row.startsAt)}</b><span>${escapeHtml(row.direction)} · ${escapeHtml(parentGroupDisplayName(row))}</span></div>${row.trial ? '<em>Ознакомительное</em>' : ''}</article>`).join('')}</div>` : empty('Посещений пока нет.')}`;
 }
 
 export function paymentsHtml(data) {
@@ -220,7 +238,7 @@ export function paymentsHtml(data) {
 
 function aboutHtml(data) {
   const child = data.child ?? {}; const age = ageFromBirthDate(child.birthDate);
-  const directions = (data.enrollments ?? []).map((item) => `<div class="parent-about-direction"><b>${escapeHtml(item.direction)}</b><span>Группа: ${escapeHtml(item.group ?? '—')}</span><span>Преподаватель: ${escapeHtml(item.teacher ?? '—')}</span><span>Площадка: ${escapeHtml(item.site ?? '—')}</span><span>Расписание: ${escapeHtml(item.schedule ?? '—')}</span></div>`).join('');
+  const directions = (data.enrollments ?? []).map((item) => `<div class="parent-about-direction"><b>${escapeHtml(item.direction)}</b><span>Группа: ${escapeHtml(parentGroupDisplayName(item))}</span><span>Преподаватель: ${escapeHtml(item.teacher ?? '—')}</span><span>Площадка: ${escapeHtml(item.site ?? '—')}</span><span>Расписание: ${escapeHtml(item.schedule ?? '—')}</span></div>`).join('');
   return `<section class="parent-title"><h1>О ребёнке</h1></section><article class="parent-card parent-about"><div class="parent-info"><span>ФИО</span><b>${escapeHtml(child.name ?? '—')}</b><span>Возраст</span><b>${age == null ? '—' : `${age} лет`}</b></div><form data-action="child-about"><label>Дата рождения<input name="birthDate" type="date" value="${escapeHtml(child.birthDate ?? '')}"></label><label>Школа<input name="school" value="${escapeHtml(child.school ?? '')}"></label><label>Класс<input name="grade" value="${escapeHtml(child.grade ?? '')}"></label><button class="parent-primary" type="submit">Сохранить</button></form></article><article class="parent-card"><h2>Направления</h2>${directions || empty('Нет активных направлений.')}</article>`;
 }
 
@@ -279,7 +297,7 @@ function lessonInfoHtml() {
   if (!lesson) return '';
   const status = parentScheduleStatus(lesson) || 'Запланировано';
   const absenceAction = parentAbsenceAction(lesson);
-  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(lesson.group)}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div>${absenceAction ? `<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${lesson.id}">${absenceAction.label}</button>` : ''}</article></div>`;
+  return `<div class="parent-lesson-modal"><article class="parent-card"><button data-action="lesson-info-close" aria-label="Закрыть">×</button><h2>${dateRu(lesson.startsAt)} · ${time(lesson.startsAt)}–${time(lesson.endsAt)}</h2><div class="parent-info"><b>${escapeHtml(parentGroupDisplayName(lesson))}</b><span>${escapeHtml(lesson.site)}</span><span>${escapeHtml(lesson.teacher)}</span><span>${escapeHtml(status)}</span></div>${absenceAction ? `<button class="${absenceAction.className}" data-action="${absenceAction.action}" data-lesson="${lesson.id}">${absenceAction.label}</button>` : ''}</article></div>`;
 }
 
 function notificationMessageHtml() {
@@ -313,7 +331,12 @@ async function loadTab() {
     }
     else if (tab === 'schedule') {
       const range = scheduleRange(state.scheduleCursor);
-      data = await api.request(`/parent/children/${childId}/schedule?from=${range.from}&to=${range.to}`);
+      const [rows, about] = await Promise.all([
+        api.request(`/parent/children/${childId}/schedule?from=${range.from}&to=${range.to}`),
+        api.request(`/parent/children/${childId}/about`),
+      ]);
+      data = rows;
+      if (version === state.loadVersion) state.groupEnrollments = about.enrollments ?? [];
     }
     else if (tab === 'settings') {
       const [profile, docs] = await Promise.all([api.request('/parent/profile'), api.request('/parent/documents')]);
@@ -325,6 +348,10 @@ async function loadTab() {
         api.request('/parent/payment-receipts'),
       ]);
       data = { rows, homes, receipts };
+    } else if (tab === 'attendance') {
+      const [rows, about] = await Promise.all([api.request(`/parent/children/${childId}/attendance`), api.request(`/parent/children/${childId}/about`)]);
+      data = rows;
+      if (version === state.loadVersion) state.groupEnrollments = about.enrollments ?? [];
     } else data = await api.request(`/parent/children/${childId}/${tab}`);
     const notifications = await api.request('/parent/notifications').catch(() => state.notifications);
     if (version !== state.loadVersion) return;

@@ -2,10 +2,27 @@ const html = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '
 const days = ['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'];
 const shortDays = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 
+function groupSlots(group) {
+  return [{ weekday: group.weekday ?? days.indexOf(group.day) + 1,
+    startTime: group.startTime || String(group.time ?? '').split('–')[0] || '—',
+    endTime: group.endTime || String(group.time ?? '').split('–')[1] || '—' }, ...(group.scheduleSlots ?? [])]
+    .sort((a, b) => Number(a.weekday) - Number(b.weekday) || String(a.startTime).localeCompare(String(b.startTime)));
+}
+
 export function groupScheduleLabel(group) {
-  return [{ weekday: group.weekday ?? days.indexOf(group.day) + 1, startTime: group.startTime || '—' }, ...(group.scheduleSlots ?? [])]
-    .sort((a, b) => Number(a.weekday) - Number(b.weekday) || String(a.startTime).localeCompare(String(b.startTime)))
-    .map((slot) => `${shortDays[Number(slot.weekday) - 1] || group.day || '—'} ${slot.startTime}`).join(' · ');
+  return groupSlots(group).map((slot) => `${shortDays[Number(slot.weekday) - 1] || group.day || '—'} ${slot.startTime}`).join(' · ');
+}
+
+export function groupDisplayName(group, fallback = 'Без группы') {
+  if (!group) return fallback;
+  // Historical report rows may contain only the stored name, without schedule metadata.
+  if (!group.day && !group.weekday && !group.scheduleSlots?.length) return group.name || fallback;
+  return `${group.direction || 'Группа'} · ${groupScheduleLabel(group)}`;
+}
+
+export function groupRegularScheduleLabel(group) {
+  const slots = groupSlots(group);
+  return slots.map((slot) => `${days[Number(slot.weekday) - 1] || group.day || '—'}${slots.length === 1 ? ',' : ''} ${slot.startTime}–${slot.endTime}`).join(' · ');
 }
 
 export function advancedGroupFields(group = {}) {
@@ -57,12 +74,9 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
       scheduleSlots: slots.map((slot) => ({ ...slot })),
       ...(packageEdited && value('#gf-dir') !== 'Смешанная' ? { packagePrice: value('#gf-package-price') || null } : {}) };
   }
-  host.icubeAdvancedGroups = { cardTitle(group) {
-    const title = host.groupTitle(group);
-    return group?.scheduleSlots?.length ? `${title.slice(0, title.lastIndexOf(' · '))} · ${groupScheduleLabel(group)}` : title;
-  }, lessonTitle(group) {
-    return group?.scheduleSlots?.length ? `${group.direction} · ${groupScheduleLabel(group)}` : group?.name || 'Без группы';
-  }, payload, draft: payload, refresh, addSlot() { slots.push({ weekday: 5, startTime: value('#gf-start') || '16:00', endTime: value('#gf-end') || '17:30' }); drawSlots(); },
+  host.groupTitle = groupDisplayName;
+  host.groupRegularSchedule = groupRegularScheduleLabel;
+  host.icubeAdvancedGroups = { displayName: groupDisplayName, payload, draft: payload, refresh, addSlot() { slots.push({ weekday: 5, startTime: value('#gf-start') || '16:00', endTime: value('#gf-end') || '17:30' }); drawSlots(); },
     setSlot(index, key, next) { slots[index][key] = key === 'weekday' ? Number(next) : next; }, removeSlot(index) { slots.splice(index, 1); drawSlots(); } };
   const original = host.groupForm;
   host.groupForm = function (id, suppliedDraft) {

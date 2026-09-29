@@ -7,6 +7,10 @@ function businessTodayIso(){
 }
 function businessTodayDate(){const p=businessTodayIso().split('-').map(Number);return new Date(p[0],p[1]-1,p[2],12);}
 
+// Hidden prototype bootstrap only; installAdvancedGroupUi replaces these aliases before API rendering.
+function groupTitle(g){return g ? g.name : 'Без группы';}
+function groupRegularSchedule(g){return g.day+', '+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]);}
+
 /* ===== Стабилизированный раздел из app.js ===== */
 const state = {
  role:'director', page:'dashboard', selectedChild:1, selectedGroup:1, selectedLesson:1,
@@ -85,8 +89,8 @@ function dashboard(){
  return pageHead('Главная','Среда, 9 сентября · обзор клуба')+`
  <div class="grid cols-4"><div class="card metric"><div class="label">Активные дети</div><div class="value">${active}</div><div class="sub">+2 за последние 30 дней</div></div><div class="card metric"><div class="label">Лиды</div><div class="value">${leads}</div><div class="sub">1 был на пробном</div></div><div class="card metric"><div class="label">Активные группы</div><div class="value">${state.groups.filter(g=>g.active).length}</div><div class="sub">2 направления</div></div><div class="card metric"><div class="label">Оплаты в сентябре</div><div class="value">${money(revenue)}</div><div class="sub">тестовые данные</div></div></div>
  <div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Требует внимания</h2><span class="muted mini">по балансам направлений</span></div><div class="attention"><button class="warn" onclick="navTo('balances')"><span>Осталось 1 занятие</span><b>${low}</b></button><button class="zero" onclick="navTo('balances')"><span>Осталось 0</span><b>${zero}</b></button><button class="debt" onclick="navTo('balances')"><span>Должники</span><b>${debt}</b></button></div></div>
- <div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo('calendar')">Календарь</button></div><div class="list">${state.lessons.filter(l=>!l.done).slice(0,3).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="kpi-line clickable" onclick="openLesson(${l.id})"><div><b>${l.time.split('–')[0]} · ${g.direction}</b><div class="muted mini">${g.name} · ${byId(state.sites,g.siteId).name}</div></div><span class="badge ${g.project==='Зебра'?'purple':'blue'}">${g.project}</span></div>`}).join('')}</div></div></div>
- <div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Сегодня</h2><span class="muted">2 занятия</span></div><div class="grid cols-2">${state.lessons.filter(l=>l.date==='09.09.2026').map(l=>{let g=byId(state.groups,l.groupId);return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">${l.time}</div><b style="font-size:16px">${g.name}</b><div class="muted">${byId(state.sites,g.siteId).name} · ${byId(state.teachers,l.teacherId).name}</div><button class="btn soft" style="margin-top:12px" onclick="openLesson(${l.id})">Открыть занятие</button></div>`}).join('')}</div></div>`;
+ <div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo('calendar')">Календарь</button></div><div class="list">${state.lessons.filter(l=>!l.done).slice(0,3).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="kpi-line clickable" onclick="openLesson(${l.id})"><div><b>${l.time.split('–')[0]} · ${g.direction}</b><div class="muted mini">${groupTitle(g)} · ${byId(state.sites,g.siteId).name}</div></div><span class="badge ${g.project==='Зебра'?'purple':'blue'}">${g.project}</span></div>`}).join('')}</div></div></div>
+ <div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Сегодня</h2><span class="muted">2 занятия</span></div><div class="grid cols-2">${state.lessons.filter(l=>l.date==='09.09.2026').map(l=>{let g=byId(state.groups,l.groupId);return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">${l.time}</div><b style="font-size:16px">${groupTitle(g)}</b><div class="muted">${byId(state.sites,g.siteId).name} · ${byId(state.teachers,l.teacherId).name}</div><button class="btn soft" style="margin-top:12px" onclick="openLesson(${l.id})">Открыть занятие</button></div>`}).join('')}</div></div>`;
 }
 function children(){
  const projectFilter=state.role==='partner'?'all':(state.childProjectFilter||'all');
@@ -104,7 +108,7 @@ function children(){
  const rows=filteredChildren.map(c=>{
    const searchText=(String(c.name||'')+' '+String(c.parent||'')).toLowerCase();
    const hidden=searchFilter&&!searchText.includes(searchFilter)?' style="display:none"':'';
-   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(c.enrollments.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(c.status)}">${escapeHtml(c.status)}</span></div><div class="child-directions">${c.enrollments.map(e=>{const groupName=String(e.groupName||'').trim()?e.groupName:'Без группы';return `<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName)}</div></div>`;}).join('')}</div><div class="child-groups-desktop">${c.enrollments.map(e=>{const groupName=String(e.groupName||'').trim()?e.groupName:'Без группы';return `<div class="mini">${escapeHtml(groupName)}</div>`;}).join('')}</div><div>${c.enrollments.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
+   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(c.enrollments.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(c.status)}">${escapeHtml(c.status)}</span></div><div class="child-directions">${c.enrollments.map(e=>{const groupName=groupTitle(byId(state.groups,e.effectiveGroupId??e.groupId)||{name:e.groupName});return `<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName)}</div></div>`;}).join('')}</div><div class="child-groups-desktop">${c.enrollments.map(e=>{const groupName=groupTitle(byId(state.groups,e.effectiveGroupId??e.groupId)||{name:e.groupName});return `<div class="mini">${escapeHtml(groupName)}</div>`;}).join('')}</div><div>${c.enrollments.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
  }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
  const statusSelect=`<select class="select" style="max-width:180px" onchange="setChildStatusFilter(this.value)"><option value="all" ${statusFilter==='all'?'selected':''}>Все статусы</option>${['Активный','Лид','Пауза','Закончил'].map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join('')}</select>`;
@@ -125,7 +129,7 @@ function filterRows(q){
 }
 function childForm(id=null){
  const c=id?byId(state.children,id):null;
- modal(`<h3>${c?'Редактировать ребёнка':'Новый ребёнок'}</h3><div class="form-grid"><div class="field span-2"><label>ФИО</label><input class="input" id="cf-name" value="${escapeAttr(c?.name||'')}" placeholder="Фамилия Имя"></div><div class="field"><label>Дата рождения</label><input class="input" id="cf-birth" type="date" value="${escapeAttr(c?.birth||'')}"></div><div class="field"><label>Статус</label><select class="select" id="cf-status">${['Лид','Активный','Пауза','Закончил'].map(s=>`<option ${c?.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Школа</label><input class="input" id="cf-school" value="${escapeAttr(c?.school||'')}"></div><div class="field"><label>Класс</label><input class="input" id="cf-grade" value="${escapeAttr(c?.grade||'')}"></div><div class="field"><label>Родитель</label><input class="input" id="cf-parent" value="${escapeAttr(c?.parent||'')}"></div><div class="field"><label>Телефон</label><input class="input" id="cf-phone" value="${escapeAttr(c?.phone||'')}"></div><div class="field span-2"><label>Основная группа</label><select class="select" id="cf-group">${state.groups.map(g=>`<option value="${g.id}" ${c?.enrollments?.[0]?.groupId===g.id?'selected':''}>${escapeHtml(g.name)}</option>`).join('')}<option value="new">+ Создать группу</option></select></div><div class="field span-2"><label>Примечание</label><textarea class="textarea" id="cf-note">${escapeHtml(c?.note||'')}</textarea></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveChild(${c?.id||'null'})">Сохранить</button></div>`);
+ modal(`<h3>${c?'Редактировать ребёнка':'Новый ребёнок'}</h3><div class="form-grid"><div class="field span-2"><label>ФИО</label><input class="input" id="cf-name" value="${escapeAttr(c?.name||'')}" placeholder="Фамилия Имя"></div><div class="field"><label>Дата рождения</label><input class="input" id="cf-birth" type="date" value="${escapeAttr(c?.birth||'')}"></div><div class="field"><label>Статус</label><select class="select" id="cf-status">${['Лид','Активный','Пауза','Закончил'].map(s=>`<option ${c?.status===s?'selected':''}>${s}</option>`).join('')}</select></div><div class="field"><label>Школа</label><input class="input" id="cf-school" value="${escapeAttr(c?.school||'')}"></div><div class="field"><label>Класс</label><input class="input" id="cf-grade" value="${escapeAttr(c?.grade||'')}"></div><div class="field"><label>Родитель</label><input class="input" id="cf-parent" value="${escapeAttr(c?.parent||'')}"></div><div class="field"><label>Телефон</label><input class="input" id="cf-phone" value="${escapeAttr(c?.phone||'')}"></div><div class="field span-2"><label>Основная группа</label><select class="select" id="cf-group">${state.groups.map(g=>`<option value="${g.id}" ${c?.enrollments?.[0]?.groupId===g.id?'selected':''}>${escapeHtml(groupTitle(g))}</option>`).join('')}<option value="new">+ Создать группу</option></select></div><div class="field span-2"><label>Примечание</label><textarea class="textarea" id="cf-note">${escapeHtml(c?.note||'')}</textarea></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveChild(${c?.id||'null'})">Сохранить</button></div>`);
 }
 function saveChild(id){
  const name=document.querySelector('#cf-name').value.trim()||'Новый ребёнок', groupId=Number(document.querySelector('#cf-group').value)||1;
@@ -161,24 +165,24 @@ function saveChild(id){
 function child(){
  const c=byId(state.children,state.selectedChild); if(!c)return children();
  return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(c.name,`${c.school} · ${c.grade} · ${c.parent}`,`<button class="btn" onclick="childForm(${c.id})">Редактировать</button>`)+`
- <div class="tabs"><button class="active">Обзор</button><button>Оплаты</button><button>Посещения</button><button>Возвраты</button></div><div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge ${statusBadge(c.status)}">${c.status}</span></div>${c.enrollments.map(e=>{let g=byId(state.groups,e.groupId);return `<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>${e.direction}</b><div class="muted">${g?.name||'Без группы'}</div></div><div style="text-align:right"><div class="money ${e.balance<0?'negative':e.balance>0?'positive':''}">${e.balance} занятий</div><div class="muted mini">${money(effectivePrice(e))} / занятие</div></div></div><button class="btn soft" style="margin-top:10px" onclick="paymentForm(${c.id},'${e.direction}')">+ Оплата</button></div>`}).join('')}</div>
+ <div class="tabs"><button class="active">Обзор</button><button>Оплаты</button><button>Посещения</button><button>Возвраты</button></div><div class="split"><div class="card pad"><div class="section-title"><h2>Направления</h2><span class="badge ${statusBadge(c.status)}">${c.status}</span></div>${c.enrollments.map(e=>{let g=byId(state.groups,e.groupId);return `<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>${e.direction}</b><div class="muted">${groupTitle(g)||'Без группы'}</div></div><div style="text-align:right"><div class="money ${e.balance<0?'negative':e.balance>0?'positive':''}">${e.balance} занятий</div><div class="muted mini">${money(effectivePrice(e))} / занятие</div></div></div><button class="btn soft" style="margin-top:10px" onclick="paymentForm(${c.id},'${e.direction}')">+ Оплата</button></div>`}).join('')}</div>
  <div class="card pad"><div class="section-title"><h2>Контакты и данные</h2></div><div class="info-list"><div class="info-line"><span>Дата рождения</span><b>${c.birth}</b></div><div class="info-line"><span>Родитель</span><b>${c.parent}</b></div><div class="info-line"><span>Телефон</span><b>${c.phone}</b></div><div class="info-line"><span>Примечание</span><span style="text-align:right">${c.note||'—'}</span></div></div></div></div>
  <div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Последние оплаты</h2><button class="btn" onclick="navTo('payments')">Все</button></div>${state.payments.filter(p=>p.childId===c.id).map(p=>`<div class="kpi-line"><div><b>${p.direction}</b><div class="muted mini">${p.date} · ${p.method}</div></div><div class="money positive">+${p.lessons} · ${money(p.amount)}</div></div>`).join('')||'<div class="empty">Оплат пока нет</div>'}</div><div class="card pad"><div class="section-title"><h2>История посещений</h2></div><div class="kpi-line"><div><b>05.09 · Робототехника</b><div class="muted mini">Редукторы и передаточное отношение</div></div><span class="badge green">Был</span></div><div class="kpi-line"><div><b>29.08 · Робототехника</b><div class="muted mini">Зубчатые передачи</div></div><span class="badge green">Был</span></div></div></div>`;
 }
 function groups(){
- return pageHead('Группы','Регулярное расписание, площадка, преподаватель, проект и цена','<button class="btn primary" onclick="groupForm()">+ Новая группа</button>')+`<div class="grid cols-3">${state.groups.map(g=>`<div class="card pad clickable" onclick="openGroup(${g.id})"><div style="display:flex;justify-content:space-between;gap:8px"><span class="badge ${g.project==='Зебра'?'purple':'blue'}">${g.project}</span><span class="badge ${g.active?'green':'gray'}">${g.active?'Активна':'Неактивна'}</span></div><h3 style="margin:14px 0 5px">${g.name}</h3><div class="muted">${g.direction}</div><div class="info-list" style="margin-top:12px"><div class="info-line"><span>Когда</span><b>${g.day}, ${g.time}</b></div><div class="info-line"><span>Площадка</span><b>${byId(state.sites,g.siteId).name}</b></div><div class="info-line"><span>Преподаватель</span><b>${byId(state.teachers,g.teacherId).name}</b></div><div class="info-line"><span>Детей</span><b>${groupChildren(g.id).length}</b></div><div class="info-line"><span>Цена</span><b>${g.price?money(g.price):'Наследуется'}</b></div></div></div>`).join('')}</div>`;
+ return pageHead('Группы','Регулярное расписание, площадка, преподаватель, проект и цена','<button class="btn primary" onclick="groupForm()">+ Новая группа</button>')+`<div class="grid cols-3">${state.groups.map(g=>`<div class="card pad clickable" onclick="openGroup(${g.id})"><div style="display:flex;justify-content:space-between;gap:8px"><span class="badge ${g.project==='Зебра'?'purple':'blue'}">${g.project}</span><span class="badge ${g.active?'green':'gray'}">${g.active?'Активна':'Неактивна'}</span></div><h3 style="margin:14px 0 5px">${groupTitle(g)}</h3><div class="muted">${g.direction}</div><div class="info-list" style="margin-top:12px"><div class="info-line"><span>Когда</span><b>${g.day}, ${g.time}</b></div><div class="info-line"><span>Площадка</span><b>${byId(state.sites,g.siteId).name}</b></div><div class="info-line"><span>Преподаватель</span><b>${byId(state.teachers,g.teacherId).name}</b></div><div class="info-line"><span>Детей</span><b>${groupChildren(g.id).length}</b></div><div class="info-line"><span>Цена</span><b>${g.price?money(g.price):'Наследуется'}</b></div></div></div>`).join('')}</div>`;
 }
 function groupForm(){modal(`<h3>Новая группа</h3><div class="form-grid"><div class="field span-2"><label>Название</label><input class="input" id="gf-name" value="Новая группа"></div><div class="field"><label>Направление</label><select class="select" id="gf-dir"><option>Робототехника</option><option>Программирование</option></select></div><div class="field"><label>Проект</label><select class="select" id="gf-project"><option>iCubeRobots</option><option>Зебра</option></select></div><div class="field"><label>Площадка</label><select class="select" id="gf-site">${state.sites.map(s=>`<option value="${s.id}">${s.name}</option>`).join('')}</select></div><div class="field"><label>Преподаватель</label><select class="select" id="gf-teacher">${state.teachers.filter(t=>t.active).map(t=>`<option value="${t.id}">${t.name}</option>`).join('')}</select></div><div class="field"><label>День</label><select class="select" id="gf-day"><option>Понедельник</option><option>Вторник</option><option>Среда</option><option>Четверг</option><option>Пятница</option><option>Суббота</option></select></div><div class="field"><label>Время</label><input class="input" id="gf-time" value="15:00–16:30"></div><div class="field span-2"><label>Специальная цена, ₽ (необязательно)</label><input class="input" id="gf-price" type="number" placeholder="Пусто = цена направления"></div></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="saveGroup()">Создать</button></div>`)}
 function saveGroup(){let id=Math.max(...state.groups.map(x=>x.id))+1;state.groups.push({id,name:document.querySelector('#gf-name').value,direction:document.querySelector('#gf-dir').value,siteId:Number(document.querySelector('#gf-site').value),teacherId:Number(document.querySelector('#gf-teacher').value),day:document.querySelector('#gf-day').value,time:document.querySelector('#gf-time').value,project:document.querySelector('#gf-project').value,price:Number(document.querySelector('#gf-price').value)||null,active:true});state.selectedGroup=id;state.modal=null;state.page='group';render()}
 function group(){
  const g=byId(state.groups,state.selectedGroup), kids=groupChildren(g.id);
- return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(g.name,`${g.direction} · ${g.project}`,'<button class="btn">Редактировать</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Основные данные</h2><span class="badge green">Активна</span></div><div class="info-line"><span>Регулярное расписание</span><b>${g.day}, ${g.time}</b></div><div class="info-line"><span>Площадка</span><b>${byId(state.sites,g.siteId).name}</b></div><div class="info-line"><span>Основной преподаватель</span><b>${byId(state.teachers,g.teacherId).name}</b></div><div class="info-line"><span>Цена группы</span><b>${g.price?money(g.price):'Наследуется от направления'}</b></div><div class="notice" style="margin-top:12px">Изменение конкретного занятия в календаре не меняет регулярное расписание группы.</div></div><div class="card pad"><div class="section-title"><h2>Основная группа</h2><b>${kids.length} детей</b></div>${kids.map(c=>`<div class="kpi-line clickable" onclick="openChild(${c.id})"><div><b>${c.name}</b><div class="muted mini">${c.parent}</div></div><span class="badge ${statusBadge(c.status)}">${c.status}</span></div>`).join('')||'<div class="empty">Нет детей</div>'}</div></div>`;
+ return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(groupTitle(g),`${g.direction} · ${g.project}`,'<button class="btn">Редактировать</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Основные данные</h2><span class="badge green">Активна</span></div><div class="info-line"><span>Регулярное расписание</span><b>${groupRegularSchedule(g)}</b></div><div class="info-line"><span>Площадка</span><b>${byId(state.sites,g.siteId).name}</b></div><div class="info-line"><span>Основной преподаватель</span><b>${byId(state.teachers,g.teacherId).name}</b></div><div class="info-line"><span>Цена группы</span><b>${g.price?money(g.price):'Наследуется от направления'}</b></div><div class="notice" style="margin-top:12px">Изменение конкретного занятия в календаре не меняет регулярное расписание группы.</div></div><div class="card pad"><div class="section-title"><h2>Основная группа</h2><b>${kids.length} детей</b></div>${kids.map(c=>`<div class="kpi-line clickable" onclick="openChild(${c.id})"><div><b>${c.name}</b><div class="muted mini">${c.parent}</div></div><span class="badge ${statusBadge(c.status)}">${c.status}</span></div>`).join('')||'<div class="empty">Нет детей</div>'}</div></div>`;
 }
 function sites(){return pageHead('Площадки','Места проведения занятий','<button class="btn primary" onclick="simpleAdd(\'site\')">+ Площадка</button>')+`<div class="grid cols-3">${state.sites.map(s=>`<div class="card pad"><span class="badge gray">${s.type}</span><h3>${s.name}</h3><div class="muted">${s.address}</div><div style="margin-top:13px">${s.note}</div><div class="muted mini" style="margin-top:12px">${state.groups.filter(g=>g.siteId===s.id).length} групп</div></div>`).join('')}</div>`}
 function teachers(){return pageHead('Преподаватели','Контакты, направления и активность','<button class="btn primary" onclick="simpleAdd(\'teacher\')">+ Преподаватель</button>')+`<div class="card list"><div class="row header"><div>Преподаватель</div><div>Телефон</div><div>Направления</div><div>Статус</div><div></div></div>${state.teachers.map(t=>`<div class="row"><div><b>${t.name}</b></div><div>${t.phone}</div><div>${t.directions.join(', ')}</div><div><span class="badge ${t.active?'green':'gray'}">${t.active?'Активен':'Неактивен'}</span></div><div>•••</div></div>`).join('')}</div>`}
 function simpleAdd(type){modal(`<h3>${type==='site'?'Новая площадка':'Новый преподаватель'}</h3><div class="field" style="margin-top:14px"><label>Название / ФИО</label><input class="input" id="simple-name"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="closeModal()">Сохранить</button></div>`)}
 function calendar(){
- const days=['07.09','08.09','09.09','10.09','11.09','12.09','13.09'];return pageHead('Календарь','Конкретные занятия создаются из регулярного расписания, но могут меняться отдельно','<button class="btn">Сегодня</button>')+`<div class="toolbar"><button class="btn soft">Неделя</button><button class="btn">Месяц</button><select class="select" style="max-width:220px"><option>Все проекты</option><option>iCubeRobots</option><option>Зебра</option></select></div><div class="calendar">${days.map(d=>`<div class="day"><div class="date">${d}${d==='09.09'?' · сегодня':''}</div>${state.lessons.filter(l=>l.date.startsWith(d)).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="event ${g.project==='Зебра'?'partner':''} ${l.done?'done':''}" onclick="openLesson(${l.id})"><b>${l.time.split('–')[0]}</b> ${g.direction}<div>${g.name}</div></div>`}).join('')}</div>`).join('')}</div>`;
+ const days=['07.09','08.09','09.09','10.09','11.09','12.09','13.09'];return pageHead('Календарь','Конкретные занятия создаются из регулярного расписания, но могут меняться отдельно','<button class="btn">Сегодня</button>')+`<div class="toolbar"><button class="btn soft">Неделя</button><button class="btn">Месяц</button><select class="select" style="max-width:220px"><option>Все проекты</option><option>iCubeRobots</option><option>Зебра</option></select></div><div class="calendar">${days.map(d=>`<div class="day"><div class="date">${d}${d==='09.09'?' · сегодня':''}</div>${state.lessons.filter(l=>l.date.startsWith(d)).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="event ${g.project==='Зебра'?'partner':''} ${l.done?'done':''}" onclick="openLesson(${l.id})"><b>${l.time.split('–')[0]}</b> ${g.direction}<div>${groupTitle(g)}</div></div>`}).join('')}</div>`).join('')}</div>`;
 }
 function lessonAttendanceBadge(l,childId,present){
  const hasNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(childId);});
@@ -193,16 +197,16 @@ function lessonAttendanceBadge(l,childId,present){
 window.lessonAttendanceBadge=lessonAttendanceBadge;
 function lesson(){
  const l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId),t=byId(state.teachers,l.teacherId),kids=groupChildren(g.id);
- return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'gray'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${g.name}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b>${lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])}</div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div>${lessonAttendanceBadge(l,e.childId,e.present!==false)}</div>`).join('')}</div></div>`;
+ return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'gray'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${groupTitle(g)}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b>${lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])}</div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div>${lessonAttendanceBadge(l,e.childId,e.present!==false)}</div>`).join('')}</div></div>`;
 }
 function lToggle(k,v){byId(state.lessons,state.selectedLesson)[k]=v;render()}
 function teacherShell(content){return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">АйКуб · Преподаватель</div><b>Иванов Сергей</b></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value==='director'?'dashboard':'teacherToday';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div></div><div class="teacher-content">${content}</div></div>`}
 function teacherToday(){
- const ls=state.lessons.filter(l=>l.date==='09.09.2026'&&l.teacherId===1);return `<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">Среда, 9 сентября</div>${ls.map(l=>{let g=byId(state.groups,l.groupId);return `<div class="teacher-card" onclick="openLesson(${l.id},true)"><div class="teacher-lesson-head"><div><div class="teacher-time">${l.time.split('–')[0]}</div><h3 style="margin:4px 0">${g.direction}</h3><div class="muted">${g.name}<br>${byId(state.sites,g.siteId).name}</div></div><span class="badge ${l.started?'green':'blue'}">${l.done?'Завершено':l.started?'Идёт':'Скоро'}</span></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>`}).join('')}`;
+ const ls=state.lessons.filter(l=>l.date==='09.09.2026'&&l.teacherId===1);return `<h1 style="margin:2px 0 4px">Сегодня</h1><div class="muted" style="margin-bottom:18px">Среда, 9 сентября</div>${ls.map(l=>{let g=byId(state.groups,l.groupId);return `<div class="teacher-card" onclick="openLesson(${l.id},true)"><div class="teacher-lesson-head"><div><div class="teacher-time">${l.time.split('–')[0]}</div><h3 style="margin:4px 0">${g.direction}</h3><div class="muted">${groupTitle(g)}<br>${byId(state.sites,g.siteId).name}</div></div><span class="badge ${l.started?'green':'blue'}">${l.done?'Завершено':l.started?'Идёт':'Скоро'}</span></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>`}).join('')}`;
 }
 function teacherLesson(){
  const l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId),kids=groupChildren(g.id);
- return `<button class="btn" onclick="icubeGoBack()">← Назад</button><div style="margin:16px 0"><div class="muted">${l.date} · ${l.time}</div><h1 style="margin:4px 0">${g.direction}</h1><div class="muted">${g.name} · ${byId(state.sites,g.siteId).name}</div></div>
+ return `<button class="btn" onclick="icubeGoBack()">← Назад</button><div style="margin:16px 0"><div class="muted">${l.date} · ${l.time}</div><h1 style="margin:4px 0">${g.direction}</h1><div class="muted">${groupTitle(g)} · ${byId(state.sites,g.siteId).name}</div></div>
  ${!l.started?`<div class="teacher-card"><h3 style="margin-top:0">Занятие готово</h3><p class="muted">После начала можно отмечать присутствующих, тему и фотографии.</p><button class="btn primary big-action" style="width:100%" onclick="startLesson()">Начать занятие</button></div>`:`
  <div class="teacher-card"><div class="section-title"><h2>Основная группа</h2><span class="badge blue">${kids.length} детей</span></div><div class="attendance">${kids.map(c=>studentCheck(c,l,false)).join('')}</div></div>
  <div class="teacher-card"><div class="section-title"><h2>Добавлены на занятие</h2></div>${l.extras.map(e=>studentCheck(byId(state.children,e.childId),l,true,e)).join('')||'<div class="muted mini">Пока никого</div>'}<div style="margin-top:12px"><input class="input" id="extraSearch" placeholder="Начните вводить фамилию…" oninput="showExtraResults(this.value)"><div id="extraResults"></div></div></div>
@@ -323,7 +327,7 @@ function refreshEnrollmentGroups(selectedGroupId) {
 
   groupSelect.innerHTML = groups.map(g =>
     '<option value="' + g.id + '"' + (Number(selectedGroupId) === g.id ? ' selected' : '') + '>' +
-    g.name + '</option>'
+    groupTitle(g) + '</option>'
   ).join('');
 }
 
@@ -361,7 +365,7 @@ child = function() {
     const g = byId(state.groups, e.groupId);
     return '<div style="border-top:1px solid var(--line);padding:14px 0">' +
       '<div style="display:flex;justify-content:space-between;gap:12px">' +
-        '<div><b>' + e.direction + '</b><div class="muted">' + (g ? g.name : 'Без группы') + '</div></div>' +
+        '<div><b>' + e.direction + '</b><div class="muted">' + (g ? groupTitle(g) : 'Без группы') + '</div></div>' +
         '<div style="text-align:right"><div class="money ' + (e.balance < 0 ? 'negative' : e.balance > 0 ? 'positive' : '') + '">' +
           e.balance + ' занятий</div>' +
           '<div class="muted mini">' + money(effectivePrice(e)) + ' / занятие</div>' +
@@ -444,6 +448,7 @@ render();
 
   window.groupTitle = function (g) {
     if (!g) return 'Без группы';
+    if (!g.day && !g.weekday) return g.name || 'Без группы';
     const site = byId(state.sites, g.siteId);
     const siteName = site?.name || 'Без площадки';
     return siteName + ' · ' + (DAY_SHORT[g.day] || g.day || '—') + ' ' + (g.startTime || '—');
@@ -670,9 +675,9 @@ render();
     }
 
     return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>' +
-      pageHead(g.name,g.direction + ' · ' + g.project,'<button class="btn" onclick="groupForm(' + g.id + ')">Редактировать</button>') +
+      pageHead(groupTitle(g),g.direction + ' · ' + g.project,'<button class="btn" onclick="groupForm(' + g.id + ')">Редактировать</button>') +
       '<div class="split"><div class="card pad"><div class="section-title"><h2>Основные данные</h2><span class="badge ' + (g.active?'green':'gray') + '">' + (g.active?'Активна':'Неактивна') + '</span></div>' +
-        '<div class="info-line"><span>Регулярное расписание</span><b>' + escapeHtml(g.day) + ', ' + escapeHtml(g.startTime) + '–' + escapeHtml(g.endTime) + '</b></div>' +
+        '<div class="info-line"><span>Регулярное расписание</span><b>' + escapeHtml(groupRegularSchedule(g)) + '</b></div>' +
         '<div class="info-line"><span>Площадка</span><b>' + escapeHtml(byId(state.sites,g.siteId)?.name||'—') + '</b></div>' +
         '<div class="info-line"><span>Основной преподаватель</span><b>' + escapeHtml(byId(state.teachers,g.teacherId)?.name||'—') + '</b></div>' +
         '<div class="info-line"><span>Цена группы</span><b>' + (g.price?money(g.price):'Наследуется от направления') + '</b></div></div>' +
@@ -842,7 +847,7 @@ render();
     return pageHead('Балансы и долги','Баланс отдельно по каждому направлению. Ребёнок может временно быть без группы.') +
       '<div class="grid cols-3" style="margin-bottom:16px"><div class="card metric"><div class="label">Долг</div><div class="value negative">' + entries.filter(function(x){return x.e.balance<0;}).length + '</div></div><div class="card metric"><div class="label">Ноль</div><div class="value">' + entries.filter(function(x){return x.e.balance===0;}).length + '</div></div><div class="card metric"><div class="label">Осталось 1</div><div class="value" style="color:var(--amber)">' + entries.filter(function(x){return x.e.balance===1;}).length + '</div></div></div>' +
       '<div class="card list"><div class="row header"><div>Ребёнок</div><div>Направление</div><div>Группа</div><div>Цена</div><div>Баланс</div></div>' +
-      entries.map(function(x){const g=byId(state.groups,x.e.groupId);return '<div class="row clickable" onclick="openChild(' + x.c.id + ')"><div><b>' + x.c.name + '</b></div><div>' + x.e.direction + '</div><div>' + (g?g.name:'Без группы') + '</div><div>' + money(effectivePrice(x.e)) + '</div><div class="money ' + (x.e.balance<0?'negative':x.e.balance>0?'positive':'') + '">' + Number(x.e.balance.toFixed(4)) + '</div></div>';}).join('') + '</div>';
+      entries.map(function(x){const g=byId(state.groups,x.e.groupId);return '<div class="row clickable" onclick="openChild(' + x.c.id + ')"><div><b>' + x.c.name + '</b></div><div>' + x.e.direction + '</div><div>' + (g?groupTitle(g):'Без группы') + '</div><div>' + money(effectivePrice(x.e)) + '</div><div class="money ' + (x.e.balance<0?'negative':x.e.balance>0?'positive':'') + '">' + Number(x.e.balance.toFixed(4)) + '</div></div>';}).join('') + '</div>';
   };
 
   // Keep the salary prototype logic untouched; only standardize displayed group names.
@@ -850,7 +855,7 @@ render();
   window.salary = function () {
     const html = oldSalary();
     const g = byId(state.groups,1);
-    return html.replaceAll('Роботы · Чт 14:00', g ? g.name : 'Р, Чт, Школа №1, 14:00');
+    return html.replaceAll('Роботы · Чт 14:00', g ? groupTitle(g) : 'Р, Чт, Школа №1, 14:00');
   };
 
   render();
@@ -1041,7 +1046,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const click = e.lessonId ? ' onclick="openLesson(' + e.lessonId + ')"' : '';
         html += '<div class="event ' + cls + done + '"' + click + '>';
         html += '<div style="display:flex;justify-content:space-between;gap:6px"><b>' + e.time.split('–')[0] + '</b><span class="mini">' + (e.project==='Зебра'?'Зебра':'iCube') + '</span></div>';
-        html += '<div>' + g.name + '</div>';
+        html += '<div>' + groupTitle(g) + '</div>';
         html += '</div>';
       });
       html += '</div>';
@@ -1181,7 +1186,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           const g = byId(state.groups,e.groupId);
           html += '<div class="event ' + (e.project==='Зебра'?'partner':'') + (e.done?' done':'') + '" onclick="openCalendarEvent(' + e.groupId + ',\'' + e.date + '\',\'' + e.time + '\')">';
           html += '<div style="display:flex;justify-content:space-between;gap:6px"><b>' + e.time.split('–')[0] + '</b><span class="mini">' + (e.project==='Зебра'?'Зебра':'iCube') + '</span></div>';
-          html += '<div>' + g.name + '</div></div>';
+          html += '<div>' + groupTitle(g) + '</div></div>';
         });
         html += '</div>';
       }
@@ -1209,7 +1214,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const g = byId(state.groups,e.groupId);
         html += '<div class="event ' + (e.project==='Зебра'?'partner':'') + (e.done?' done':'') + '" onclick="openCalendarEvent(' + e.groupId + ',\'' + e.date + '\',\'' + e.time + '\')">';
         html += '<div style="display:flex;justify-content:space-between;gap:6px"><b>' + e.time.split('–')[0] + '</b><span class="mini">' + (e.project==='Зебра'?'Зебра':'iCube') + '</span></div>';
-        html += '<div>' + g.name + '</div></div>';
+        html += '<div>' + groupTitle(g) + '</div></div>';
       });
       html += '</div>';
     });
@@ -1350,7 +1355,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html += '<div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo(\'calendar\')">Календарь</button></div><div class="list">';
     html += upcoming.map(function(item){
       const g=item.group, site=byId(state.sites,g.siteId);
-      return '<div class="kpi-line clickable" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')"><div><b>'+escapeHtml(timeStart(item.time))+' · '+escapeHtml(g.direction)+'</b><div class="muted mini">'+escapeHtml(g.name)+' · '+escapeHtml(site.name)+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div>';
+      return '<div class="kpi-line clickable" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')"><div><b>'+escapeHtml(timeStart(item.time))+' · '+escapeHtml(g.direction)+'</b><div class="muted mini">'+escapeHtml(groupTitle(g))+' · '+escapeHtml(site.name)+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div>';
     }).join('');
     html += '</div></div></div>';
 
@@ -1361,7 +1366,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       html += '<div class="grid cols-2">';
       html += today.map(function(item){
         const g=item.group, site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
-        return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+escapeHtml(item.time)+'</div><b style="font-size:16px">'+escapeHtml(g.name)+'</b><div class="muted">'+escapeHtml(site.name)+' · '+escapeHtml(teacher.name)+'</div><button class="btn soft" style="margin-top:12px" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')">Открыть занятие</button></div>';
+        return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+escapeHtml(item.time)+'</div><b style="font-size:16px">'+escapeHtml(groupTitle(g))+'</b><div class="muted">'+escapeHtml(site.name)+' · '+escapeHtml(teacher.name)+'</div><button class="btn soft" style="margin-top:12px" onclick="openCalendarEvent('+g.id+',\''+item.date+'\',\''+item.time+'\')">Открыть занятие</button></div>';
       }).join('');
       html += '</div>';
     }
@@ -1603,7 +1608,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const g=byId(state.groups,e.groupId);
         html+='<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\''+(opts.teacher?'teacher':'director')+'\')">';
         html+='<div style="display:flex;justify-content:space-between;gap:6px"><b>'+timeStart(e.time)+'</b><span class="mini">'+(e.project==='Зебра'?'Зебра':'iCube')+'</span></div>';
-        html+='<div>'+(g?.name||e.groupName||'Группа')+'</div><div style="margin-top:5px">'+statusBadgeHtml(e)+'</div></div>';
+        html+='<div>'+(g?groupTitle(g):e.groupName||'Группа')+'</div><div style="margin-top:5px">'+statusBadgeHtml(e)+'</div></div>';
       });
       html+='</div>';
     });
@@ -1692,7 +1697,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div></div>'+
       (l.moved?'<div class="notice" style="margin-bottom:12px">Перенесено с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</div>':'')+
       (l.cancelled?'<div class="notice" style="margin-bottom:12px;background:var(--redbg);border-color:#fecdca;color:var(--red)">Занятие отменено. Оно остаётся в календарях с отметкой «Отменено».</div>':'')+
-      '<div class="info-line"><span>Группа</span><b>'+escapeHtml(window.icubeAdvancedGroups?.lessonTitle?.(g)||g.name)+'</b></div><div class="info-line"><span>Фактический преподаватель</span><b>'+escapeHtml(t.name)+'</b></div><div class="info-line"><span>Тема</span><b>'+escapeHtml(l.topic||'Не указана')+'</b></div><div class="info-line"><span>Присутствовало</span><b>'+presentCount+'</b></div>'+
+      '<div class="info-line"><span>Группа</span><b>'+escapeHtml(groupTitle(g))+'</b></div><div class="info-line"><span>Фактический преподаватель</span><b>'+escapeHtml(t.name)+'</b></div><div class="info-line"><span>Тема</span><b>'+escapeHtml(l.topic||'Не указана')+'</b></div><div class="info-line"><span>Присутствовало</span><b>'+presentCount+'</b></div>'+
       '<div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" '+(l.intro?'checked':'')+' onchange="lToggle(\'intro\',this.checked)"><span><b>Ознакомительное занятие всей группы</b></span></label><label class="student-check"><input type="checkbox" '+(l.emptyTrip?'checked':'')+' onchange="lToggle(\'emptyTrip\',this.checked)"><span><b>Пустой выезд</b></span></label></div></div>'+
       '<div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role=\'teacher\';openLesson('+l.id+',true)">Открыть как преподаватель</button></div>'+
       kids.map(function(c){return '<div class="kpi-line"><b>'+escapeHtml(c.name)+'</b>'+lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])+'</div>';}).join('')+((l.extras||[]).length?'<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div class="muted mini" style="font-weight:700;margin-bottom:6px">Добавлены на занятие</div>'+(l.extras||[]).map(function(e){const c=byId(state.children,e.childId);return '<div class="kpi-line"><div><b>'+escapeHtml(c.name)+'</b><div style="display:flex;gap:6px;margin-top:4px"><span class="badge blue">Добавлен</span>'+(e.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div>'+lessonAttendanceBadge(l,e.childId,e.present!==false)+'</div>';}).join('')+'</div>':'')+'</div></div>';
@@ -1700,7 +1705,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function teacherEventCard(e){
     const g=byId(state.groups,e.groupId),site=byId(state.sites,g.siteId);
-    return '<div class="teacher-card" onclick="openUnifiedCalendarEvent(\''+escapeInlineJs(e.key)+'\',\'teacher\')"><div class="teacher-lesson-head"><div><div class="teacher-time">'+escapeHtml(timeStart(e.time))+'</div><h3 style="margin:4px 0">'+escapeHtml(g.direction)+'</h3><div class="muted">'+escapeHtml(g.name)+'<br>'+escapeHtml(site?.name||'—')+'</div></div><div>'+statusBadgeHtml(e)+'</div></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
+    return '<div class="teacher-card" onclick="openUnifiedCalendarEvent(\''+escapeInlineJs(e.key)+'\',\'teacher\')"><div class="teacher-lesson-head"><div><div class="teacher-time">'+escapeHtml(timeStart(e.time))+'</div><h3 style="margin:4px 0">'+escapeHtml(g.direction)+'</h3><div class="muted">'+escapeHtml(groupTitle(g))+'<br>'+escapeHtml(site?.name||'—')+'</div></div><div>'+statusBadgeHtml(e)+'</div></div><button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
   }
 
   window.teacherToday=function(){
@@ -1714,7 +1719,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const l=byId(state.lessons,state.selectedLesson); if(!l)return teacherToday();
     const g=byId(state.groups,l.groupId),kids=groupChildren(g.id);
     let html='<div style="display:flex;gap:8px;justify-content:space-between;align-items:center"><button class="btn" onclick="icubeGoBack()">← Назад</button><button class="btn" onclick="editLessonForm('+l.id+',\'teacher\')">Изменить / отменить</button></div>';
-    html+='<div style="margin:16px 0"><div class="muted">'+escapeHtml(l.date)+' · '+escapeHtml(l.time)+'</div><h1 style="margin:4px 0">'+escapeHtml(g.direction)+'</h1><div class="muted">'+escapeHtml(g.project)+' · '+escapeHtml(g.name)+' · '+escapeHtml(l.siteName||byId(state.sites,g.siteId)?.name||'')+'</div>'+(l.moved?'<div style="margin-top:8px"><span class="badge amber">Перенесено</span> <span class="muted mini">с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</span></div>':'')+'</div>';
+    html+='<div style="margin:16px 0"><div class="muted">'+escapeHtml(l.date)+' · '+escapeHtml(l.time)+'</div><h1 style="margin:4px 0">'+escapeHtml(g.direction)+'</h1><div class="muted">'+escapeHtml(g.project)+' · '+escapeHtml(groupTitle(g))+' · '+escapeHtml(l.siteName||byId(state.sites,g.siteId)?.name||'')+'</div>'+(l.moved?'<div style="margin-top:8px"><span class="badge amber">Перенесено</span> <span class="muted mini">с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</span></div>':'')+'</div>';
     if(l.cancelled){
       html+='<div class="teacher-card" style="background:var(--redbg)"><b style="color:var(--red);font-size:18px">Занятие отменено</b><div class="muted" style="margin-top:6px">Отмена видна в календаре преподавателя и директора.</div></div>';
       return html;
@@ -1757,10 +1762,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     let html=pageHead('Главная','Среда, 9 сентября · обзор клуба');
     html+='<div class="grid cols-4"><div class="card metric"><div class="label">Активные дети</div><div class="value">'+active+'</div></div><div class="card metric"><div class="label">Лиды</div><div class="value">'+leads+'</div></div><div class="card metric"><div class="label">Активные группы</div><div class="value">'+state.groups.filter(function(g){return g.active;}).length+'</div></div><div class="card metric"><div class="label">Оплаты в сентябре</div><div class="value">'+money(revenue)+'</div></div></div>';
     html+='<div class="grid cols-2" style="margin-top:16px"><div class="card pad"><div class="section-title"><h2>Требует внимания</h2></div><div class="attention"><button class="warn" onclick="navTo(\'balances\')"><span>Осталось 1 занятие</span><b>'+low+'</b></button><button class="zero" onclick="navTo(\'balances\')"><span>Осталось 0</span><b>'+zero+'</b></button><button class="debt" onclick="navTo(\'balances\')"><span>Должники</span><b>'+debt+'</b></button></div></div>';
-    html+='<div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo(\'calendar\')">Календарь</button></div>'+upcoming.map(function(e){const g=byId(state.groups,e.groupId);return '<div class="kpi-line clickable" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')"><div><b>'+timeStart(e.time)+' · '+g.direction+'</b><div class="muted mini">'+e.date+' · '+g.name+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+g.project+'</span></div>';}).join('')+'</div></div>';
+    html+='<div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo(\'calendar\')">Календарь</button></div>'+upcoming.map(function(e){const g=byId(state.groups,e.groupId);return '<div class="kpi-line clickable" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')"><div><b>'+timeStart(e.time)+' · '+g.direction+'</b><div class="muted mini">'+e.date+' · '+groupTitle(g)+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+g.project+'</span></div>';}).join('')+'</div></div>';
     html+='<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Сегодня</h2><span class="muted">'+todayEvents.length+' занятий</span></div>';
     if(!todayEvents.length)html+='<div class="empty">Сегодня занятий нет.</div>';
-    else html+='<div class="grid cols-2">'+todayEvents.map(function(e){const g=byId(state.groups,e.groupId),site=byId(state.sites,g.siteId),t=byId(state.teachers,e.teacherId||g.teacherId);return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div style="display:flex;justify-content:space-between"><span class="muted mini">'+e.time+'</span>'+statusBadgeHtml(e)+'</div><b style="font-size:16px">'+g.name+'</b><div class="muted">'+site.name+' · '+t.name+'</div><button class="btn soft" style="margin-top:12px" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')">Открыть занятие</button></div>';}).join('')+'</div>';
+    else html+='<div class="grid cols-2">'+todayEvents.map(function(e){const g=byId(state.groups,e.groupId),site=byId(state.sites,g.siteId),t=byId(state.teachers,e.teacherId||g.teacherId);return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div style="display:flex;justify-content:space-between"><span class="muted mini">'+e.time+'</span>'+statusBadgeHtml(e)+'</div><b style="font-size:16px">'+groupTitle(g)+'</b><div class="muted">'+site.name+' · '+t.name+'</div><button class="btn soft" style="margin-top:12px" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')">Открыть занятие</button></div>';}).join('')+'</div>';
     html+='</div>';
     return html;
   };
@@ -2010,7 +2015,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function rowHtml(x) {
-    const groupName=x.g ? x.g.name : 'Без группы';
+    const groupName=x.g ? groupTitle(x.g) : 'Без группы';
     return '<div class="row clickable" onclick="openChild('+x.c.id+')">'+
       '<div><b>'+x.c.name+'</b></div>'+
       '<div>'+x.e.direction+'</div>'+
@@ -2112,7 +2117,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   function childOverview(c){
     let directionsHtml=c.enrollments.map(function(e){
       const g=byId(state.groups,e.groupId);
-      return '<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>'+e.direction+'</b><div class="muted">'+(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+e.balance+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="enrollmentForm('+c.id+',\''+e.direction+'\')">Изменить</button></div></div>';
+      return '<div style="border-top:1px solid var(--line);padding:14px 0"><div style="display:flex;justify-content:space-between;gap:12px"><div><b>'+e.direction+'</b><div class="muted">'+(g?groupTitle(g):'Без группы')+'</div></div><div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+e.balance+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div></div><div style="display:flex;gap:8px;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+e.direction+'\')">+ Оплата</button><button class="btn" onclick="enrollmentForm('+c.id+',\''+e.direction+'\')">Изменить</button></div></div>';
     }).join('');
 
     const payments=sortChildLedger(state.payments.filter(function(p){return p.childId===c.id;}),'payments',function(p){return p.paidOn||p.date;}).slice(0,3);
@@ -2153,13 +2158,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   }
 
   function visitRowMini(x){
-    return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+' · '+x.group.direction+'</b><div class="muted mini">'+(x.lesson.topic||x.group.name)+'</div></div><div style="display:flex;gap:6px"><span class="badge green">Был</span>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div>';
+    return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+' · '+x.group.direction+'</b><div class="muted mini">'+(x.lesson.topic||groupTitle(x.group))+'</div></div><div style="display:flex;gap:6px"><span class="badge green">Был</span>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div>';
   }
 
   function childVisits(c){
     const rows=sortChildLedger(childVisitRows(c.id),'visits',function(x){return x.lesson.date;});
     return '<div class="card child-ledger-card"><div class="child-ledger-head"><div><h2>Посещения</h2><div class="muted mini child-ledger-count">'+rows.length+' посещений</div></div>'+(rows.length?childSortSelect('visits'):'')+'</div>'+
-      (rows.length?'<div class="list"><div class="row header" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto"><div>Дата</div><div>Направление</div><div>Группа</div><div>Статус</div><div>Тип</div></div>'+rows.map(function(x){return '<div class="row clickable" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div><div>'+x.group.direction+'</div><div>'+x.group.name+'</div><div><span class="badge green">Был</span></div><div>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'')+'</div></div>';}).join('')+'</div>':'<div class="empty">Посещений пока нет.</div>')+'</div>';
+      (rows.length?'<div class="list"><div class="row header" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto"><div>Дата</div><div>Направление</div><div>Группа</div><div>Статус</div><div>Тип</div></div>'+rows.map(function(x){return '<div class="row clickable" style="grid-template-columns:1.1fr 1fr 1.4fr auto auto" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+x.lesson.date+'</b><div class="muted mini">'+x.lesson.time+'</div></div><div>'+x.group.direction+'</div><div>'+groupTitle(x.group)+'</div><div><span class="badge green">Был</span></div><div>'+(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'')+'</div></div>';}).join('')+'</div>':'<div class="empty">Посещений пока нет.</div>')+'</div>';
   }
 
   function childRefunds(c){
@@ -2376,7 +2381,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+l.date+' · '+(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+' · '+salaryRowProjectLabelV122(l,g)+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+l.date+' · '+(g?groupTitle(g):l.groupName||'Группа')+'</b><div class="muted mini">'+l.time+(l.siteName?' · '+l.siteName:'')+' · '+salaryRowProjectLabelV122(l,g)+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
@@ -2847,7 +2852,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const rows=child.enrollmentHistory.slice().reverse().map(function(e){
         const g=byId(state.groups,e.groupId);
         const rub=e.moneyBalance!=null ? money(e.moneyBalance) : money(Number(e.balance||0)*Number(e.price||0));
-        return '<div class="kpi-line"><div><b>'+e.direction+' → '+e.changedTo+'</b><div class="muted mini">'+(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><span class="badge gray">История</span><div class="muted mini" style="margin-top:4px">перенесено '+rub+'</div></div></div>';
+        return '<div class="kpi-line"><div><b>'+e.direction+' → '+e.changedTo+'</b><div class="muted mini">'+(g?groupTitle(g):'Без группы')+'</div></div><div style="text-align:right"><span class="badge gray">История</span><div class="muted mini" style="margin-top:4px">перенесено '+rub+'</div></div></div>';
       }).join('');
       const marker='<div class="grid cols-2" style="margin-top:16px">';
       if(!html.includes('История переводов')){
@@ -3270,7 +3275,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const rows=c.enrollmentHistory.slice().reverse().map(function(e){
       const g=byId(state.groups,e.groupId);
       const rub=e.moneyBalance!=null?Number(e.moneyBalance):Number(e.balance||0)*Number(e.price||0);
-      return '<div class="kpi-line"><div><b>'+escapeHtml(e.direction)+' → '+escapeHtml(e.changedTo)+'</b><div class="muted mini">'+escapeHtml(g?g.name:'Без группы')+'</div></div><div style="text-align:right"><span class="badge gray">История</span><div class="muted mini" style="margin-top:4px">перенесено '+money(rub)+'</div></div></div>';
+      return '<div class="kpi-line"><div><b>'+escapeHtml(e.direction)+' → '+escapeHtml(e.changedTo)+'</b><div class="muted mini">'+escapeHtml(g?groupTitle(g):'Без группы')+'</div></div><div style="text-align:right"><span class="badge gray">История</span><div class="muted mini" style="margin-top:4px">перенесено '+money(rub)+'</div></div></div>';
     }).join('');
     return '<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>История переводов</h2><span class="muted mini">денежный остаток</span></div>'+rows+'</div>';
   }
@@ -3294,11 +3299,10 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   function childOverviewV118(c){
     const activeProjects=new Set((c.enrollments||[]).filter(function(e){return (e.status||'Активный')==='Активный';}).map(function(e){return String(e.projectId??e.project??'');}).filter(Boolean));
-    const dayShort={1:'Пн',2:'Вт',3:'Ср',4:'Чт',5:'Пт',6:'Сб',7:'Вс','Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
     const directions=(c.enrollments||[]).map(function(e){
       const g=byId(state.groups,e.groupId);
       const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':e.project==='Зебра'?'purple':'blue')+'" style="margin-left:7px">'+escapeHtml(e.project)+'</span>':'';
-      const schedule=e.groupId==null?'Без группы':escapeHtml(e.siteName||byId(state.sites,g?.siteId)?.name||'Площадка не указана')+' · '+escapeHtml(dayShort[e.weekday]||dayShort[g?.day]||g?.day||'—')+' '+escapeHtml(e.startTime||g?.startTime||String(g?.time||'').split('–')[0]||'—');
+      const schedule=e.groupId==null?'Без группы':escapeHtml(groupTitle(g||{name:e.groupName,direction:e.direction,weekday:e.weekday,startTime:e.startTime}));
       const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
       const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">Настройки направления</button></div>';
       return '<div style="border-top:1px solid var(--line);padding:14px 0">'+
@@ -3317,7 +3321,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }).join(''):'<div class="empty">Оплат пока нет</div>';
 
     const visitMini=visits.length?visits.map(function(x){
-      return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+escapeHtml(x.lesson.date)+' · '+escapeHtml(x.group.direction)+'</b><div class="muted mini">'+escapeHtml(x.lesson.topic||x.group.name)+'</div></div><span class="badge green">Был</span></div>';
+      return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+escapeHtml(x.lesson.date)+' · '+escapeHtml(x.group.direction)+'</b><div class="muted mini">'+escapeHtml(x.lesson.topic||groupTitle(x.group))+'</div></div><span class="badge green">Был</span></div>';
     }).join(''):'<div class="empty">Посещений пока нет</div>';
 
     const age=childAgeV118(c.birth);
@@ -3383,7 +3387,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const type=(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'');
       return '<div class="row" style="grid-template-columns:1fr 1fr 1.4fr auto auto auto">'+
         '<div class="clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><b>'+escapeHtml(x.lesson.date)+'</b><div class="muted mini">'+escapeHtml(x.lesson.time)+'</div></div>'+
-        '<div>'+escapeHtml(x.group.direction)+'</div><div>'+escapeHtml(x.group.name)+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
+        '<div>'+escapeHtml(x.group.direction)+'</div><div>'+escapeHtml(groupTitle(x.group))+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
         '<div><button class="btn danger" onclick="deleteVisitPrompt('+c.id+','+x.lesson.id+')">Удалить</button></div>'+
       '</div>';
     }).join('');
@@ -3793,7 +3797,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
-        '<h3 style="margin:14px 0 5px">'+escapeHtml(g.name)+'</h3>'+
+        '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]||'')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+(site?site.name:'Не выбрана')+'</b></div>'+
@@ -3977,7 +3981,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const group=lesson?byId(state.groups,lesson.groupId):null;
       return '<div class="kpi-line"><div><b>'+esc(c.name)+'</b><div class="muted mini">'+
         (teacher?'Создал: '+esc(teacher.name):'Создан преподавателем')+
-        (group?' · '+esc(group.direction)+' · '+esc(group.name):'')+
+        (group?' · '+esc(group.direction)+' · '+esc(groupTitle(group)):'')+
         '</div><div class="muted mini">'+esc(c.phone||'Телефон не указан')+'</div></div>'+
         '<button class="btn soft" onclick="openChild('+c.id+')">Проверить</button></div>';
     }).join('');
@@ -4511,7 +4515,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return '<tr>'+
         '<td>'+salaryPrintEscapeV122(l.date)+'</td>'+
         '<td>'+salaryPrintEscapeV122(l.time)+'</td>'+
-        '<td>'+salaryPrintEscapeV122(l?.groupName||g?.name||'Группа')+'</td>'+
+        '<td>'+salaryPrintEscapeV122(g?groupTitle(g):l?.groupName||'Группа')+'</td>'+
         '<td>'+salaryPrintEscapeV122(l?.siteName||g?.siteName||'—')+'</td>'+
         '<td>'+salaryPrintEscapeV122(salaryRowProjectLabelV122(l,g))+'</td>'+
         '<td>'+salaryPrintEscapeV122(c.type||'Обычное занятие')+'</td>'+
@@ -4604,7 +4608,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           ? '<span class="badge purple">Ознакомительное</span>'
           : '';
         return '<div class="row salary-row">'+
-          '<div><b>'+escapeHtml(l.date)+' · '+escapeHtml(l.groupName||g?.name||'Группа')+'</b><div class="muted mini">'+escapeHtml(l.time)+(l.siteName?' · '+escapeHtml(l.siteName):'')+' · '+escapeHtml(salaryRowProjectLabelV122(l,g))+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
+          '<div><b>'+escapeHtml(l.date)+' · '+escapeHtml(g?groupTitle(g):l.groupName||'Группа')+'</b><div class="muted mini">'+escapeHtml(l.time)+(l.siteName?' · '+escapeHtml(l.siteName):'')+' · '+escapeHtml(salaryRowProjectLabelV122(l,g))+'</div><div style="margin-top:5px">'+typeBadge+'</div></div>'+
           '<div><b>'+c.children+'</b></div>'+
           '<div>'+money(c.fixed)+'</div>'+
           '<div>'+money(c.childrenPay)+'</div>'+
@@ -4771,7 +4775,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
-        '<h3 style="margin:14px 0 5px">'+escapeHtml(g.name)+'</h3>'+
+        '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]||'')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+(site?site.name:'Не выбрана')+'</b></div>'+
@@ -5323,13 +5327,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const s=g?byId(state.sites,g.siteId):null;
     return s?s.name:'—';
   }
-  function shortGroup(g){
-    const d=g.direction==='Робототехника'?'Р':'П';
-    const days={'Понедельник':'Пн','Вторник':'Вт','Среда':'Ср','Четверг':'Чт','Пятница':'Пт','Суббота':'Сб','Воскресенье':'Вс'};
-    const day=days[g.day]||String(g.day||'');
-    const time=g.startTime||String(g.time||'').split('–')[0]||'';
-    return d+', '+day+', '+siteName(g)+', '+time;
-  }
+  function shortGroup(g){return groupTitle(g);}
+
   function groupStats(g,from,to){
     const lessons=(state.lessons||[]).filter(function(l){
       return completedLesson(l) && Number(l.groupId)===Number(g.id) && inRangeDate(ruDate(l.date),from,to);
@@ -5448,7 +5447,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const s=groupStats(g,from,to);
         const noData=s.expected===0;
         return '<div class="row" style="grid-template-columns:2.2fr .7fr 1fr 1fr 1fr">'+
-          '<div><b>'+esc(shortGroup(g))+'</b><div class="muted mini">'+esc(g.name)+' · '+esc(g.project)+'</div></div>'+
+          '<div><b>'+esc(shortGroup(g))+'</b><div class="muted mini">'+esc(groupTitle(g))+' · '+esc(g.project)+'</div></div>'+
           '<div><b>'+s.kids+'</b></div>'+
           '<div><b>'+s.fill+'%</b></div>'+
           '<div>'+(noData?'—':'<b>'+s.attendance+'%</b>')+'</div>'+
@@ -5639,7 +5638,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const g=byId(state.groups,e.groupId); if(!g) return;
         html+='<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')">';
         html+='<div style="display:flex;justify-content:space-between;gap:6px"><b>'+timeStart(e.time)+'</b><span class="mini">'+(e.project==='Зебра'?'Зебра':'iCube')+'</span></div>';
-        html+='<div>'+escapeHtml(g.name)+'</div><div style="margin-top:5px">'+statusBadgeHtml(e)+'</div></div>';
+        html+='<div>'+escapeHtml(groupTitle(g))+'</div><div style="margin-top:5px">'+statusBadgeHtml(e)+'</div></div>';
       });
       html+='</div>';
     });
@@ -5977,7 +5976,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const g=byId(state.groups,e.groupId);if(!g)return;
         html+='<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'teacher\')">';
         html+='<div style="display:flex;justify-content:space-between;gap:6px"><b>'+timeStart(e.time)+'</b><span class="mini">'+(e.project==='Зебра'?'Зебра':'iCube')+'</span></div>';
-        html+='<div>'+escapeHtml(g.name)+'</div>';
+        html+='<div>'+escapeHtml(groupTitle(g))+'</div>';
         if(e.cancelled) html+='<div style="margin-top:5px"><span class="badge red">Отменено</span></div>';
         else if(e.moved) html+='<div style="margin-top:5px"><span class="badge amber">Перенесено</span></div>';
         else if(e.done) html+='<div style="margin-top:5px"><span class="badge green">Проведено</span></div>';
@@ -6394,7 +6393,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     box.innerHTML='<div class="info-list">'+
       '<div class="info-line"><span>Направление</span><b>'+direction+'</b></div>'+
-      '<div class="info-line"><span>Группа</span><b>'+(group?group.name:'Без группы')+'</b></div>'+
+      '<div class="info-line"><span>Группа</span><b>'+(group?groupTitle(group):'Без группы')+'</b></div>'+
       '<div class="info-line"><span>Цена абонемента</span><b>'+(lessonPrice>0?money(lessonPrice*4):'—')+'</b></div>'+
       '<div class="info-line"><span>Цена занятия</span><b>'+(lessonPrice>0?money(lessonPrice):'—')+'</b></div>'+
       '</div>'+
@@ -6902,7 +6901,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           '</div>'+
           '<span class="badge '+(g.active!==false?'green':'gray')+'">'+(g.active!==false?'Активна':'Неактивна')+'</span>'+
         '</div>'+
-        '<h3 style="margin:14px 0 5px">'+escapeHtml(window.icubeAdvancedGroups?.cardTitle?.(g)||groupTitle(g))+'</h3>'+
+        '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+escapeHtml(g.startTime||String(g.time||'').split('–')[0]||'—')+'–'+escapeHtml(g.endTime||String(g.time||'').split('–')[1]||'—')+'</b></div>'+
           '<div class="info-line"><span>Площадка</span><b>'+escapeHtml(site?.shortName||site?.name||'—')+'</b></div>'+
@@ -7131,7 +7130,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     const rows=issues.map(function(item){
       return '<div class="kpi-line"><div><b>'+esc(item.child.name)+'</b>'+
-        '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(item.group.direction)+' · '+esc(item.group.name||'')+'</div>'+
+        '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(item.group.direction)+' · '+esc(groupTitle(item.group)||'')+'</div>'+
         '<div class="mini" style="margin-top:3px">Добавьте направление «'+esc(item.group.direction)+'» в карточку ребёнка.</div></div>'+
         '<button class="btn soft" onclick="openChild('+item.child.id+')">Открыть карточку</button></div>';
     }).join('');
@@ -7368,7 +7367,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       lessonId:lesson?.id||null,
       date:lesson?.date||'',
       direction:group?.direction||'',
-      groupName:group?.name||'',
+      groupName:group?groupTitle(group):'',
       createdAt:new Date().toISOString()
     });
   }
@@ -8068,7 +8067,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const g=byId(state.groups,e.groupId); if(!g) return '';
       const siteName=e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'';
       return '<div class="teacher-card" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'teacher\')">'+
-        '<div class="teacher-lesson-head"><div><div class="teacher-time">'+escapeHtml(timeStart(e.time))+'</div><h3 style="margin:4px 0">'+escapeHtml(g.direction)+'</h3><div class="muted">'+escapeHtml(g.project)+' · '+escapeHtml(g.name)+'<br>'+escapeHtml(siteName)+'</div></div><div>'+eventStatusHtml(e)+'</div></div>'+
+        '<div class="teacher-lesson-head"><div><div class="teacher-time">'+escapeHtml(timeStart(e.time))+'</div><h3 style="margin:4px 0">'+escapeHtml(g.direction)+'</h3><div class="muted">'+escapeHtml(g.project)+' · '+escapeHtml(groupTitle(g))+'<br>'+escapeHtml(siteName)+'</div></div><div>'+eventStatusHtml(e)+'</div></div>'+
         '<button class="btn primary" style="width:100%;margin-top:14px">Открыть занятие</button></div>';
     }).join('');
 
@@ -8124,7 +8123,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           up+=upcoming.map(function(e){
             const g=byId(state.groups,e.groupId),site=g?byId(state.sites,g.siteId):null;
             if(!g) return '';
-            return '<div class="kpi-line clickable" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')"><div><b>'+escapeHtml(timeStart(e.time))+' · '+escapeHtml(g.direction)+'</b><div class="muted mini">'+escapeHtml(g.name)+' · '+escapeHtml(site?.name||'')+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div>';
+            return '<div class="kpi-line clickable" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')"><div><b>'+escapeHtml(timeStart(e.time))+' · '+escapeHtml(g.direction)+'</b><div class="muted mini">'+escapeHtml(groupTitle(g))+' · '+escapeHtml(site?.name||'')+'</div></div><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div>';
           }).join('');
         }else up+='<div class="empty">Ближайших занятий нет.</div>';
         up+='</div></div></div>';
@@ -8140,7 +8139,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           block+='<div class="grid cols-2">'+todayEvents.map(function(e){
             const g=byId(state.groups,e.groupId),site=g?byId(state.sites,g.siteId):null,teacher=byId(state.teachers,e.teacherId);
             if(!g) return '';
-            return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+escapeHtml(e.time)+'</div><b style="font-size:16px">'+escapeHtml(g.name)+'</b><div class="muted">'+escapeHtml(site?.name||'')+' · '+escapeHtml(teacher?.name||'')+'</div><button class="btn soft" style="margin-top:12px" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')">Открыть занятие</button></div>';
+            return '<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">'+escapeHtml(e.time)+'</div><b style="font-size:16px">'+escapeHtml(groupTitle(g))+'</b><div class="muted">'+escapeHtml(site?.name||'')+' · '+escapeHtml(teacher?.name||'')+'</div><button class="btn soft" style="margin-top:12px" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\'director\')">Открыть занятие</button></div>';
           }).join('')+'</div>';
         }
         block+='</div>';
@@ -8711,7 +8710,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           ? 'Нужно назначить группу и проверить направление «'+esc(item.group.direction)+'».'
           : 'Нужно добавить направление «'+esc(item.group.direction)+'» в карточку ребёнка.';
         return '<div class="kpi-line"><div><b>'+esc(item.child.name)+'</b>'+
-          '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(item.group.direction)+' · '+esc(item.group.name||'')+'</div>'+
+          '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(item.group.direction)+' · '+esc(groupTitle(item.group)||'')+'</div>'+
           '<div class="mini" style="margin-top:3px">'+setupText+(teacher?' Добавил: '+esc(teacher.name)+'.':'')+'</div></div>'+
           '<button class="btn soft" onclick="openChild('+item.child.id+')">Открыть карточку</button></div>';
       }).join('');

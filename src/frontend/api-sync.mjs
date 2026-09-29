@@ -1,4 +1,4 @@
-import { groupScheduleLabel, installAdvancedGroupUi } from './advanced-groups.mjs';
+import { groupDisplayName, installAdvancedGroupUi } from './advanced-groups.mjs';
 import { installScreenHistory } from './screen-history.mjs';
 import { installQuickStatusUi } from './quick-status.mjs';
 import { openReleaseNote } from './release-notes.mjs';
@@ -11,6 +11,10 @@ import {
 } from './offline-teacher-snapshot.mjs';
 
 const legacy = window.icubeLegacy;
+function displayGroup(groupId, fallback) {
+  return groupDisplayName(legacy.state.groups.find((group) => String(group.id) === String(groupId)), fallback || 'Без группы');
+}
+
 const api = new ApiClient();
 const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', 'Воскресенье'];
 const dayShortNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -422,7 +426,7 @@ function rentPage() {
         output += `<div class="card pad rent-detail-group"><div class="section-title"><h2>${html(group.name)}</h2></div><div class="rent-detail-list">`;
         output += group.rows.map((detail) => {
           const time = detail.endsAt ? `${timestampTime(detail.startsAt)}–${timestampTime(detail.endsAt)}` : timestampTime(detail.startsAt);
-          return `<div class="rent-detail-row"><div><b>${isoToRu(timestampDate(detail.startsAt))} · ${time}</b><div class="muted mini">${html(detail.directionName)} · ${html(detail.groupName)}</div><div class="muted mini">${html(detail.siteName)}</div></div><div class="rent-detail-side">${detail.introGroup ? '<span class="badge amber">Ознакомительное</span>' : ''}<b>${displayMoney(detail.rentRate)}</b></div></div>`;
+          return `<div class="rent-detail-row"><div><b>${isoToRu(timestampDate(detail.startsAt))} · ${time}</b><div class="muted mini">${html(detail.directionName)} · ${html(displayGroup(detail.groupId, detail.groupName))}</div><div class="muted mini">${html(detail.siteName)}</div></div><div class="rent-detail-side">${detail.introGroup ? '<span class="badge amber">Ознакомительное</span>' : ''}<b>${displayMoney(detail.rentRate)}</b></div></div>`;
         }).join('');
         output += '</div></div>';
       }
@@ -695,7 +699,7 @@ async function projectTransferForm(enrollmentId) {
     if (!targets.length) return window.alert('Нет другого доступного проекта.');
     const group = legacy.state.groups.find((item) => item.id === enrollment.groupId);
     legacy.state.modal = `<h3>Перенести в другой проект</h3><div class="notice">Текущий проект: <b>${html(enrollment.project)}</b>.
-      ${group ? `Текущая группа «${html(group.name)}» будет снята. После переноса ребёнка нужно определить в новую группу.` : 'После переноса ребёнка нужно определить в новую группу.'}
+      ${group ? `Текущая группа «${html(groupDisplayName(group))}» будет снята. После переноса ребёнка нужно определить в новую группу.` : 'После переноса ребёнка нужно определить в новую группу.'}
       Исторические занятия и оплаты останутся в прежнем проекте.</div>
       <div class="field" style="margin-top:14px"><label>Новый проект</label><select class="select" id="pt-project">${targets.map((project) => `<option value="${html(project.id)}">${html(project.name)}</option>`).join('')}</select></div>
       <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="icubeApi.confirmProjectTransfer(${enrollment.id})">Продолжить</button></div>`;
@@ -789,7 +793,7 @@ function statisticsPage() {
     ['Активные дети сейчас', summary.activeChildren], ['Средняя заполненность', `${summary.averageOccupancyPercent}%`],
   ];
   const rows = (result?.groups ?? []).map((group) => `<div class="row" style="grid-template-columns:2fr 1.2fr 1.3fr .8fr .8fr 1fr .8fr .8fr 1fr .7fr .7fr;min-width:1120px">
-    <div><b>${html(group.name)}</b></div><div>${html(group.projectName)}</div><div>${html(group.directionName)}</div><div>${group.currentMembers}</div><div>${group.capacity}</div>
+    <div><b>${html(displayGroup(group.id, group.name))}</b></div><div>${html(group.projectName)}</div><div>${html(group.directionName)}</div><div>${group.currentMembers}</div><div>${group.capacity}</div>
     <div>${group.currentMembers} / ${group.capacity} · ${group.occupancyPercent}%</div><div>${group.completedLessons}</div><div>${group.visits}</div><div>${group.absences} · ${group.attendancePercent}%</div><div>${group.newChildren}</div><div>${group.leftChildren}</div></div>`).join('');
   return `${legacy.pageHead('Статистика', 'Посещаемость, движение детей и заполненность групп по данным системы.')}<div class="toolbar" style="align-items:end;flex-wrap:wrap">
     <div class="field"><label>Дата от</label><input class="input" id="stats-from" type="date" value="${html(legacy.state.statisticsDateFrom)}"></div>
@@ -851,7 +855,7 @@ function settlementContent({ partnerView = false } = {}) {
   const customGroups = result.customGroups ?? [];
   const customBreakdown = customGroups.length ? `<details class="advanced-group-settings"><summary>Расчёт индивидуальных групп · ${customGroups.length}</summary>${customGroups.map((group) => {
     const current = legacy.state.groups.find((item) => String(item.id) === String(group.groupId));
-    const title = current ? `${current.direction} · ${groupScheduleLabel(current)}` : group.groupName;
+    const title = groupDisplayName(current, group.groupName);
     return `<div class="card pad advanced-settlement"><b>${html(title)}</b><div class="info-list"><div class="info-line"><span>Посещений</span><b>${group.visits}</b></div>${[['gross','Заработанная стоимость'],['teacher','Преподавателю'],['partner','Партнёру'],['tax','Налог'],['icube','iCube']].map(([field,label]) => `<div class="info-line"><span>${label}</span><b>${displayMoney(group[field])}</b></div>`).join('')}</div></div>`;
   }).join('')}</details>` : '';
   return `<div class="card pad partner-settlement"><div class="section-title"><div><h2 style="font-size:22px">${html(result.projectName)}</h2><div class="muted">${isoToRu(result.periodFrom)} — ${isoToRu(result.periodTo)}</div></div><span class="badge purple">${html(result.partnerName)}</span></div>${rows}${customBreakdown}${finalBlock}</div>`;
@@ -1205,7 +1209,7 @@ async function openCalendarEvent(key, role) {
     }
     if (!lesson) throw new Error('Не удалось открыть занятие для выбранного события календаря');
     if (lesson.readOnly) {
-      legacy.state.modal = `<h3>${html(lesson.groupName)}</h3><div class="info-list">
+      legacy.state.modal = `<h3>${html(displayGroup(lesson.groupId, lesson.groupName))}</h3><div class="info-list">
         <div class="info-line"><span>Проект</span><b>${html(lesson.project)}</b></div>
         <div class="info-line"><span>Дата и время</span><b>${html(lesson.date)} · ${html(lesson.time)}</b></div>
         <div class="info-line"><span>Преподаватель</span><b>${html(lesson.teacherName)}</b></div>
@@ -1473,7 +1477,7 @@ function installPersistentCalendarBridge() {
       const group = legacy.state.groups.find((item) => item.id === Number(lesson.groupId));
       if (!group && !lesson.readOnly) continue;
       const persisted = {
-        key: lesson.occurrenceKey, groupId: lesson.groupId, groupName: group?.name ?? lesson.groupName,
+        key: lesson.occurrenceKey, groupId: lesson.groupId, groupName: groupDisplayName(group, lesson.groupName),
         project: group?.project ?? lesson.project, teacherId: lesson.teacherId,
         scheduledDate: lesson.scheduledDate, scheduledTime: lesson.scheduledTime, date: lesson.date, time: lesson.time,
         lesson, cancelled: lesson.cancelled, moved: lesson.moved, done: lesson.done,
