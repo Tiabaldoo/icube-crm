@@ -433,7 +433,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     }
     if (groupId && value.isIndividual) {
       const [members] = await connection.query(`SELECT COUNT(DISTINCT e.child_id) member_count FROM group_memberships gm JOIN child_enrollments e ON e.id=gm.enrollment_id
-        WHERE gm.group_id=:groupId AND gm.ended_on IS NULL AND e.superseded_at IS NULL`, { groupId });
+        WHERE gm.group_id=:groupId AND gm.ended_on IS NULL AND e.superseded_at IS NULL AND e.status IN ('active','paused')`, { groupId });
       if (Number(members[0]?.member_count ?? 0) > 1) throw new ApiProblem(409, 'INDIVIDUAL_GROUP_FULL', 'В группе уже больше одного ребёнка');
     }
     if (groupId) await connection.query(`UPDATE study_groups SET name=:name,is_mixed=:isMixed,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active,is_individual=:isIndividual,package_lesson_count=:packageLessonCount,calculation_mode=:calculationMode,teacher_share_percent=:teacherSharePercent,partner_share_percent=:partnerSharePercent,custom_tax_enabled=:customTaxEnabled WHERE id=:id`, { ...value, id: groupId });

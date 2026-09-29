@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { DatabaseSync } from 'node:sqlite';
 import { attendanceShares, packageUnitPrice, validateGroupSettings, assertGroupCapacity } from '../backend/src/group-settings.mjs';
 import { createMysqlCatalog } from '../backend/src/catalog.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
@@ -55,18 +56,42 @@ test('tax ON uses existing 4% and reduces only iCube; remainder absorbs rounded 
   assert.equal(moneyCents(small.teacher) + moneyCents(small.partner) + moneyCents(small.icube), 5n);
   assert.throws(() => attendanceShares('825.00', '1.00000000', { ...settings, customTaxEnabled: true }), { code: 'TAX_RATE_NOT_CONFIGURED' });
 });
-test('individual capacity locks group, rejects another open child, allows own and finished memberships', async () => {
-  let occupied = true; const calls = [];
-  const connection = { query: async (sql, params) => {
+function membershipSqlFixture(t) {
+  const db = new DatabaseSync(':memory:'); t.after(() => db.close());
+  db.exec(`CREATE TABLE study_groups (id INTEGER PRIMARY KEY,is_individual INTEGER);
+    CREATE TABLE child_enrollments (id INTEGER PRIMARY KEY,child_id INTEGER,status TEXT,superseded_at TEXT);
+    CREATE TABLE group_memberships (id INTEGER PRIMARY KEY,group_id INTEGER,enrollment_id INTEGER,started_on TEXT,ended_on TEXT);
+    INSERT INTO study_groups VALUES (10,1);
+    INSERT INTO child_enrollments VALUES (100,50,'active',NULL);
+    INSERT INTO group_memberships VALUES (1,10,100,'2026-09-01',NULL);`);
+  const calls = [];
+  const query = async (sql, params = {}) => {
     calls.push(sql);
-    if (sql.startsWith('SELECT id,is_individual')) return [[{ id: 10, is_individual: 1 }]];
-    assert.match(sql, /gm\.ended_on IS NULL/); assert.match(sql, /FOR UPDATE/);
-    return [occupied && params.childId !== '50' ? [{ child_id: 50 }] : []];
-  } };
-  await assert.rejects(assertGroupCapacity(connection, 10, { childId: '51' }), { code: 'INDIVIDUAL_GROUP_FULL' });
-  assert.match(calls[0], /FOR UPDATE/);
+    // Execute the actual JOIN/WHERE against stored rows; SQLite omits only MySQL's locking suffix.
+    const bindings = Object.fromEntries(Object.entries(params).filter(([key]) => sql.includes(`:${key}`)));
+    return [db.prepare(sql.replace(/\s+FOR UPDATE\b/g, '')).all(bindings)];
+  };
+  return { db, calls, query };
+}
+test('individual capacity: open finished enrollment frees space; active/paused and open membership occupy it', async (t) => {
+  const connection = membershipSqlFixture(t);
+  for (const status of ['active','paused']) {
+    connection.db.prepare('UPDATE child_enrollments SET status=? WHERE id=100').run(status);
+    await assert.rejects(assertGroupCapacity(connection, 10, { childId: '51' }), { code: 'INDIVIDUAL_GROUP_FULL' });
+  }
+  assert.ok(connection.calls.every((sql) => /FOR UPDATE/.test(sql)));
   await assertGroupCapacity(connection, 10, { childId: '50' });
-  occupied = false; await assertGroupCapacity(connection, 10, { childId: '51' });
+  await assertGroupCapacity(connection, 10, { enrollmentId: '100' });
+  connection.db.exec("UPDATE child_enrollments SET status='finished' WHERE id=100");
+  await assertGroupCapacity(connection, 10, { childId: '51' });
+  connection.db.exec(`INSERT INTO child_enrollments VALUES (101,51,'active',NULL);
+    INSERT INTO group_memberships VALUES (2,10,101,'2026-09-30',NULL);`);
+  assert.equal(connection.db.prepare('SELECT COUNT(*) n FROM group_memberships').get().n, 2);
+  assert.equal(connection.db.prepare('SELECT ended_on FROM group_memberships WHERE id=1').get().ended_on, null);
+  assert.equal(connection.db.prepare('SELECT status FROM child_enrollments WHERE id=100').get().status, 'finished');
+  await assert.rejects(assertGroupCapacity(connection, 10, { childId: '52' }), { code: 'INDIVIDUAL_GROUP_FULL' });
+  connection.db.exec("UPDATE group_memberships SET ended_on='2026-09-30' WHERE id=2");
+  await assertGroupCapacity(connection, 10, { childId: '52' });
 });
 
 function scheduleFixture() {
@@ -137,6 +162,70 @@ test('real payment inserts 6600 at 825, credits eight into the existing balance 
   const result = await createMysqlPayments(poolFor(query)).create({ enrollmentId: 100, paidOn: '2026-09-15', amount: '6600.00', method: 'cashless' }, { actorUserId: 1 });
   assert.equal(result.lessonsCredit, '8.00000000'); assert.equal(balance, '8.00000000'); assert.equal(lot.remainingLessons, '8.00000000');
   assert.equal(calls.find((c) => c.sql.startsWith('INSERT INTO payments')).params.calculationMode, 'attendance_share');
+});
+
+function paymentModeUpdateFixture({ snapshot = 'standard', sourceMode = 'standard', refunds = false, consumed = false } = {}) {
+  const state = {
+    payment: { id: 20, enrollment_id: 100, child_id: 50, direction_id: 1, group_id_snapshot: 10, project_id_snapshot: 3,
+      paid_on: '2026-09-15', amount: '6600.00', price_snapshot: '825.00', lessons_credit: '8.00000000', method: 'cashless', note: null,
+      calculation_mode_snapshot: snapshot },
+    enrollments: [{ id: 100, child_id: 50, direction_id: 1, group_id: 10, project_id: 3, current_price: '825.00', balance_lessons: '8.00000000', calculation_mode: sourceMode },
+      { id: 101, child_id: 50, direction_id: 2, group_id: 11, project_id: 3, current_price: '825.00', balance_lessons: '0.00000000', calculation_mode: 'attendance_share' }],
+    entry: { id: 21, enrollmentId: 100 }, lot: { id: 22, enrollmentId: 100, remainingLessons: '8.00000000' },
+  };
+  const query = async (sql, p = {}) => {
+    if (sql.startsWith('SELECT * FROM payments')) return [[{ ...state.payment }]];
+    if (sql.startsWith('SELECT id FROM refunds')) return [refunds ? [{ id: 30 }] : []];
+    if (sql.includes('FROM child_enrollments e')) return [[{ ...state.enrollments.find((e) => String(e.id) === String(p.id)) }]];
+    if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=')) {
+      const enrollment = state.enrollments.find((e) => String(e.id) === String(p.id));
+      enrollment.balance_lessons = lessonDecimal(lessonUnits(enrollment.balance_lessons) + (sql.includes('balance_lessons-') ? -1n : 1n) * lessonUnits(p.lessons));
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('UPDATE payments SET')) {
+      assert.match(sql, /calculation_mode_snapshot=:calculationMode/);
+      Object.assign(state.payment, { enrollment_id: p.enrollmentId, child_id: p.childId, direction_id: p.directionId, group_id_snapshot: p.groupId,
+        project_id_snapshot: p.projectId, paid_on: p.paidOn, amount: p.amount, price_snapshot: p.price, lessons_credit: p.lessons, method: p.method,
+        note: p.note, calculation_mode_snapshot: p.calculationMode });
+      return [{ affectedRows: 1 }];
+    }
+    if (sql.startsWith('SELECT id FROM balance_entries')) return [[{ id: 21 }]];
+    if (sql.startsWith('SELECT id FROM balance_lots')) return [[{ id: 22 }]];
+    if (sql.startsWith('SELECT id FROM balance_lot_consumptions')) return [consumed ? [{ id: 40 }] : []];
+    if (sql.startsWith('UPDATE balance_entries SET')) { Object.assign(state.entry, p); return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('UPDATE balance_lots SET')) { Object.assign(state.lot, p); return [{ affectedRows: 1 }]; }
+    if (sql.includes('FROM payments p JOIN children')) return [[{ ...state.payment, child_name: 'Ребёнок', direction_name: 'Программирование', remaining_lessons: state.lot.remainingLessons }]];
+    throw new Error(sql);
+  };
+  let before;
+  const connection = { query, async beginTransaction() { before = structuredClone(state); }, async commit() {}, async rollback() { Object.assign(state, before); }, release() {} };
+  return { state, payments: createMysqlPayments({ query, getConnection: async () => connection }) };
+}
+test('unused standard payment moved to attendance-share enrollment updates mode and existing ledger/lot once', async () => {
+  const f = paymentModeUpdateFixture();
+  await f.payments.update(20, { enrollmentId: 101 });
+  assert.equal(f.state.payment.calculation_mode_snapshot, 'attendance_share');
+  assert.equal(f.state.payment.enrollment_id, 101); assert.equal(f.state.payment.group_id_snapshot, 11);
+  assert.equal(f.state.entry.enrollmentId, 101); assert.equal(f.state.lot.enrollmentId, 101);
+  assert.equal(f.state.enrollments[0].balance_lessons, '0.00000000'); assert.equal(f.state.enrollments[1].balance_lessons, '8.00000000');
+  await f.payments.update(20, { enrollmentId: 101 });
+  assert.equal(f.state.payment.calculation_mode_snapshot, 'attendance_share');
+  assert.equal(f.state.enrollments[1].balance_lessons, '8.00000000');
+});
+test('same-enrollment edits preserve historical payment mode despite later group setting changes', async () => {
+  for (const [snapshot, sourceMode] of [['standard','attendance_share'], ['attendance_share','standard']]) {
+    const f = paymentModeUpdateFixture({ snapshot, sourceMode });
+    await f.payments.update(20, { enrollmentId: 100, amount: '3300.00', paidOn: '2026-09-16', method: 'cash' });
+    assert.equal(f.state.payment.calculation_mode_snapshot, snapshot); assert.equal(f.state.payment.price_snapshot, '825.00');
+    assert.equal(f.state.enrollments[0].balance_lessons, '4.00000000');
+  }
+});
+test('refund and consumption protections still roll back payment mode moves', async () => {
+  for (const options of [{ refunds: true }, { consumed: true }]) {
+    const f = paymentModeUpdateFixture(options); const before = structuredClone(f.state);
+    await assert.rejects(f.payments.update(20, { enrollmentId: 101 }), { code: 'PAYMENT_HAS_HISTORY' });
+    assert.deepEqual(f.state, before);
+  }
 });
 
 function completionFixture({ trial = false } = {}) {
@@ -239,7 +328,7 @@ test('024 is next migration, has compatible defaults and keeps old migrations un
   assert.equal(splitSqlStatements(sql).length, 6);
 });
 
-function catalogFixture() {
+function catalogFixture(membershipSql = null) {
   const group = { id: 10, name: 'Группа', direction_id: 1, direction_name: 'Робототехника', site_id: 2, project_id: 3, teacher_id: 4,
     weekday: 2, start_time: '16:00', end_time: '17:30', starts_on: '2026-01-01', ends_on: null, active: true, is_mixed: false,
     is_individual: false, package_lesson_count: 4, calculation_mode: 'standard', price: null };
@@ -247,7 +336,7 @@ function catalogFixture() {
   const query = async (sql, p = {}) => {
     if (sql.includes('FROM study_groups g JOIN directions')) return [[{ ...group, schedule_slots: structuredClone(slots) }]];
     if (sql.startsWith('SELECT id,is_individual')) return [[{ id: 10, is_individual: group.is_individual }]];
-    if (sql.startsWith('SELECT COUNT(DISTINCT e.child_id)')) return [[{ member_count: memberCount }]];
+    if (sql.startsWith('SELECT COUNT(DISTINCT e.child_id)')) return membershipSql ? membershipSql.query(sql, p) : [[{ member_count: memberCount }]];
     if (sql.startsWith('SELECT e.child_id FROM group_memberships')) return [memberCount ? [{ child_id: 50 }] : []];
     if (sql.startsWith('SELECT d.name FROM group_memberships')) return [[]];
     if (sql.startsWith('SELECT id FROM') || sql.includes('FROM sites s JOIN teacher_projects') || sql.startsWith('SELECT teacher_id')) return [[{ id: 1 }]];
@@ -280,6 +369,19 @@ test('catalog refuses turning an occupied group with two children into individua
   const f = catalogFixture(); f.members = 2;
   await assert.rejects(f.catalog.update('groups', 10, { isIndividual: true }), { code: 'INDIVIDUAL_GROUP_FULL' });
   assert.equal(f.writes.length, 0); assert.equal(f.pool.rollbacks, 1);
+});
+test('conversion to individual counts stored active/paused enrollments but ignores finished and ended membership', async (t) => {
+  const memberships = membershipSqlFixture(t);
+  memberships.db.exec(`INSERT INTO child_enrollments VALUES (101,51,'finished',NULL),(102,52,'active',NULL);
+    INSERT INTO group_memberships VALUES (2,10,101,'2026-09-01',NULL),(3,10,102,'2026-09-01','2026-09-29');`);
+  const f = catalogFixture(memberships);
+  const result = await f.catalog.update('groups', 10, { isIndividual: true });
+  assert.equal(result.isIndividual, true); assert.equal(f.pool.commits, 1);
+  assert.equal(memberships.db.prepare('SELECT COUNT(*) n FROM group_memberships').get().n, 3);
+  memberships.db.exec("UPDATE child_enrollments SET status='paused' WHERE id=101");
+  const before = f.writes.length;
+  await assert.rejects(f.catalog.update('groups', 10, { isIndividual: true }), { code: 'INDIVIDUAL_GROUP_FULL' });
+  assert.equal(f.writes.length, before); assert.equal(f.pool.rollbacks, 1);
 });
 test('existing enrollment API blocks another child in individual group without changing membership history', async () => {
   const f = catalogFixture(); f.group.is_individual = true; f.members = 1;

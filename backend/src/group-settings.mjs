@@ -67,7 +67,7 @@ export async function assertGroupCapacity(connection, groupId, { childId = null,
   if (!groups.length) throw new ApiProblem(404, 'NOT_FOUND', 'Группа не найдена');
   if (!groups[0].is_individual) return;
   const [members] = await connection.query(`SELECT e.child_id FROM group_memberships gm JOIN child_enrollments e ON e.id=gm.enrollment_id
-    WHERE gm.group_id=:groupId AND gm.ended_on IS NULL AND e.superseded_at IS NULL
+    WHERE gm.group_id=:groupId AND gm.ended_on IS NULL AND e.superseded_at IS NULL AND e.status IN ('active','paused')
       AND (:childId IS NULL OR e.child_id<>:childId) AND (:enrollmentId IS NULL OR e.id<>:enrollmentId) FOR UPDATE`, { groupId, childId, enrollmentId });
   if (members.length) throw new ApiProblem(409, 'INDIVIDUAL_GROUP_FULL', 'В индивидуальной группе может быть только один текущий ребёнок');
 }

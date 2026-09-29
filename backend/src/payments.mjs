@@ -225,9 +225,10 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
         });
         await connection.query(`UPDATE payments SET enrollment_id=:enrollmentId,child_id=:childId,direction_id=:directionId,
           group_id_snapshot=:groupId,project_id_snapshot=:projectId,paid_on=:paidOn,amount=:amount,
-          price_snapshot=:price,lessons_credit=:lessons,method=:method,note=:note WHERE id=:id`, {
+          price_snapshot=:price,lessons_credit=:lessons,method=:method,note=:note,calculation_mode_snapshot=:calculationMode WHERE id=:id`, {
           id: paymentId, enrollmentId: target.id, childId: target.child_id, directionId: target.direction_id,
           groupId: target.group_id, projectId: target.project_id, paidOn: date, amount, price, lessons, method,
+          calculationMode: String(old.enrollment_id) === targetId ? old.calculation_mode_snapshot ?? 'standard' : target.calculation_mode ?? 'standard',
           note: body.note === undefined ? old.note : body.note == null || body.note === '' ? null : String(body.note).trim(),
         });
         const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:paymentId AND entry_type='payment' FOR UPDATE`, { paymentId });
