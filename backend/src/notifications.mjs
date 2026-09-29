@@ -1,4 +1,5 @@
 import { ApiProblem } from './catalog.mjs';
+import { createReleaseNotes } from './release-notes.mjs';
 import { partnerProjectId } from './project-scope.mjs';
 
 const identifier = (value) => {
@@ -13,7 +14,7 @@ const isoDateTime = (value) => {
   return `${value.slice(0, 10)}T${value.slice(11, 19)}Z`;
 };
 
-export function createNotifications(pool) {
+export function createNotifications(pool, { releaseNotes = createReleaseNotes(pool) } = {}) {
   function scope(context = {}) {
     if (!hasRole(context, 'director') && !hasRole(context, 'partner') && !hasRole(context, 'teacher')) {
       throw new ApiProblem(403, 'FORBIDDEN', 'Уведомления недоступны');
@@ -26,6 +27,7 @@ export function createNotifications(pool) {
 
   async function list(context = {}) {
     const params = scope(context);
+    await releaseNotes.ensureNotification(context, params);
     const [rows] = await pool.query(`SELECT id,notification_type,title,body,entity_type,entity_id,destination,created_at,read_at
       FROM notifications WHERE (user_id=:userId OR (:allowRoleWide=TRUE AND user_id IS NULL AND role_code=:roleCode))
         AND (:projectId IS NULL OR recipient_project_id=:projectId)

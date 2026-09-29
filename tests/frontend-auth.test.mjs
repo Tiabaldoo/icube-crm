@@ -52,7 +52,7 @@ test('teacher получает ограниченную навигацию и fr
     assert.match(setup.app.innerHTML, /Сегодня/); assert.match(setup.app.innerHTML, /Календарь/); assert.match(setup.app.innerHTML, /Выйти/);
     assert.doesNotMatch(setup.app.innerHTML, /Вернуться на главную/);
     assert.doesNotMatch(setup.app.innerHTML, /role-switch|Платежи|Статистика|Настройки|Выберите преподавателя/);
-    assert.deepEqual(new Set(setup.calls.slice(1)), new Set(['/groups', '/children', '/lessons', '/lesson-deletions']));
+    assert.deepEqual(new Set(setup.calls.slice(1)), new Set(['/groups', '/children', '/lessons', '/lesson-deletions', '/notifications']));
   } finally { setup.restore(); }
 });
 

@@ -1476,6 +1476,11 @@ body.context-help-open{overflow:hidden}
 .group-card.crm-direction-mixed{border-top:4px solid var(--mixed-color)!important;background:linear-gradient(180deg,var(--mixed-tint),white 38%)!important}
 .event.crm-direction-mixed:not(.event-cancelled),[onclick*="openUnifiedCalendarEvent"].crm-direction-mixed:not(.event-cancelled){border-left:4px solid var(--mixed-color)!important;background:var(--mixed-tint)!important}
 
-.release-notice{position:fixed;inset:0;z-index:150;display:grid;place-items:center;padding:16px;background:#10182880}.release-notice>article{width:min(100%,620px);max-height:90vh;overflow:auto}.release-notice h4{margin-bottom:6px}.release-notice p{line-height:1.5}
 
 .badge.mixed{color:var(--mixed-color);background:var(--mixed-tint)}
+
+.mixed-group-prices[hidden]{display:none!important}
+.mixed-group-prices h4{margin:0 0 10px}
+.mixed-group-price-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.release-detail p{line-height:1.5;overflow-wrap:anywhere}
+@media(max-width:760px){.mixed-group-price-grid{grid-template-columns:minmax(0,1fr)}}

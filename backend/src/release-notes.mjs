@@ -1,4 +1,4 @@
-import { ApiProblem } from './catalog.mjs';
+import { createNotificationEvents } from './notification-events.mjs';
 
 const VERSION = '1.1';
 const extra = { title: 'Разовые отработки', body: 'Теперь на отдельное занятие можно добавить ребёнка другого направления. Например, ребёнок с Программирования может прийти на занятие группы Робототехники для отработки. Его посещение будет учтено по его собственному направлению.' };
@@ -10,19 +10,19 @@ export function releaseForRoles(roles = []) {
     ...(manager ? [{ title: 'Смешанные группы', body: 'Теперь при создании или редактировании группы можно выбрать тип «Смешанная». В такую группу можно записывать детей с Робототехники и Программирования одновременно. У каждого ребёнка сохраняются его собственные направление, цена и баланс.' }] : []), extra, photos,
   ] };
 }
-export function createReleaseNotes(pool) {
+export function createReleaseNotes(pool, { notificationEvents = createNotificationEvents(pool) } = {}) {
   return {
-    async current(context) {
+    async current(context) { return releaseForRoles(context.roles); },
+    async ensureNotification(context, { roleCode, projectId } = {}) {
       const note = releaseForRoles(context.roles);
-      if (!note) return null;
-      const [seen] = await pool.query('SELECT release_version FROM user_release_views WHERE user_id=:userId AND release_version=:version', { userId: context.userId, version: note.version });
-      return seen.length ? null : note;
-    },
-    async dismiss(version, context) {
-      const note = releaseForRoles(context.roles);
-      if (!note || version !== note.version) throw new ApiProblem(404, 'RELEASE_NOT_FOUND', 'Обновление не найдено');
-      await pool.query('INSERT IGNORE INTO user_release_views (user_id,release_version) VALUES (:userId,:version)', { userId: context.userId, version });
-      return { version, seen: true };
+      if (!note || !context.userId) return;
+      // Internal inbox only: never enqueue Web Push, regardless of user settings.
+      await notificationEvents.createUser(pool, {
+        userId: context.userId, roleCode, projectId,
+        type: 'crm_release', title: `Обновление ${note.version}`, body: 'В АйКуб появились новые возможности',
+        entityType: 'crm_release', destination: 'crm-release', dedupKey: `crm-release:${note.version}`,
+        pushEnabled: false,
+      });
     },
   };
 }

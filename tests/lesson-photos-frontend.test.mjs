@@ -266,6 +266,13 @@ test('photo source chooser retains camera capture and gallery picker never force
   document.createElement = () => { const input = { click() { this.clicked = true; } }; inputs.push(input); return input; };
   try {
     window.icubePhotos.capture(4);
+    const beforePhotos = JSON.stringify(state.lessons); const requestsBefore = fetchCalls.length;
+    assert.match(state.modal, /aria-label="Закрыть" onclick="closeModal\(\)">×/);
+    const closeAction = state.modal.match(/aria-label="Закрыть" onclick="([^"]+)"/)[1];
+    Function('closeModal', closeAction)(() => { state.modal = null; });
+    assert.equal(state.modal, null); assert.equal(JSON.stringify(state.lessons), beforePhotos);
+    assert.equal(fetchCalls.length, requestsBefore); assert.equal(inputs.length, 0);
+    window.icubePhotos.capture(4);
     assert.match(state.modal, /Сфотографировать/); assert.match(state.modal, /Выбрать из галереи/);
     assert.match(state.modal, /icubePhotos.camera\(4,null\)/); assert.match(state.modal, /icubePhotos.pick\(4,null\)/);
     window.icubePhotos.camera(4); assert.equal(inputs[0].capture, 'environment'); assert.equal(inputs[0].clicked, true);

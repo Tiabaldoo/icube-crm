@@ -903,12 +903,17 @@ test('mixed UI renders real children, two package prices, mixed calendar label a
   fields.set('#gf-dir', { value: 'Смешанная' }); context.groupForm(10);
   assert.match(state.modal, /gf-price-robot[^>]*value="4800"/); assert.match(state.modal, /gf-price-program[^>]*value="5000"/);
   assert.match(state.modal, /Учитель/);
+  assert.match(state.modal, /<section class="mixed-group-prices span-2" data-mixed-prices><h4>Цены смешанной группы<\/h4><div class="mixed-group-price-grid">/);
+  assert.match(state.modal, /<\/div><\/section><div class="field"><label>Активность/);
+  const priceBlock = { hidden: true }; fields.set('[data-mixed-prices]', priceBlock);
   const ordinaryField = { hidden: false }; const mixedFields = [{ hidden: true }, { hidden: true }];
   fields.set('#gf-price', { closest() { return ordinaryField; } }); document.querySelectorAll = (s) => s === '[data-mixed-price]' ? mixedFields : [];
-  context.refreshMixedGroupPriceFields(); assert.equal(ordinaryField.hidden, true); assert.ok(mixedFields.every((f) => !f.hidden));
-  fields.get('#gf-dir').value = 'Робототехника'; context.refreshMixedGroupPriceFields(); assert.equal(ordinaryField.hidden, false); assert.ok(mixedFields.every((f) => f.hidden));
+  context.refreshMixedGroupPriceFields(); assert.equal(priceBlock.hidden, false); assert.equal(ordinaryField.hidden, true); assert.ok(mixedFields.every((f) => !f.hidden));
+  fields.get('#gf-dir').value = 'Робототехника'; context.refreshMixedGroupPriceFields(); assert.equal(priceBlock.hidden, true); assert.equal(ordinaryField.hidden, false); assert.ok(mixedFields.every((f) => f.hidden));
   assert.equal(context.crmDirectionClassV134('Смешанная'), 'crm-direction-mixed');
   const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8'); assert.match(css, /--mixed-color:#0d9488/); assert.match(css, /\.event\.crm-direction-mixed/);
+  assert.match(css, /mixed-group-price-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(css, /@media\(max-width:760px\)\{\.mixed-group-price-grid\{grid-template-columns:minmax\(0,1fr\)/);
   state.modal = null; state.role = 'teacher'; state.teacherId = 4; state.selectedLesson = 60;
   state.lessons = [{ id: 60, groupId: 10, projectId: 3, teacherId: 4, direction: 'Смешанная', date: '14.09.2026', time: '10:00–11:00',
     attendance: {}, trialChildren: {}, extras: [], photos: {}, started: false, done: false, effectiveGroupChildIds: [50, 51], groupRosterFrozenV146: false }];

@@ -366,7 +366,7 @@ if (typeof originalOpenLesson === 'function') window.openLesson = function (less
 window.togglePhoto = (childId) => choosePhotoSource(childId);
 function choosePhotoSource(childId, replacePhotoId = null) {
   const replacement = replacePhotoId == null ? 'null' : `'${esc(replacePhotoId)}'`;
-  legacy.state.modal = `<h3>Добавить фото</h3><div class="modal-actions"><button class="btn primary" onclick="icubePhotos.camera(${Number(childId)},${replacement})">Сфотографировать</button><button class="btn" onclick="icubePhotos.pick(${Number(childId)},${replacement})">Выбрать из галереи</button></div>`;
+  legacy.state.modal = `<div class="section-title"><h3>Добавить фото</h3><button class="btn" type="button" aria-label="Закрыть" onclick="closeModal()">×</button></div><div class="modal-actions"><button class="btn primary" onclick="icubePhotos.camera(${Number(childId)},${replacement})">Сфотографировать</button><button class="btn" onclick="icubePhotos.pick(${Number(childId)},${replacement})">Выбрать из галереи</button></div>`;
   legacy.render();
 }
 window.icubePhotos = { capture: choosePhotoSource, camera: openFilePicker, pick: (childId, replacement) => openFilePicker(childId, replacement, 'gallery'), confirm, retake, open: openPhoto, gallery: openGallery, remove: removePhoto, confirmRemove, retry, retryAll, download,

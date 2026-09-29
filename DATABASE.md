@@ -116,3 +116,5 @@ MySQL автоматически фиксирует многие DDL-опера�
 - Для аренды занятия используется фактическая площадка `COALESCE(lessons.site_override_id, lessons.site_id_snapshot)` и версия ставки, действовавшая на `lessons.starts_at`. Текущая площадка группы и сегодняшняя ставка прошлое не переписывают.
 
 CRM 1.1 uses migration `023_mixed_groups_release_notes.sql`: default-false `study_groups.is_mixed` and `lessons.is_mixed_snapshot`, the `mixed_group` price-version scope (group + real direction), and `user_release_views` with unique user/version. Existing direction IDs, normal-group prices and financial history remain unchanged. The current-price uniqueness key from migration 018 already distinguishes group/direction scopes. Apply 023 on test before running the new backend; it has not been applied by this task.
+
+Release 1.1 follow-up uses existing `notifications.user_id`, `dedup_key` and `read_at` (unique user/dedup key from migration 016). `user_release_views` is retained unchanged but is no longer used; no new migration is needed.

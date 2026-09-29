@@ -1,4 +1,4 @@
-import { showReleaseNote } from './release-notes.mjs';
+import { openReleaseNote } from './release-notes.mjs';
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 import { createLessonActionQueue, createMemoryLessonActionStore } from '../data/lesson-action-queue.mjs';
 import { businessDate, calendarMonthPeriod } from '../shared/business-time.mjs';
@@ -478,8 +478,8 @@ async function reload({ render = true } = {}) {
 }
 
 async function reloadTeacher({ render = true } = {}) {
-  const [groups, children, lessons, lessonDeletions] = await Promise.all([
-    api.list('groups'), api.list('children'), api.list('lessons'), api.list('lesson-deletions'),
+  const [groups, children, lessons, lessonDeletions, notifications] = await Promise.all([
+    api.list('groups'), api.list('children'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications'),
   ]);
   const mappedGroups = groups.map(mapGroup);
   directories = {
@@ -496,7 +496,7 @@ async function reloadTeacher({ render = true } = {}) {
   legacy.state.statistics = null;
   legacy.state.lessons = lessons.map(mapLesson);
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => `${Number(item.groupId)}|${isoToRu(item.scheduledDate)}`);
-  legacy.state.notifications = [];
+  legacy.state.notifications = notifications;
   legacy.state.prototypeTeacherId = Number(authProfile.teacherId);
   legacy.state.offlineBootstrap = false;
   await saveTeacherOfflineSnapshot(authProfile, legacy.state).catch((error) => console.error('Не удалось обновить offline snapshot преподавателя', error));
@@ -1471,7 +1471,6 @@ function installPersistentNotificationUi() {
 }
 
 function showLogin(message = '') {
-  document.querySelector('[data-release-notice]')?.remove();
   authProfile = null;
   legacy.state.authUser = null;
   const app = element('#app');
@@ -1539,6 +1538,12 @@ async function openNotificationDestination(link, profile = authProfile, { clearU
 
   if (link.notificationId) await api.request(`/notifications/${encodeURIComponent(link.notificationId)}/read`, { method: 'POST', body: {} }).catch(() => {});
 
+  if (link.destination === 'crm-release' || link.entityType === 'crm_release') {
+    const opened = await openReleaseNote(api, legacy);
+    if (clearUrl) clearPushLinkParams();
+    return opened;
+  }
+
   const id = link.entityId == null ? null : Number(link.entityId);
   if ((link.destination === 'lesson' || link.entityType === 'lesson') && id) {
     let lesson = legacy.state.lessons.find((item) => Number(item.id) === id);
@@ -1574,7 +1579,6 @@ async function handlePushDeepLink(profile = authProfile) {
 }
 
 async function afterAuthenticatedLoad(profile) {
-  await showReleaseNote(api, profile).catch((error) => console.error('Не удалось загрузить обновление', error));
   if (window.icubePush?.rebind) await window.icubePush.rebind(profile).catch(console.error);
   await handlePushDeepLink(profile).catch((error) => console.error('Не удалось открыть push destination', error));
 }

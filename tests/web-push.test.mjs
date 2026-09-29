@@ -761,7 +761,9 @@ test('generic saved false keeps the notification visible and unread but skips pu
   assert.equal(fixture.state.notifications.some((row) => row.type === 'teacher_lesson_moved'), true);
   assert.equal(fixture.state.deliveries.length, 0);
   const inbox = await createNotifications(fixture.pool).list({ userId: '20', roles: ['teacher'] });
-  assert.equal(inbox.length, 1);
+  assert.equal(inbox.length, 2);
+  assert.equal(inbox.filter((row) => row.type === 'crm_release').length, 1);
+  assert.equal(fixture.state.deliveries.length, 0);
   assert.equal(inbox[0].readAt, null);
 });
 
@@ -780,7 +782,9 @@ test('director teacher and partner disabled types still create inbox rows withou
     assert.equal(fixture.state.notifications.length, 1);
     assert.equal(fixture.state.deliveries.length, 0);
     const inbox = await createNotifications(fixture.pool).list(context);
-    assert.equal(inbox.length, 1);
+    assert.equal(inbox.length, 2);
+    assert.equal(inbox.filter((row) => row.type === 'crm_release').length, 1);
+    assert.equal(fixture.state.deliveries.length, 0);
     assert.equal(inbox[0].readAt, null);
   }
 });

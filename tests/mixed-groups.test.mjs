@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createMysqlCatalog } from '../backend/src/catalog.mjs';
 import { createMysqlLessons } from '../backend/src/lessons.mjs';
-import { createReleaseNotes, releaseForRoles } from '../backend/src/release-notes.mjs';
+import { releaseForRoles } from '../backend/src/release-notes.mjs';
 
 function transactional(handler) {
   const connection = { query: handler, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
@@ -178,19 +178,6 @@ for (const role of ['director', 'partner', 'teacher', 'parent']) test(`release 1
 test('release mixed roles are merged without duplicate sections', () => {
   assert.equal(releaseForRoles(['director', 'teacher', 'partner', 'parent']).sections.length, 3);
 });
-test('release dismissal persists per user/version across service instances and devices', async () => {
-  const seen = new Set();
-  const pool = { query: async (sql, p) => {
-    const key = `${p.userId}/${p.version}`;
-    if (sql.startsWith('SELECT')) return [seen.has(key) ? [{ release_version: p.version }] : []];
-    assert.match(sql, /^INSERT IGNORE INTO user_release_views/); seen.add(key); return [{ affectedRows: 1 }];
-  } };
-  const user = { userId: 1, roles: ['teacher'] }; const service = createReleaseNotes(pool);
-  assert.equal((await service.current(user)).version, '1.1'); await service.dismiss('1.1', user); await service.dismiss('1.1', user);
-  assert.equal(await createReleaseNotes(pool).current(user), null);
-  assert.equal((await service.current({ ...user, userId: 2 })).version, '1.1'); assert.equal(seen.size, 1);
-  await assert.rejects(service.dismiss('1.1', { userId: 3, roles: ['parent'] }), { status: 404 });
-});
 test('migration leaves old groups ordinary, preserves prices, adds no mixed direction and protects current prices', async () => {
   const sql = await readFile(new URL('../database/migrations/023_mixed_groups_release_notes.sql', import.meta.url), 'utf8');
   assert.match(sql, /is_mixed BOOLEAN NOT NULL DEFAULT FALSE/); assert.match(sql, /is_mixed_snapshot BOOLEAN NOT NULL DEFAULT FALSE/);
@@ -199,20 +186,6 @@ test('migration leaves old groups ordinary, preserves prices, adds no mixed dire
   assert.doesNotMatch(sql, /INSERT INTO directions|DELETE FROM|UPDATE payments|UPDATE attendances/i);
   const current = await readFile(new URL('../database/migrations/018_project_teacher_and_current_invariants.sql', import.meta.url), 'utf8');
   assert.match(current, /scope_type.*direction_id.*group_id/);
-});
-
-test('release UI uses authenticated API, view/dismiss, server acknowledgement, and skips parent', async () => {
-  const { showReleaseNote } = await import('../src/frontend/release-notes.mjs');
-  const calls = []; let listener; let removed = false; let root;
-  const document = { querySelector() { return null; }, createElement() { root = { dataset: {}, addEventListener(_name, fn) { listener = fn; }, remove() { removed = true; } }; return root; }, body: { append() {} } };
-  const api = { request: async (url, options) => { calls.push({ url, options }); return url.endsWith('/current') ? releaseForRoles(['teacher']) : { seen: true }; } };
-  await showReleaseNote(api, { roles: ['parent'] }, document); assert.equal(calls.length, 0);
-  await showReleaseNote(api, { roles: ['teacher'] }, document); assert.match(root.innerHTML, /Обновление 1.1/); assert.match(root.innerHTML, /Посмотреть/);
-  await listener({ target: { closest: (s) => s === '[data-release-open]' ? {} : null } });
-  assert.match(root.innerHTML, /Что нового в версии 1.1/); assert.match(root.innerHTML, /Понятно/); assert.doesNotMatch(root.innerHTML, /Смешанные группы/);
-  const button = {};
-  await listener({ target: { closest: (s) => s === '[data-release-dismiss]' ? button : null } });
-  assert.equal(calls[1].url, '/releases/1.1/dismiss'); assert.equal(calls[1].options.method, 'POST'); assert.equal(removed, true);
 });
 
 test('mixed teacher needs active project but not both assigned directions', async () => {

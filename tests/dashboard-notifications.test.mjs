@@ -105,6 +105,7 @@ test('notification list exposes read state and mark-as-read persists read_at', a
   const calls = [];
   const db = pool(async (sql, params = {}) => {
     calls.push({ sql, params });
+    if (sql.startsWith('INSERT IGNORE INTO notifications')) return [{ affectedRows: 0 }];
     if (sql.includes('SELECT id,notification_type')) return [[{
       id: 9, notification_type: 'project_change', title: 'Изменение', body: 'Текст',
       entity_type: 'child', entity_id: 5, created_at: '2026-09-17 10:00:00', read_at: null,

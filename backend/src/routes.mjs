@@ -90,7 +90,6 @@ export function createApiRouter(pool, {
     roles: request.auth.roles, teacherId: request.auth.teacherId ?? null, projectIds: request.auth.projectIds ?? [] })));
 
   router.get('/releases/current', run((request) => releaseNotes.current(request.auth)));
-  router.post('/releases/:version/dismiss', run((request) => releaseNotes.dismiss(request.params.version, request.auth)));
 
   router.get('/push/config', run(() => push.publicConfig()));
   router.post('/push/subscriptions', run((request) => push.bind(request.auth.userId, request.body, request.get('user-agent'))));

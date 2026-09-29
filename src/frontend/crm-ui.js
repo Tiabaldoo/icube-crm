@@ -3738,12 +3738,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field span-2"><label>Время занятия</label><div style="display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:center"><input class="input" id="gf-start" type="time" step="1800" value="'+draft.startTime+'" onchange="refreshGroupEndTime()"><span class="muted" style="font-size:18px">→</span><input class="input" id="gf-end" type="time" value="'+draft.endTime+'"></div></div>';
     html+='<div class="field"><label>Проект / владелец</label>'+(state.role==='partner'||g?'<input type="hidden" id="gf-project" value="'+escapeAttr(draft.project)+'"><b>'+escapeHtml(draft.project)+'</b>':'<select class="select" id="gf-project" onchange="refreshGroupProjectChoices()"><option'+(draft.project==='iCubeRobots'?' selected':'')+'>iCubeRobots</option><option'+(draft.project==='Зебра'?' selected':'')+'>Зебра</option></select>')+'</div>';
     html+='<div class="field"><label>Специальная цена, ₽</label><input class="input" id="gf-price" type="number" step="0.01" value="'+(draft.price??'')+'" placeholder="Пусто = цена направления"></div>';
+    html+='<section class="mixed-group-prices span-2" data-mixed-prices><h4>Цены смешанной группы</h4><div class="mixed-group-price-grid">';
     ['Робототехника','Программирование'].forEach(function(direction){
       const directory=(state.directions||[]).find(function(d){return d.name===direction;});
       const prices=draft.mixedPrices||g?.mixedPrices||{};
       const price=prices[directory?.id];
       html+='<div class="field" data-mixed-price><label>Цена группы — '+direction+', ₽ за 4 занятия</label><input class="input" id="gf-price-'+(direction==='Программирование'?'program':'robot')+'" type="number" step="0.01" value="'+(price==null?'':Number(price)*4)+'" placeholder="Пусто = цена направления"></div>';
     });
+    html+='</div></section>';
     html+='<div class="field"><label>Активность</label><select class="select" id="gf-active"><option value="true"'+(draft.active?' selected':'')+'>Активна</option><option value="false"'+(!draft.active?' selected':'')+'>Неактивна</option></select></div>';
     html+='</div>';
 
@@ -3760,6 +3762,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const mixed=document.querySelector('#gf-dir')?.value==='Смешанная';
     const ordinary=document.querySelector('#gf-price')?.closest('.field');
     if(ordinary) ordinary.hidden=mixed;
+    const prices=document.querySelector('[data-mixed-prices]');
+    if(prices) prices.hidden=!mixed;
     document.querySelectorAll('[data-mixed-price]').forEach(function(field){field.hidden=!mixed;});
   };
 
