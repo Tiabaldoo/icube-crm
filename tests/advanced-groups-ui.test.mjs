@@ -56,6 +56,43 @@ test('three slots sort by weekday and then start time without mutating the store
   assert.match(mixed.groups(), /Зебра · Пн 15:30 · Ср 15:30 · Пт 15:30/);
 });
 
+test('group schedule card has a dedicated spacing class after the upper cards', () => {
+  const ui = groupUi({ scheduleSlots: [{ weekday: 3, startTime: '16:15', endTime: '17:00' }] });
+  assert.match(ui.group(), /<\/div><div class="card pad group-schedule-card"><b>Расписание группы<\/b>/);
+  assert.doesNotMatch(groupUi().group(), /group-schedule-card/);
+});
+function lessonUi(extra = {}) {
+  const ui = groupUi({ name: 'Программирование · Пн 15:30', ...extra });
+  Object.assign(ui.icubeLegacy.state, { selectedLesson: 20, lessons: [{ id: 20, groupId: 10, teacherId: 4, date: '30.09.2026',
+    time: '15:30–16:15', attendance: {}, extras: [], photos: {}, trialChildren: {}, started: false, done: false, cancelled: false }] });
+  return ui;
+}
+test('single-slot lesson group line retains its previous display title', () => {
+  const ui = lessonUi();
+  assert.match(ui.lesson(), /<span>Группа<\/span><b>Программирование · Пн 15:30<\/b>/);
+  assert.equal(ui.icubeLegacy.state.groups[0].name, 'Программирование · Пн 15:30');
+});
+test('multi-slot lesson group line uses every slot via the shared schedule helper', () => {
+  const ui = lessonUi({ scheduleSlots: [{ weekday: 3, startTime: '16:15', endTime: '17:00' }] });
+  assert.match(ui.lesson(), /<span>Группа<\/span><b>Программирование · Пн 15:30 · Ср 16:15<\/b>/);
+  assert.equal(ui.icubeLegacy.state.groups[0].name, 'Программирование · Пн 15:30');
+  assert.equal(ui.groupTitle(ui.icubeLegacy.state.groups[0]), 'Зебра · Пн 15:30', 'calendar title stays unchanged');
+});
+test('lesson group title sorts three slots by weekday and then time without changing stored data', () => {
+  const slots = [{ weekday: 5, startTime: '15:30', endTime: '16:15' }, { weekday: 3, startTime: '10:00', endTime: '10:45' }];
+  const ui = lessonUi({ day: 'Среда', startTime: '16:15', endTime: '17:00', scheduleSlots: slots });
+  assert.match(ui.lesson(), /<span>Группа<\/span><b>Программирование · Ср 10:00 · Ср 16:15 · Пт 15:30<\/b>/);
+  assert.deepEqual(ui.icubeLegacy.state.groups[0].scheduleSlots, slots);
+});
+test('schedule spacing is a global card rule with no breakpoint-specific or inline override', async () => {
+  const css = await readFile(new URL('../src/ui/styles.css', import.meta.url), 'utf8');
+  assert.match(css, /^\.group-schedule-card\{margin-top:16px\}/m);
+  assert.equal((css.match(/\.group-schedule-card\{/g) ?? []).length, 1);
+  const source = await readFile(new URL('../src/frontend/advanced-groups.mjs', import.meta.url), 'utf8');
+  assert.match(source, /<div class="card pad group-schedule-card"><b>Расписание группы/);
+  assert.doesNotMatch(source, /class="card pad group-schedule-card" style=/);
+});
+
 const customGroups = [
   { groupId: '10', groupName: 'Сохранённое имя', visits: 6, gross: '4950.00', teacher: '1650.00', partner: '1650.00', tax: '0.00', icube: '1650.00' },
   { groupId: '11', groupName: 'Вторая группа', visits: 1, gross: '825.00', teacher: '275.00', partner: '275.00', tax: '0.00', icube: '275.00' },

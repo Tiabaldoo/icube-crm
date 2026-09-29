@@ -60,6 +60,8 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
   host.icubeAdvancedGroups = { cardTitle(group) {
     const title = host.groupTitle(group);
     return group?.scheduleSlots?.length ? `${title.slice(0, title.lastIndexOf(' · '))} · ${groupScheduleLabel(group)}` : title;
+  }, lessonTitle(group) {
+    return group?.scheduleSlots?.length ? `${group.direction} · ${groupScheduleLabel(group)}` : group?.name || 'Без группы';
   }, payload, draft: payload, refresh, addSlot() { slots.push({ weekday: 5, startTime: value('#gf-start') || '16:00', endTime: value('#gf-end') || '17:30' }); drawSlots(); },
     setSlot(index, key, next) { slots[index][key] = key === 'weekday' ? Number(next) : next; }, removeSlot(index) { slots.splice(index, 1); drawSlots(); } };
   const original = host.groupForm;
@@ -80,7 +82,7 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
     let output = groupPage.apply(this, args);
     const group = legacy.state.groups.find((item) => Number(item.id) === Number(legacy.state.selectedGroup));
     if (group?.isIndividual) output = output.replace('</h1>', '</h1><span class="badge purple">Индивидуальная</span>');
-    if (group?.scheduleSlots?.length) output += `<div class="card pad"><b>Расписание группы</b><div class="info-list">${[{ weekday: days.indexOf(group.day) + 1, startTime: group.startTime, endTime: group.endTime }, ...group.scheduleSlots].map((slot) => `<div class="info-line"><span>${days[slot.weekday - 1]}</span><b>${html(slot.startTime)}–${html(slot.endTime)}</b></div>`).join('')}</div></div>`;
+    if (group?.scheduleSlots?.length) output += `<div class="card pad group-schedule-card"><b>Расписание группы</b><div class="info-list">${[{ weekday: days.indexOf(group.day) + 1, startTime: group.startTime, endTime: group.endTime }, ...group.scheduleSlots].map((slot) => `<div class="info-line"><span>${days[slot.weekday - 1]}</span><b>${html(slot.startTime)}–${html(slot.endTime)}</b></div>`).join('')}</div></div>`;
     return output;
   };
 }

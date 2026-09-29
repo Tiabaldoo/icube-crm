@@ -1506,4 +1506,5 @@ body.context-help-open{overflow:hidden}
 .advanced-schedule-slot{display:grid;grid-template-columns:minmax(130px,1fr) 100px 100px 40px;gap:8px;margin-bottom:10px}
 .advanced-schedule-slot .input{min-width:0}
 .advanced-settlement{margin-top:14px}
+.group-schedule-card{margin-top:16px}
 @media(max-width:760px){.advanced-schedule-slot{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 40px}.advanced-schedule-slot .select{grid-column:1/-1}}
