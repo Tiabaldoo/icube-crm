@@ -127,9 +127,9 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     const notifications = unreadNotifications();
     if (!notifications.length) return '';
     const rows = notifications.map((notification) => {
-      const canOpenChild = notification.entityType === 'child'
-        && (state.children ?? []).some((child) => child.id === Number(notification.entityId));
-      return `<div class="dashboard-notification-row"><div class="dashboard-notification-copy"><b>${safe(notification.title)}</b><div class="muted mini">${safe(notification.body)}</div></div><div class="dashboard-notification-actions">${canOpenChild ? `<button class="btn soft" onclick="openChild(${Number(notification.entityId)})">Открыть</button>` : ''}<button class="btn" onclick="markDashboardNotificationRead(${Number(notification.id)})">Прочитано</button></div></div>`;
+      const hasDestination = Boolean(notification.destination && notification.destination !== 'home')
+        || Boolean(notification.entityType && (notification.entityId != null || notification.entityType === 'crm_release'));
+      return `<div class="dashboard-notification-row"><div class="dashboard-notification-copy"><b>${safe(notification.title)}</b><div class="muted mini">${safe(notification.body)}</div></div><div class="dashboard-notification-actions">${hasDestination ? `<button class="btn soft" onclick="icubePush.openNotification(${Number(notification.id)})">Открыть</button>` : ''}<button class="btn" onclick="markDashboardNotificationRead(${Number(notification.id)})">Прочитано</button></div></div>`;
     }).join('');
     return `<div class="card pad dashboard-notifications"><div class="section-title"><div><h2>Важные уведомления</h2><div class="muted mini">Непрочитанные изменения</div></div><span class="badge amber">${notifications.length}</span></div>${rows}</div>`;
   }

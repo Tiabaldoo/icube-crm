@@ -7,6 +7,7 @@ import {
   countActiveChildrenTotal,
   countActiveGroups,
   monthlyPaymentAmount,
+  installDashboardUi,
 } from '../src/frontend/dashboard-ui.mjs';
 import { createNotifications } from '../backend/src/notifications.mjs';
 import { createDailyDashboard } from '../backend/src/daily-dashboard.mjs';
@@ -99,6 +100,52 @@ test('partner dashboard metrics stay inside its own project', () => {
   assert.equal(metrics.activeGroups, 1);
   assert.equal(metrics.monthlyPayments, 4500);
   assert.deepEqual(metrics.projects.map((item) => item.name), ['Зебра']);
+});
+
+test('dashboard unread notification actions reuse the existing inbox open handler', async () => {
+  const notifications = [
+    { id: '1', type: 'crm_release', title: 'Release', body: 'Что нового', destination: 'crm-release', entityType: 'crm_release', entityId: null, readAt: null },
+    { id: '2', type: 'lesson_move', title: 'Lesson', body: 'Занятие', destination: 'lesson', entityType: 'lesson', entityId: '20', readAt: null },
+    { id: '3', type: 'project_change', title: 'Child', body: 'Ребёнок', destination: 'child', entityType: 'child', entityId: '30', readAt: null },
+    { id: '4', type: 'group_change', title: 'Group', body: 'Группа', destination: 'group', entityType: 'group', entityId: '40', readAt: null },
+    { id: '5', type: 'info', title: 'No destination', body: 'Только текст', destination: 'home', entityType: null, entityId: null, readAt: null },
+  ];
+  const state = {
+    role: 'director', notifications, projects: [], children: [], groups: [], payments: [], lessons: [], teachers: [], sites: [],
+  };
+  let rendered = 0;
+  const opened = [];
+  const windowObject = {
+    icubeLegacy: {
+      state,
+      pageHead: (title, subtitle, action = '') => `<div><h1>${title}</h1><span>${subtitle}</span>${action}</div>`,
+      render() { rendered += 1; },
+    },
+    icubePush: {
+      async openNotification(id) {
+        opened.push(String(id));
+        const item = state.notifications.find((notification) => String(notification.id) === String(id));
+        if (item) item.readAt = '2026-09-29T10:00:00.000Z';
+        windowObject.icubeLegacy.render();
+      },
+    },
+    alert(message) { throw new Error(message); },
+  };
+  installDashboardUi({ windowObject, api: { request: async () => ({}) } });
+
+  let html = windowObject.serverDashboard();
+  assert.equal((html.match(/>Открыть<\/button>/g) ?? []).length, 4);
+  assert.equal((html.match(/>Прочитано<\/button>/g) ?? []).length, 5);
+  for (const id of [1, 2, 3, 4]) assert.match(html, new RegExp(`onclick="icubePush\\.openNotification\\(${id}\\)"`));
+  assert.doesNotMatch(html, /icubePush\.openNotification\(5\)/, 'notification без destination не получает «Открыть»');
+
+  for (const id of [1, 2, 3, 4]) await windowObject.icubePush.openNotification(id);
+  assert.deepEqual(opened, ['1', '2', '3', '4'], 'release/lesson/child/group используют один existing inbox handler');
+  assert.equal(rendered, 4);
+  html = windowObject.serverDashboard();
+  assert.doesNotMatch(html, />Release<|>Lesson<|>Child<|>Group</, 'прочитанные уведомления исчезают из unread-блока');
+  assert.match(html, />No destination</, 'непрочитанное уведомление без destination остаётся');
+  assert.equal(state.notifications.length, 5, 'read не удаляет notification из history state');
 });
 
 test('notification list exposes read state and mark-as-read persists read_at', async () => {
