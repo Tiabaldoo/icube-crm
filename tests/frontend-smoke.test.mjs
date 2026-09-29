@@ -908,8 +908,22 @@ test('mixed UI renders real children, two package prices, mixed calendar label a
   assert.match(detail, /badge green group-balance-badge[^>]*>4<\/span>/);
   assert.match(detail, /badge amber group-balance-badge[^>]*>1.23333333<\/span>/);
   assert.doesNotMatch(detail, />99<\/span>/);
-  assert.match(detail, /icubeQuickGroupStatus\(10\)/);
+  assert.match(detail, /icubeQuickGroupStatus\(10,this\)/);
   assert.match(detail, /icubeGoBack\(\).*← Назад/);
+  state.groups.push({ id: 11, direction: 'Робототехника', active: true, projectId: 3 },
+    { id: 12, direction: 'Программирование', active: true, projectId: 3 },
+    { id: 13, direction: 'Смешанная', isMixed: true, active: true, projectId: 4 },
+    { id: 14, direction: 'Смешанная', isMixed: true, active: false, projectId: 3 });
+  const childGroupBox = { value: '' }; fields.set('#cf-group', childGroupBox);
+  fields.set('#cf-project', { value: '3' }); fields.set('#cf-direction', { value: 'Робототехника' });
+  context.childForm(null); assert.match(state.modal, /Новый ребёнок/);
+  context.refreshChildGroupOptions();
+  assert.match(childGroupBox.innerHTML, /value="10"/); assert.match(childGroupBox.innerHTML, /value="11"/);
+  assert.doesNotMatch(childGroupBox.innerHTML, /value="12"|value="13"|value="14"/);
+  fields.get('#cf-direction').value = 'Программирование'; context.refreshChildGroupOptions();
+  assert.match(childGroupBox.innerHTML, /value="10"/); assert.match(childGroupBox.innerHTML, /value="12"/);
+  assert.doesNotMatch(childGroupBox.innerHTML, /value="11"|value="13"|value="14"/);
+  assert.equal(fields.get('#cf-direction').value, 'Программирование');
   fields.set('#gf-dir', { value: 'Смешанная' }); context.groupForm(10);
   assert.match(state.modal, /gf-price-robot[^>]*value="4800"/); assert.match(state.modal, /gf-price-program[^>]*value="5000"/);
   assert.match(state.modal, /Учитель/);

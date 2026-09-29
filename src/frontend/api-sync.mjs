@@ -570,12 +570,17 @@ async function deleteTeacher(teacherId) {
   } catch (error) { fail(error); }
 }
 
-async function saveGroup(resourceId) {
+async function saveGroup(resourceId, { active } = {}) {
   if (groupSavePending) return;
   const submit = element('#gf-submit');
   groupSavePending = true;
   if (submit) submit.disabled = true;
   try {
+    if (active === true && resourceId) {
+      const saved = await api.update('groups', resourceId, { active: true, endsOn: null });
+      legacy.state.selectedGroup = saved.id; legacy.state.modal = null; legacy.state.page = 'group'; await reload();
+      return saved;
+    }
     const isMixed = value('#gf-dir') === 'Смешанная';
     const currentGroup = legacy.state.groups.find((group) => Number(group.id) === Number(resourceId));
     const direction = isMixed ? directories.directions.find((item) => Number(item.id) === currentGroup?.directionId) ?? directories.directions[0] : byName(directories.directions, value('#gf-dir'));
@@ -599,21 +604,23 @@ async function saveGroup(resourceId) {
   }
 }
 
-async function saveChild(resourceId) {
+async function saveChild(resourceId, { status } = {}) {
   if (childSavePending) return;
   childSavePending = true;
   try {
-    const child = { name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null, school: value('#cf-school'), grade: value('#cf-grade'),
+    const statusOnly = resourceId && status !== undefined;
+    const statusEnrollment = statusOnly ? legacy.state.children.find((item) => item.id === Number(resourceId))?.enrollments.find((item) => item.editable !== false) : null;
+    const child = statusOnly ? { status: childStatusToApi[status] } : { name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null, school: value('#cf-school'), grade: value('#cf-grade'),
       status: childStatusToApi[value('#cf-status')] ?? 'lead', note: value('#cf-note'), guardian: { name: value('#cf-parent'), phone: value('#cf-phone') } };
-    const selectedGroupId = value('#cf-group') ? Number(value('#cf-group')) : null;
+    const selectedGroupId = statusOnly ? statusEnrollment?.groupId ?? null : value('#cf-group') ? Number(value('#cf-group')) : null;
     let saved; let enrollment;
     if (resourceId) {
       const existing = legacy.state.children.find((item) => item.id === Number(resourceId));
-      enrollment = existing?.enrollments.find((item) => item.editable !== false && item.groupId === selectedGroupId)
+      enrollment = statusOnly ? statusEnrollment : existing?.enrollments.find((item) => item.editable !== false && item.groupId === selectedGroupId)
         ?? existing?.enrollments.find((item) => item.editable !== false && item.direction === value('#cf-direction'));
       if (!enrollment) throw new ApiError('Не найдено редактируемое направление текущего проекта');
       saved = await api.request(`/children/${resourceId}/with-enrollment`, { method: 'PATCH', body: {
-        child, enrollmentId: enrollment.id, enrollment: { groupId: selectedGroupId },
+        child, enrollmentId: enrollment.id, enrollment: statusOnly ? {} : { groupId: selectedGroupId },
       } });
     } else {
       const direction = byName(directories.directions, value('#cf-direction'));
@@ -625,6 +632,7 @@ async function saveChild(resourceId) {
       childCreateKey = null;
     }
     legacy.state.selectedChild = saved.id; legacy.state.modal = null; legacy.state.page = 'child'; await reload();
+    return saved;
   } catch (error) { fail(error); }
   finally { childSavePending = false; }
 }
