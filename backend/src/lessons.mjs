@@ -85,14 +85,15 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
 
   async function loadRows(where, params, context, connection = pool) {
     const teacherId = await teacherForContext(connection, context);
+    const partnerProject = partnerProjectId(context);
     const scope = teacherId ? ` AND (l.planned_teacher_id=:actorTeacherId OR l.actual_teacher_id=:actorTeacherId)
       AND EXISTS (SELECT 1 FROM teacher_projects tp
         LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
         WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
           AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id=l.direction_id_snapshot))` : '';
-    const [lessonRows] = await connection.query(`${baseSelect} WHERE (${where}) AND l.deleted_at IS NULL${scope} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId });
+    const partnerVisibility = partnerProject ? ' AND (l.project_id_snapshot=:partnerProjectId OR g.partner_calendar_visible=TRUE)' : '';
+    const [lessonRows] = await connection.query(`${baseSelect} WHERE (${where}) AND l.deleted_at IS NULL${scope}${partnerVisibility} ORDER BY l.starts_at,l.id`, { ...params, actorTeacherId: teacherId, partnerProjectId: partnerProject });
     if (!lessonRows.length) return [];
-    const partnerProject = partnerProjectId(context);
     const ids = lessonRows.filter((row) => !partnerProject || String(row.project_id_snapshot) === partnerProject)
       .map((row) => String(row.id)).join(',');
     const [[rosterRows], [attendanceRows], [salaryRows]] = await Promise.all([
@@ -246,8 +247,9 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=l.project_id_snapshot AND tp.active=TRUE
           AND (l.is_mixed_snapshot=TRUE OR tpd.direction_id=l.direction_id_snapshot))` : '';
     const projectId = partnerProjectId(context);
-    const projectScope = projectId ? ' AND project_id_snapshot=:projectId' : '';
+    const projectScope = projectId ? ' AND (l.project_id_snapshot=:projectId OR g.partner_calendar_visible=TRUE)' : '';
     const [rows] = await pool.query(`SELECT l.group_id,l.scheduled_starts_at FROM lessons l
+      JOIN study_groups g ON g.id=l.group_id
       WHERE l.deleted_at IS NOT NULL${scope}${projectScope} ORDER BY l.scheduled_starts_at,l.id`, { actorTeacherId, projectId });
     return rows.map((row) => ({ groupId: String(row.group_id), scheduledDate: isoDate(row.scheduled_starts_at), startTime: timeOnly(row.scheduled_starts_at) }));
   }

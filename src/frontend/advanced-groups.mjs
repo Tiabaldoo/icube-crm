@@ -25,7 +25,7 @@ export function groupRegularScheduleLabel(group) {
   return slots.map((slot) => `${days[Number(slot.weekday) - 1] || group.day || '—'}${slots.length === 1 ? ',' : ''} ${slot.startTime}–${slot.endTime}`).join(' · ');
 }
 
-export function advancedGroupFields(group = {}) {
+export function advancedGroupFields(group = {}, director = false) {
   const count = group.packageLessonCount ?? 4;
   const expanded = group.isIndividual || count !== 4 || group.calculationMode === 'attendance_share' || group.scheduleSlots?.length;
   return `<details class="advanced-group-settings span-2"${expanded ? ' open' : ''}><summary>Расширенные настройки</summary><div class="form-grid">
@@ -37,6 +37,7 @@ export function advancedGroupFields(group = {}) {
     <div class="field" data-group-share><label>Доля преподавателя, %</label><input class="input" id="gf-teacher-share" type="number" min="0" max="100" step="0.0001" value="${html(group.teacherSharePercent ?? '0')}" oninput="icubeAdvancedGroups.refresh()"></div>
     <div class="field" data-group-share><label>Доля партнёра, %</label><input class="input" id="gf-partner-share" type="number" min="0" max="100" step="0.0001" value="${html(group.partnerSharePercent ?? '0')}" oninput="icubeAdvancedGroups.refresh()"></div>
     <div class="field span-2" data-group-share><label><input id="gf-custom-tax" type="checkbox"${group.customTaxEnabled ? ' checked' : ''}> Учитывать налог</label><div class="muted mini" id="gf-icube-share"></div></div>
+    ${director ? `<div class="field span-2"><label><input id="gf-partner-calendar-visible" type="checkbox"${group.partnerCalendarVisible !== false ? ' checked' : ''}> Показывать партнёрам в календаре</label><div class="muted mini">Если выключено, партнёры других проектов не увидят занятия этой группы в своём календаре.</div></div>` : ''}
   </div></details>`;
 }
 
@@ -71,6 +72,7 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
     return { isIndividual: Boolean(field('#gf-individual')?.checked), packageLessonCount: Number(value('#gf-package-count')),
       calculationMode: value('#gf-calculation-mode') || 'standard', teacherSharePercent: value('#gf-teacher-share') || '0',
       partnerSharePercent: value('#gf-partner-share') || '0', customTaxEnabled: Boolean(field('#gf-custom-tax')?.checked),
+      ...(field('#gf-partner-calendar-visible') ? { partnerCalendarVisible: Boolean(field('#gf-partner-calendar-visible').checked) } : {}),
       scheduleSlots: slots.map((slot) => ({ ...slot })),
       ...(packageEdited && value('#gf-dir') !== 'Смешанная' ? { packagePrice: value('#gf-package-price') || null } : {}) };
   }
@@ -84,8 +86,9 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
     if (!legacy.state.modal) return result;
     const group = { ...legacy.state.groups.find((item) => String(item.id) === String(id)), ...suppliedDraft };
     slots = (group.scheduleSlots ?? []).map((slot) => ({ ...slot })); packageEdited = false;
-    legacy.state.modal = legacy.state.modal.replace('<div class="modal-actions">', `${advancedGroupFields(group)}<div class="modal-actions">`);
-    field('.modal-actions')?.insertAdjacentHTML('beforebegin', advancedGroupFields(group));
+    const fieldsHtml = advancedGroupFields(group, legacy.state.role === 'director');
+    legacy.state.modal = legacy.state.modal.replace('<div class="modal-actions">', `${fieldsHtml}<div class="modal-actions">`);
+    field('.modal-actions')?.insertAdjacentHTML('beforebegin', fieldsHtml);
     drawSlots(); refresh();
     field('#gf-price')?.addEventListener?.('input', () => { const price = field('#gf-package-price'); if (price) price.value = value('#gf-price') ? (Number(value('#gf-price')) * Number(value('#gf-package-count'))).toFixed(2) : ''; });
     field('#gf-dir')?.addEventListener?.('change', () => refresh());

@@ -126,7 +126,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     const projectId = partnerProject(context);
     const groupRows = await rows(`SELECT g.id, g.name, g.is_mixed, g.direction_id, d.name direction_name, g.site_id, s.name site_name,
       g.project_id, p.name project_name, g.default_teacher_id teacher_id, t.full_name teacher_name,
-      g.weekday, g.start_time, g.end_time, g.starts_on, g.ends_on, g.active,
+      g.weekday, g.start_time, g.end_time, g.starts_on, g.ends_on, g.active, g.partner_calendar_visible,
       g.is_individual,g.package_lesson_count,g.calculation_mode,g.teacher_share_percent,g.partner_share_percent,g.custom_tax_enabled,
       (SELECT JSON_ARRAYAGG(JSON_OBJECT('weekday',gs.weekday,'startTime',LEFT(gs.start_time,5),'endTime',LEFT(gs.end_time,5))) FROM group_schedule_slots gs WHERE gs.group_id=g.id) schedule_slots,
       (SELECT JSON_OBJECTAGG(pv.direction_id,pv.price) FROM price_versions pv WHERE pv.scope_type='mixed_group' AND pv.group_id=g.id AND pv.valid_to IS NULL) mixed_prices,
@@ -142,6 +142,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
           AND (sl.planned_teacher_id=:actorTeacherId OR sl.actual_teacher_id=:actorTeacherId))))) ORDER BY g.name`, { actorTeacherId, projectId });
     return groupRows.map((row) => ({ id: rowId(row), name: row.name, directionId: String(row.direction_id), isMixed: Boolean(row.is_mixed), directionName: row.is_mixed ? 'Смешанная' : row.direction_name,
       isIndividual: Boolean(row.is_individual), packageLessonCount: Number(row.package_lesson_count ?? 4),
+      ...((context.roles ?? []).includes('director') ? { partnerCalendarVisible: Boolean(row.partner_calendar_visible) } : {}),
       scheduleSlots: typeof row.schedule_slots === 'string' ? JSON.parse(row.schedule_slots) : row.schedule_slots ?? [],
       ...(actorTeacherId == null ? { calculationMode: row.calculation_mode ?? 'standard', teacherSharePercent: String(row.teacher_share_percent ?? '0'), partnerSharePercent: String(row.partner_share_percent ?? '0'), customTaxEnabled: Boolean(row.custom_tax_enabled) } : {}),
       mixedPrices: typeof row.mixed_prices === 'string' ? JSON.parse(row.mixed_prices) : row.mixed_prices ?? {},
@@ -387,12 +388,17 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,group_id,direction_id,price,valid_from) VALUES ('mixed_group',:groupId,:directionId,:price,NOW(6))`, { groupId, directionId, price });
   }
   async function writeGroup(connection, groupId, body, current = {}, context = {}) {
+    if (Object.prototype.hasOwnProperty.call(body, 'partnerCalendarVisible') || Object.prototype.hasOwnProperty.call(body, 'partner_calendar_visible')) {
+      if (!(context.roles ?? []).includes('director')) throw new ApiProblem(403, 'FORBIDDEN', 'Настройку межпроектного календаря меняет только директор');
+      if (typeof body.partnerCalendarVisible !== 'boolean') throw new ApiProblem(400, 'VALIDATION_ERROR', 'Укажите корректную видимость группы в календаре партнёров');
+    }
     const value = {
       isMixed: body.isMixed === undefined ? Boolean(current.isMixed) : Boolean(body.isMixed),
       name: body.name === undefined ? current.name : text(body.name, 'name'), directionId: id(body.directionId ?? current.directionId, 'directionId'),
       siteId: id(body.siteId ?? current.siteId, 'siteId'), projectId: id(chosenProject(context, body.projectId ?? current.projectId) ?? current.projectId, 'projectId'), teacherId: id(body.teacherId ?? current.teacherId, 'teacherId'),
       weekday: Number(body.weekday ?? current.weekday), startTime: body.startTime ?? current.startTime, endTime: body.endTime ?? current.endTime,
       startsOn: body.startsOn ?? current.startsOn, endsOn: body.endsOn === undefined ? current.endsOn : nullable(body.endsOn), active: body.active === undefined ? active(current.active) : Boolean(body.active),
+      partnerCalendarVisible: body.partnerCalendarVisible,
     };
     Object.assign(value, validateGroupSettings(body, current, value));
     if (groupId && String(value.projectId) !== String(current.projectId)) {
@@ -436,8 +442,8 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
         WHERE gm.group_id=:groupId AND gm.ended_on IS NULL AND e.superseded_at IS NULL AND e.status IN ('active','paused')`, { groupId });
       if (Number(members[0]?.member_count ?? 0) > 1) throw new ApiProblem(409, 'INDIVIDUAL_GROUP_FULL', 'В группе уже больше одного ребёнка');
     }
-    if (groupId) await connection.query(`UPDATE study_groups SET name=:name,is_mixed=:isMixed,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active,is_individual=:isIndividual,package_lesson_count=:packageLessonCount,calculation_mode=:calculationMode,teacher_share_percent=:teacherSharePercent,partner_share_percent=:partnerSharePercent,custom_tax_enabled=:customTaxEnabled WHERE id=:id`, { ...value, id: groupId });
-    else { const [result] = await connection.query(`INSERT INTO study_groups (name,is_mixed,direction_id,site_id,project_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,active,created_by_user_id,is_individual,package_lesson_count,calculation_mode,teacher_share_percent,partner_share_percent,custom_tax_enabled) VALUES (:name,:isMixed,:directionId,:siteId,:projectId,:teacherId,:weekday,:startTime,:endTime,:startsOn,:endsOn,:active,:actorId,:isIndividual,:packageLessonCount,:calculationMode,:teacherSharePercent,:partnerSharePercent,:customTaxEnabled)`, { ...value, actorId: context.userId ?? null }); groupId = result.insertId; }
+    if (groupId) await connection.query(`UPDATE study_groups SET name=:name,is_mixed=:isMixed,direction_id=:directionId,site_id=:siteId,project_id=:projectId,default_teacher_id=:teacherId,weekday=:weekday,start_time=:startTime,end_time=:endTime,starts_on=:startsOn,ends_on=:endsOn,active=:active,is_individual=:isIndividual,package_lesson_count=:packageLessonCount,calculation_mode=:calculationMode,teacher_share_percent=:teacherSharePercent,partner_share_percent=:partnerSharePercent,custom_tax_enabled=:customTaxEnabled${body.partnerCalendarVisible === undefined ? '' : ',partner_calendar_visible=:partnerCalendarVisible'} WHERE id=:id`, { ...value, id: groupId });
+    else { const explicitVisibility = body.partnerCalendarVisible !== undefined; const [result] = await connection.query(`INSERT INTO study_groups (name,is_mixed,direction_id,site_id,project_id,default_teacher_id,weekday,start_time,end_time,starts_on,ends_on,active,created_by_user_id,is_individual,package_lesson_count,calculation_mode,teacher_share_percent,partner_share_percent,custom_tax_enabled${explicitVisibility ? ',partner_calendar_visible' : ''}) VALUES (:name,:isMixed,:directionId,:siteId,:projectId,:teacherId,:weekday,:startTime,:endTime,:startsOn,:endsOn,:active,:actorId,:isIndividual,:packageLessonCount,:calculationMode,:teacherSharePercent,:partnerSharePercent,:customTaxEnabled${explicitVisibility ? ',:partnerCalendarVisible' : ''})`, { ...value, actorId: context.userId ?? null }); groupId = result.insertId; }
     if (body.scheduleSlots !== undefined) {
       await connection.query('DELETE FROM group_schedule_slots WHERE group_id=:groupId', { groupId });
       for (const slot of value.scheduleSlots) await connection.query(`INSERT INTO group_schedule_slots (group_id,weekday,start_time,end_time)
