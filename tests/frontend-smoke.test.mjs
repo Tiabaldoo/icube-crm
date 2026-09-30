@@ -91,6 +91,37 @@ test('единый frontend загружается и рендерит все т
   context.__crmProbe.state.salaryTeacher = '102';
   assert.match(context.salary(), /Исторический преподаватель · неактивен/);
   Object.assign(context.__crmProbe.state, savedSalaryState);
+  const calendarEvents = context.sharedCalendarEvents;
+  const originalCalendarState = {
+    groups: context.__crmProbe.state.groups, lessons: context.__crmProbe.state.lessons,
+    calendarForeignGroups: context.__crmProbe.state.calendarForeignGroups,
+    calendarCursor: context.__crmProbe.state.calendarCursor, calendarProject: context.__crmProbe.state.calendarProject,
+    role: context.__crmProbe.state.role,
+  };
+  const ownGroup = { id: 998, name: 'Своя группа', project: 'Зебра', direction: 'Робототехника',
+    day: 'Пятница', startDate: '2026-09-01', startTime: '15:00', endTime: '16:00', teacherId: 3 };
+  const foreignLesson = { id: 999, groupId: 999, groupName: 'Чужая группа', project: 'iCubeRobots', projectId: 1,
+    teacherId: 8, teacherName: 'Преподаватель', siteId: 5, siteName: 'Школа', readOnly: true,
+    occurrenceKey: '999|16.09.2026', scheduledDate: '16.09.2026', scheduledTime: '10:00–11:00',
+    date: '18.09.2026', time: '12:00–13:00', moved: true };
+  Object.assign(context.__crmProbe.state, { role: 'partner', groups: [ownGroup],
+    lessons: [foreignLesson, foreignLesson], calendarForeignGroups: [{ id: 999, name: 'Чужая группа', project: 'iCubeRobots', direction: 'Робототехника' }],
+    calendarCursor: '2026-09-18', calendarProject: 'Зебра' });
+  const rangeStart = new Date(2026, 8, 16), rangeEnd = new Date(2026, 8, 18);
+  const partnerEvents = calendarEvents(rangeStart, rangeEnd);
+  assert.equal(partnerEvents.filter((event) => event.lesson?.id === 999).length, 1);
+  assert.equal(partnerEvents.find((event) => event.lesson?.id === 999).lesson, foreignLesson);
+  assert.equal(partnerEvents.find((event) => event.lesson?.id === 999).date, '18.09.2026');
+  assert.ok(partnerEvents.some((event) => event.groupId === 998 && !event.lesson), 'свои регулярные занятия сохраняются');
+  assert.match(context.calendar(), /calendar-event-site">Школа/, 'чужое занятие видно с партнёрским фильтром своего проекта и без группы в state.groups');
+  context.__crmProbe.state.lessons = [];
+  assert.equal(calendarEvents(rangeStart, rangeEnd).some((event) => event.groupId === 999), false, 'чужое событие не создаётся без серверного lesson');
+  context.__crmProbe.state.lessons = [foreignLesson];
+  context.__crmProbe.state.role = 'director';
+  assert.equal(calendarEvents(rangeStart, rangeEnd).some((event) => event.groupId === 999), false, 'директорский календарь не меняется');
+  context.__crmProbe.state.role = 'teacher';
+  assert.equal(calendarEvents(rangeStart, rangeEnd, 8).some((event) => event.groupId === 999), false, 'календарь преподавателя не меняется');
+  Object.assign(context.__crmProbe.state, originalCalendarState);
   const dateText = `${String(today.getDate()).padStart(2, '0')}.${String(today.getMonth() + 1).padStart(2, '0')}.${today.getFullYear()}`;
   context.__crmProbe.state.calendarCursor = todayIso;
   context.__crmProbe.state.calendarProject = 'iCubeRobots';

@@ -5774,12 +5774,12 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const actual=parseRuDate(l.date);
       if(actual<start||actual>end) return;
       const g=byId(state.groups,l.groupId);
-      if(!g) return;
+      if(!g && !(state.role==='partner' && l.readOnly)) return;
       if(teacherId && Number(l.teacherId)!==Number(teacherId)) return;
-      if(events.some(function(e){return e.lesson&&Number(e.lesson.id)===Number(l.id);})) return;
+      if(events.some(function(e){return (e.lesson&&Number(e.lesson.id)===Number(l.id)) || e.key===l.occurrenceKey;})) return;
       events.push({
-        key:l.occurrenceKey||occurrenceKey(g.id,l.scheduledDate||l.date),
-        groupId:g.id,project:g.project,teacherId:Number(l.teacherId),
+        key:l.occurrenceKey||occurrenceKey(l.groupId,l.scheduledDate||l.date),
+        groupId:l.groupId,groupName:l.groupName,project:g?g.project:l.project,projectId:l.projectId,teacherId:Number(l.teacherId),teacherName:l.teacherName,siteId:l.siteId,siteName:l.siteName,
         scheduledDate:l.scheduledDate||l.date,scheduledTime:l.scheduledTime||l.time,
         date:l.date,time:l.time,lesson:l,cancelled:!!l.cancelled,moved:!!l.moved,done:!!l.done
       });
@@ -6159,7 +6159,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const tid=teacher?teacherId():null;
     const project=teacher?state.teacherCalendarProject:state.calendarProject;
     const events=(typeof window.sharedCalendarEvents==='function'?window.sharedCalendarEvents(r.start,r.end,tid):[]).filter(function(e){
-      const projectOk=project==='all'||e.project===project;
+      const projectOk=project==='all'||e.project===project||(state.role==='partner'&&e.lesson?.readOnly);
       const teacherOk=teacher||state.calendarTeacher==='all'||Number(state.calendarTeacher)===Number(e.teacherId);
       return projectOk&&teacherOk;
     });
