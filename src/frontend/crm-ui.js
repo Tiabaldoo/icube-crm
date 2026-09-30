@@ -5725,7 +5725,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const events=[];
     const start=new Date(startDate), end=new Date(endDate);
 
-    (state.groups||[]).forEach(function(g){
+    (state.role==='partner'?(state.groups||[]).concat(state.calendarForeignGroups||[]):(state.groups||[])).forEach(function(g){
       const slots=[{weekday:DAY_NAMES.indexOf(g.day)||7,startTime:g.startTime,endTime:g.endTime},...(g.scheduleSlots||[])];
       slots.forEach(function(slot){
       for(let d=new Date(start);d<=end;d.setDate(d.getDate()+1)){
@@ -6071,11 +6071,12 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return String(direction||'').slice(0,1)||'—';
   }
   function eventHtml(e,role){
-    const g=byId(state.groups,e.groupId)||(state.calendarForeignGroups||[]).find(function(group){return group.id===e.groupId;}); if(!g) return '';
-    const siteName=e.lesson?.siteName||byId(state.sites,g.siteId)?.name||'Без площадки';
+    const g=byId(state.groups,e.groupId)||(state.calendarForeignGroups||[]).find(function(group){return group.id===e.groupId;})||(e.lesson?.readOnly?{direction:e.lesson.direction,siteName:e.lesson.siteName}:null); if(!g) return '';
+    const eventRole=state.role==='partner'&&!e.lesson&&!(state.groups||[]).some(function(group){return group.id===e.groupId;})?'foreign-template':role;
+    const siteName=e.lesson?.siteName||g.siteName||byId(state.sites,g.siteId)?.name||'Без площадки';
     const eventTime=timeStart(e.time||g.time||g.startTime||'')||'—';
     const eventMeta=calendarWeekdayShort(e.date,g.day)+' '+eventTime+' · ('+calendarDirectionShort(e.lesson?.direction||g.direction)+')';
-    return '<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\''+role+'\')">'+
+    return '<div class="event '+(e.project==='Зебра'?'partner':'')+(e.done?' done':'')+(e.cancelled?' event-cancelled':'')+'" onclick="openUnifiedCalendarEvent(\''+e.key+'\',\''+eventRole+'\')">'+
       '<div class="calendar-event-site">'+siteName+'</div>'+
       '<div class="calendar-event-meta">'+eventMeta+'</div>'+
       (statusHtml(e)?'<div class="calendar-event-status">'+statusHtml(e)+'</div>':'')+
@@ -6159,7 +6160,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const tid=teacher?teacherId():null;
     const project=teacher?state.teacherCalendarProject:state.calendarProject;
     const events=(typeof window.sharedCalendarEvents==='function'?window.sharedCalendarEvents(r.start,r.end,tid):[]).filter(function(e){
-      const projectOk=project==='all'||e.project===project||(state.role==='partner'&&e.lesson?.readOnly);
+      const projectOk=project==='all'||e.project===project;
       const teacherOk=teacher||state.calendarTeacher==='all'||Number(state.calendarTeacher)===Number(e.teacherId);
       return projectOk&&teacherOk;
     });
@@ -6614,7 +6615,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   const STYLE_ID='crm-direction-colors-v134';
 
   function directionForGroupId(groupId){
-    const g=byId(state.groups,Number(groupId));
+    const g=byId(state.groups,Number(groupId))||(state.calendarForeignGroups||[]).find(function(group){return Number(group.id)===Number(groupId);});
     return g?.direction||'';
   }
 

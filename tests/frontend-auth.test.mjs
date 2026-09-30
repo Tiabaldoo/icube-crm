@@ -28,7 +28,7 @@ function globals(profileResponse) {
     if (path === '/auth/me') return profileResponse;
     const resource = path.slice(1).split('?')[0]; return { ok: true, status: 200, async json() { return { data: resources[resource] ?? [] }; } };
   };
-  return { app, state, calls, restore() { Object.assign(globalThis, original); } };
+  return { app, state, calls, resources, restore() { Object.assign(globalThis, original); } };
 }
 
 test('неавторизованный frontend показывает вход и не запрашивает CRM до /auth/me', async () => {
@@ -94,6 +94,37 @@ test('partner temporary teacher-view возвращается на партнё�
     assert.equal(setup.state.page, 'dashboard');
     assert.equal(setup.state.calendarProject, scopeBefore);
     assert.equal(setup.calls.includes('/auth/logout'), false);
+  } finally { setup.restore(); }
+});
+
+test('partner reload keeps foreign calendar groups separate and readOnly lesson direction; template click is local', async () => {
+  const profile = { id: '3', displayName: 'Партнёр', roles: ['partner'], projectIds: ['3'] };
+  const setup = globals({ ok: true, status: 200, async json() { return { data: profile }; } });
+  setup.resources.groups = [];
+  setup.resources['calendar-groups'] = [{ id: '9', directionId: '2', directionName: 'Программирование', isMixed: false,
+    projectId: '1', projectName: 'iCubeRobots', siteId: '5', siteName: 'Школа', teacherId: '7', teacherName: 'Учитель',
+    weekday: 4, startTime: '12:00', endTime: '13:00', scheduleSlots: [], startsOn: '2026-09-01', endsOn: null, active: true }];
+  setup.resources.lessons = [{ id: '22', groupId: '9', groupName: 'Программирование', directionId: '2', directionName: 'Программирование',
+    isMixed: false, projectId: '1', projectName: 'iCubeRobots', siteId: '5', siteName: 'Школа', plannedTeacherId: '7',
+    plannedTeacherName: 'Учитель', scheduledStartsAt: '2026-09-17T12:00:00+11:00', scheduledEndsAt: '2026-09-17T13:00:00+11:00',
+    startsAt: '2026-09-18T14:00:00+11:00', endsAt: '2026-09-18T15:00:00+11:00', status: 'cancelled', readOnly: true }];
+  try {
+    await import(`../src/frontend/api-sync.mjs?partner-calendar-groups=${Date.now()}`);
+    await globalThis.window.icubeAuthReady;
+    assert.ok(setup.calls.includes('/calendar-groups'));
+    assert.equal(setup.state.groups.length, 0);
+    assert.equal(setup.state.calendarForeignGroups[0].direction, 'Программирование');
+    assert.equal(setup.state.lessons[0].direction, 'Программирование');
+    assert.equal(setup.state.lessons[0].occurrenceKey, '9|17.09.2026');
+    assert.equal(setup.state.lessons[0].date, '18.09.2026');
+    assert.equal(setup.state.lessons[0].moved, true);
+    assert.equal(setup.state.lessons[0].cancelled, true);
+    const before = setup.calls.length;
+    globalThis.window.sharedCalendarEvents = () => [{ key: '9|24.09.2026', groupId: 9, date: '24.09.2026',
+      time: '12:00–13:00', lesson: null }];
+    await globalThis.window.icubeApi.openCalendarEvent('9|24.09.2026', 'foreign-template');
+    assert.equal(setup.calls.length, before, 'открытие шаблонной даты не запрашивает и не создаёт lesson');
+    assert.match(setup.state.modal, /Программирование/);
   } finally { setup.restore(); }
 });
 

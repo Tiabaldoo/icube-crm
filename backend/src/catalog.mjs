@@ -152,6 +152,26 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       price: actorTeacherId == null && row.price != null ? String(row.price) : null }));
   }
 
+  async function calendarGroups(context = {}) {
+    const projectId = partnerProject(context);
+    if (!projectId) throw new ApiProblem(403, 'FORBIDDEN', 'Календарные группы доступны только партнёру');
+    const groupRows = await rows(`SELECT g.id,g.direction_id,d.name direction_name,g.is_mixed,g.project_id,p.name project_name,
+      g.site_id,s.name site_name,g.default_teacher_id teacher_id,t.full_name teacher_name,
+      g.weekday,g.start_time,g.end_time,g.starts_on,g.ends_on,g.active,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('weekday',gs.weekday,'startTime',LEFT(gs.start_time,5),'endTime',LEFT(gs.end_time,5)))
+        FROM group_schedule_slots gs WHERE gs.group_id=g.id) schedule_slots
+      FROM study_groups g JOIN directions d ON d.id=g.direction_id JOIN projects p ON p.id=g.project_id
+      JOIN sites s ON s.id=g.site_id JOIN teachers t ON t.id=g.default_teacher_id
+      WHERE g.deleted_at IS NULL AND g.partner_calendar_visible=TRUE AND g.project_id<>:projectId ORDER BY g.id`, { projectId });
+    return groupRows.map((row) => ({ id: rowId(row), directionId: String(row.direction_id),
+      directionName: row.is_mixed ? 'Смешанная' : row.direction_name, isMixed: Boolean(row.is_mixed),
+      projectId: String(row.project_id), projectName: row.project_name, siteId: String(row.site_id), siteName: row.site_name,
+      teacherId: String(row.teacher_id), teacherName: row.teacher_name, weekday: Number(row.weekday),
+      startTime: String(row.start_time).slice(0, 5), endTime: String(row.end_time).slice(0, 5),
+      scheduleSlots: typeof row.schedule_slots === 'string' ? JSON.parse(row.schedule_slots) : row.schedule_slots ?? [],
+      startsOn: isoDate(row.starts_on), endsOn: isoDate(row.ends_on), active: Boolean(row.active) }));
+  }
+
   async function children(context = {}) {
     const actorTeacherId = scopedTeacherId(context);
     const projectId = partnerProject(context);
@@ -649,6 +669,6 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     list: (resource, context = {}) => collection[resource](context), get,
     create: (resource, body, context = {}) => ({ directions: createDirection, sites: createSite, teachers: createTeacher, groups: createGroup, children: createChild }[resource])(body, context),
     update: (resource, resourceId, body, context = {}) => ({ directions: updateDirection, sites: updateSite, teachers: updateTeacher, groups: updateGroup, children: updateChild }[resource])(resourceId, body, context),
-    createEnrollment, updateEnrollment, saveChildWithEnrollment, deleteChild,
+    createEnrollment, updateEnrollment, saveChildWithEnrollment, deleteChild, calendarGroups,
   };
 }

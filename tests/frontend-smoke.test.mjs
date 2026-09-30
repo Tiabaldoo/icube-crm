@@ -96,26 +96,55 @@ test('единый frontend загружается и рендерит все т
     groups: context.__crmProbe.state.groups, lessons: context.__crmProbe.state.lessons,
     calendarForeignGroups: context.__crmProbe.state.calendarForeignGroups,
     calendarCursor: context.__crmProbe.state.calendarCursor, calendarProject: context.__crmProbe.state.calendarProject,
+    calendarTeacher: context.__crmProbe.state.calendarTeacher, deletedOccurrences: context.__crmProbe.state.deletedOccurrences,
     role: context.__crmProbe.state.role,
   };
   const ownGroup = { id: 998, name: 'Своя группа', project: 'Зебра', direction: 'Робототехника',
     day: 'Пятница', startDate: '2026-09-01', startTime: '15:00', endTime: '16:00', teacherId: 3 };
+  const foreignGroup = { id: 999, project: 'iCubeRobots', direction: 'Робототехника', siteName: 'Школа',
+    teacherId: 8, day: 'Четверг', startDate: '2026-09-01', endDate: '2026-09-24',
+    startTime: '12:00', endTime: '13:00', scheduleSlots: [{ weekday: 5, startTime: '16:00', endTime: '17:00' }] };
   const foreignLesson = { id: 999, groupId: 999, groupName: 'Чужая группа', project: 'iCubeRobots', projectId: 1,
-    teacherId: 8, teacherName: 'Преподаватель', siteId: 5, siteName: 'Школа', readOnly: true,
-    occurrenceKey: '999|16.09.2026', scheduledDate: '16.09.2026', scheduledTime: '10:00–11:00',
-    date: '18.09.2026', time: '12:00–13:00', moved: true };
+    teacherId: 8, teacherName: 'Преподаватель', siteId: 5, siteName: 'Школа', direction: 'Робототехника', readOnly: true,
+    occurrenceKey: '999|17.09.2026|12:00', scheduledDate: '17.09.2026', scheduledTime: '12:00–13:00',
+    date: '18.09.2026', time: '14:00–15:00', moved: true };
   Object.assign(context.__crmProbe.state, { role: 'partner', groups: [ownGroup],
-    lessons: [foreignLesson, foreignLesson], calendarForeignGroups: [{ id: 999, name: 'Чужая группа', project: 'iCubeRobots', direction: 'Робототехника' }],
-    calendarCursor: '2026-09-18', calendarProject: 'Зебра' });
-  const rangeStart = new Date(2026, 8, 16), rangeEnd = new Date(2026, 8, 18);
+    lessons: [], calendarForeignGroups: [foreignGroup], deletedOccurrences: [], calendarTeacher: 'all',
+    calendarCursor: '2026-09-18', calendarProject: 'all' });
+  const rangeStart = new Date(2026, 8, 1), rangeEnd = new Date(2026, 8, 30);
+  const templateEvents = calendarEvents(rangeStart, rangeEnd).filter((event) => event.groupId === 999);
+  assert.deepEqual(Array.from(templateEvents.filter((event) => event.time === '12:00–13:00'), (event) => event.date),
+    ['03.09.2026', '10.09.2026', '17.09.2026', '24.09.2026']);
+  assert.ok(templateEvents.some((event) => event.date === '04.09.2026' && event.time === '16:00–17:00'));
+  assert.equal(calendarEvents(new Date(2026, 7, 27), new Date(2026, 7, 27)).some((event) => event.groupId === 999), false);
+  assert.equal(calendarEvents(new Date(2026, 8, 25), new Date(2026, 8, 25)).some((event) => event.groupId === 999), false);
+  assert.match(context.calendar(), /foreign-template/, 'шаблонная дата открывается без создания lesson');
+  context.__crmProbe.state.deletedOccurrences = ['999|10.09.2026|12:00'];
+  assert.equal(calendarEvents(rangeStart, rangeEnd).some((event) => event.key === '999|10.09.2026|12:00'), false);
+  context.__crmProbe.state.lessons = [foreignLesson, foreignLesson];
   const partnerEvents = calendarEvents(rangeStart, rangeEnd);
   assert.equal(partnerEvents.filter((event) => event.lesson?.id === 999).length, 1);
   assert.equal(partnerEvents.find((event) => event.lesson?.id === 999).lesson, foreignLesson);
   assert.equal(partnerEvents.find((event) => event.lesson?.id === 999).date, '18.09.2026');
+  assert.equal(partnerEvents.some((event) => event.key === foreignLesson.occurrenceKey && !event.lesson), false);
   assert.ok(partnerEvents.some((event) => event.groupId === 998 && !event.lesson), 'свои регулярные занятия сохраняются');
-  assert.match(context.calendar(), /calendar-event-site">Школа/, 'чужое занятие видно с партнёрским фильтром своего проекта и без группы в state.groups');
+  assert.match(context.calendar(), /14:00 · \(Р\)/, 'real readonly Robotics lesson показывает направление и фактическое время');
+  assert.equal(context.crmDirectionClassV134('Робототехника'), 'crm-direction-robot');
+  context.__crmProbe.state.calendarProject = 'Зебра';
+  assert.doesNotMatch(context.calendar(), /calendar-event-site">Школа/);
+  context.__crmProbe.state.calendarProject = 'iCubeRobots';
+  assert.match(context.calendar(), /calendar-event-site">Школа/);
+  assert.doesNotMatch(context.calendar(), /openUnifiedCalendarEvent\('998\|/);
+  foreignLesson.direction = 'Программирование';
+  assert.match(context.calendar(), /14:00 · \(П\)/);
+  assert.equal(context.crmDirectionClassV134('Программирование'), 'crm-direction-program');
+  foreignLesson.direction = 'Робототехника';
+  context.__crmProbe.state.calendarProject = 'all';
+  context.__crmProbe.state.calendarForeignGroups = [];
+  assert.match(context.calendar(), /14:00 · \(Р\)/, 'реальный readOnly lesson остаётся видимым без карточки группы');
+  context.__crmProbe.state.calendarForeignGroups = [foreignGroup];
   context.__crmProbe.state.lessons = [];
-  assert.equal(calendarEvents(rangeStart, rangeEnd).some((event) => event.groupId === 999), false, 'чужое событие не создаётся без серверного lesson');
+  assert.ok(calendarEvents(rangeStart, rangeEnd).some((event) => event.groupId === 999 && !event.lesson), 'чужое расписание видно без persisted lesson');
   context.__crmProbe.state.lessons = [foreignLesson];
   context.__crmProbe.state.role = 'director';
   assert.equal(calendarEvents(rangeStart, rangeEnd).some((event) => event.groupId === 999), false, 'директорский календарь не меняется');

@@ -175,6 +175,7 @@ export function createApiRouter(pool, {
     const [rows] = await pool.query('SELECT id,name,active FROM sites WHERE active=TRUE AND deleted_at IS NULL ORDER BY name');
     return rows.map((row) => ({ id: String(row.id), name: row.name, active: Boolean(row.active) }));
   }));
+  router.get('/calendar-groups', requirePermission('lessons:read'), run((request) => catalog.calendarGroups(request.auth)));
 
   for (const resource of ['projects', 'directions', 'sites', 'teachers', 'groups', 'children']) {
     const permission = `${resource}:read`;

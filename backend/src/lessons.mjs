@@ -111,12 +111,14 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     return lessonRows.map((row) => {
       if (partnerProject && String(row.project_id_snapshot) !== partnerProject) return {
         id: String(row.id), groupId: String(row.group_id), groupName: row.group_name,
+        directionId: String(row.direction_id_snapshot), directionName: row.is_mixed_snapshot ? 'Смешанная' : row.direction_name,
+        isMixed: bool(row.is_mixed_snapshot),
         projectId: String(row.project_id_snapshot), projectName: row.project_name,
         plannedTeacherId: String(row.planned_teacher_id), plannedTeacherName: row.planned_teacher_name,
         actualTeacherId: row.actual_teacher_id == null ? null : String(row.actual_teacher_id), actualTeacherName: row.actual_teacher_name,
         siteId: String(row.site_override_id ?? row.site_id_snapshot), siteName: row.site_override_name ?? row.site_name,
         scheduledStartsAt: isoDateTime(row.scheduled_starts_at), scheduledEndsAt: isoDateTime(row.scheduled_ends_at),
-        startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), readOnly: true,
+        startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at), status: row.status, readOnly: true,
       };
       const roster = rosterRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({ childId: String(item.child_id), type: item.roster_type }));
       const effectiveRoster = jsonIds(row.effective_roster_child_ids).map((childId) => ({ childId, type: 'main' }));

@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'icube-crm-shell-';
-const CACHE_NAME = 'icube-crm-shell-v2-20260930-9';
+const CACHE_NAME = 'icube-crm-shell-v2-20260930-10';
 const RELEASE_ID = CACHE_NAME.slice('icube-crm-shell-v2-'.length);
 const versioned = (path) => `${path}?v=${RELEASE_ID}`;
 const STATIC_PATHS = [

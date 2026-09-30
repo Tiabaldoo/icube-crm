@@ -162,7 +162,8 @@ test('project transfer closes the old membership, delegates money to FIFO transf
 });
 
 test('partner calendar returns only schedule fields for foreign lessons and cannot mutate them', async () => {
-  const foreign = { id: 50, group_id: 10, group_name: 'iCube группа', direction_name: 'Робототехника', project_id_snapshot: 1,
+  const foreign = { id: 50, group_id: 10, group_name: 'iCube группа', direction_id_snapshot: 1,
+    direction_name: 'Робототехника', is_mixed_snapshot: 0, project_id_snapshot: 1,
     project_name: 'iCubeRobots', site_id_snapshot: 4, site_name: 'Школа', site_override_id: null,
     planned_teacher_id: 7, planned_teacher_name: 'Учитель', actual_teacher_id: null,
     scheduled_starts_at: '2026-09-18 10:00:00', scheduled_ends_at: '2026-09-18 11:00:00',
@@ -177,7 +178,9 @@ test('partner calendar returns only schedule fields for foreign lessons and cann
   assert.equal(dto.readOnly, true);
   assert.equal(dto.siteName, 'Школа');
   assert.equal(dto.projectName, 'iCubeRobots');
-  for (const forbidden of ['roster', 'attendances', 'salary', 'topic', 'status', 'directionId']) assert.ok(!(forbidden in dto), forbidden);
+  assert.equal(dto.directionName, 'Робототехника');
+  assert.equal(dto.status, 'scheduled');
+  for (const forbidden of ['roster', 'attendances', 'salary', 'topic']) assert.ok(!(forbidden in dto), forbidden);
   await assert.rejects(lessons.update('50', { topic: 'Чужое' }, partner), { status: 403, code: 'FORBIDDEN' });
 });
 

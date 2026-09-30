@@ -99,6 +99,13 @@ function mapGroup(group) {
     project: group.projectName, projectId: Number(group.projectId), price: group.price == null ? null : Number(group.price), active: group.active,
     startDate: group.startsOn, endDate: group.endsOn };
 }
+function mapCalendarForeignGroup(group) {
+  return { id: Number(group.id), directionId: Number(group.directionId), direction: group.directionName,
+    isMixed: Boolean(group.isMixed), projectId: Number(group.projectId), project: group.projectName,
+    siteId: Number(group.siteId), siteName: group.siteName, teacherId: Number(group.teacherId), teacherName: group.teacherName,
+    day: dayNames[group.weekday - 1], startTime: group.startTime, endTime: group.endTime,
+    scheduleSlots: group.scheduleSlots ?? [], startDate: group.startsOn, endDate: group.endsOn, active: group.active };
+}
 function mapChild(child) {
   return { id: Number(child.id), name: child.name, birth: child.birthDate ?? '', school: child.school ?? '', grade: child.grade ?? '',
     parent: child.guardian?.name ?? '', phone: child.guardian?.phone ?? '', status: childStatusFromApi[child.status] ?? child.status,
@@ -118,7 +125,8 @@ function mapChild(child) {
 }
 
 function calendarOccurrenceKey(groupId, date, startTime) {
-  const group = legacy.state.groups.find((group) => Number(group.id) === Number(groupId));
+  const group = [...legacy.state.groups, ...(legacy.state.calendarForeignGroups ?? [])]
+    .find((group) => Number(group.id) === Number(groupId));
   // Removed slots retain their identity after reload, including historical lessons and tombstones.
   const timed = group?.scheduleSlots?.length || (startTime && startTime !== group?.startTime);
   return `${Number(groupId)}|${date}${timed && startTime ? `|${startTime}` : ''}`;
@@ -133,7 +141,9 @@ function mapLesson(lesson) {
       scheduledTime: `${timestampTime(lesson.scheduledStartsAt)}–${timestampTime(lesson.scheduledEndsAt)}`,
       date, time: `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`,
       occurrenceKey: calendarOccurrenceKey(lesson.groupId, isoToRu(timestampDate(lesson.scheduledStartsAt)), timestampTime(lesson.scheduledStartsAt)), readOnly: true,
-      attendance: {}, extras: [], photos: [], status: 'Занято' };
+      attendance: {}, extras: [], photos: [], status: lesson.status,
+      done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
+      moved: lesson.startsAt !== lesson.scheduledStartsAt || lesson.endsAt !== lesson.scheduledEndsAt };
   }
   const main = lesson.attendances.filter((item) => item.type === 'main');
   const extras = lesson.attendances.filter((item) => item.type === 'extra');
@@ -442,8 +452,8 @@ async function reload({ render = true } = {}) {
   if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) return reloadTeacher({ render });
   const partner = authProfile?.roles?.includes('partner') && !authProfile.roles.includes('director');
   const statisticsQuery = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
-  const [projects, directions, sites, teachers, groups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics, dailySummary, venues] = await Promise.all([
-    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
+  const [projects, directions, sites, teachers, groups, calendarGroups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics, dailySummary, venues] = await Promise.all([
+    api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), partner ? api.list('calendar-groups') : Promise.resolve([]), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
     api.list('balance-transfers'), partner ? Promise.resolve(null) : api.list('statistics', statisticsQuery), api.request('/dashboard/daily'), api.list('sites/venues'),
   ]);
   directories = { projects, directions };
@@ -457,6 +467,7 @@ async function reload({ render = true } = {}) {
       directions: setting.directions.map((direction) => ({ ...direction, id: Number(direction.id) })),
     })) }));
   legacy.state.groups = groups.map(mapGroup);
+  legacy.state.calendarForeignGroups = calendarGroups.map(mapCalendarForeignGroup);
   legacy.state.children = children.map(mapChild);
   legacy.state.payments = payments.map((payment) => ({
     id: Number(payment.id), enrollmentId: Number(payment.enrollmentId), childId: Number(payment.childId), childName: payment.childName,
@@ -480,9 +491,6 @@ async function reload({ render = true } = {}) {
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
   legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
   await reapplyQueuedLessonState();
-  legacy.state.calendarForeignGroups = legacy.state.lessons.filter((lesson) => lesson.readOnly).map((lesson) => ({
-    id: lesson.groupId, name: lesson.groupName, project: lesson.project,
-  }));
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => calendarOccurrenceKey(item.groupId, isoToRu(item.scheduledDate), item.startTime));
   legacy.state.notifications = notifications;
   if (!legacy.state.children.some((child) => child.id === Number(legacy.state.selectedChild))) legacy.state.selectedChild = legacy.state.children[0]?.id ?? null;
@@ -1192,6 +1200,20 @@ async function openCalendarEvent(key, role) {
     const [scheduledRuDate, scheduledStartTime] = dateParts;
     if (!groupId || !scheduledRuDate) throw new Error('Некорректное событие календаря');
     const date = ruToIso(scheduledRuDate);
+
+    if (role === 'foreign-template') {
+      const group = legacy.state.calendarForeignGroups.find((item) => String(item.id) === groupId);
+      const day = new Date(`${date}T12:00:00`);
+      const event = window.sharedCalendarEvents?.(day, day, null).find((item) => item.key === key && !item.lesson);
+      if (!group || !event) throw new Error('Событие календаря не найдено');
+      legacy.state.modal = `<h3>${html(groupDisplayName(group))}</h3><div class="info-list">
+        <div class="info-line"><span>Проект</span><b>${html(group.project)}</b></div>
+        <div class="info-line"><span>Дата и время</span><b>${html(event.date)} · ${html(event.time)}</b></div>
+        <div class="info-line"><span>Преподаватель</span><b>${html(group.teacherName)}</b></div>
+        <div class="info-line"><span>Площадка</span><b>${html(group.siteName)}</b></div></div>
+        <div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>`;
+      legacy.render(); return;
+    }
 
     let lesson = legacy.state.lessons.find((item) => item.occurrenceKey === key);
     if (!lesson) {

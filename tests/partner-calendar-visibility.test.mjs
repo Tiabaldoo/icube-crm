@@ -83,6 +83,28 @@ test('partner crafted create/update cannot change visibility, ordinary save keep
   assert.doesNotMatch(f.writes.at(-1).sql, /partner_calendar_visible/);
 });
 
+test('partner calendar groups return only visible foreign scheduling fields', async () => {
+  const query = async (sql, params) => {
+    assert.match(sql, /g\.deleted_at IS NULL AND g\.partner_calendar_visible=TRUE AND g\.project_id<>:projectId/);
+    assert.doesNotMatch(sql, /price_versions|teacher_share|partner_share|balance|children/);
+    assert.equal(params.projectId, '2');
+    return [[{ id: 101, direction_id: 1, direction_name: 'Робототехника', is_mixed: 0,
+      project_id: 1, project_name: 'iCubeRobots', site_id: 3, site_name: 'Школа', teacher_id: 4,
+      teacher_name: 'Преподаватель', weekday: 4, start_time: '12:00:00', end_time: '13:00:00',
+      starts_on: '2026-09-01', ends_on: null, active: 1,
+      schedule_slots: [{ weekday: 5, startTime: '15:00', endTime: '16:00' }] }]];
+  };
+  const catalog = createMysqlCatalog({ query });
+  const result = await catalog.calendarGroups(partner);
+  assert.deepEqual(result, [{ id: '101', directionId: '1', directionName: 'Робототехника', isMixed: false,
+    projectId: '1', projectName: 'iCubeRobots', siteId: '3', siteName: 'Школа', teacherId: '4',
+    teacherName: 'Преподаватель', weekday: 4, startTime: '12:00', endTime: '13:00',
+    scheduleSlots: [{ weekday: 5, startTime: '15:00', endTime: '16:00' }], startsOn: '2026-09-01',
+    endsOn: null, active: true }]);
+  await assert.rejects(catalog.calendarGroups(director), { status: 403 });
+  await assert.rejects(catalog.calendarGroups(teacher), { status: 403 });
+});
+
 function lessonFixture() {
   const lessons = [
     { id: 11, group_id: 101, project_id_snapshot: 1, partner_calendar_visible: true },
@@ -123,10 +145,18 @@ test('foreign visible stays readOnly, foreign hidden is absent, own hidden stays
   const rows = await f.service.list({ from: '2026-09-01', to: '2026-09-30' }, partner);
   assert.deepEqual(rows.map((item) => item.id), ['11', '13']);
   assert.equal(rows[0].readOnly, true);
+  assert.equal(rows[0].directionName, 'Робототехника');
+  assert.equal(rows[0].directionId, '1');
+  assert.equal(rows[0].isMixed, false);
+  assert.equal(rows[0].status, 'completed');
   assert.equal(rows[1].readOnly, undefined);
   assert.equal((await f.service.get(11, partner)).readOnly, true);
   await assert.rejects(f.service.get(12, partner), { status: 404, code: 'NOT_FOUND' });
   assert.equal((await f.service.get(13, partner)).readOnly, undefined);
+  f.lessons[0].is_mixed_snapshot = 1;
+  assert.equal((await f.service.get(11, partner)).directionName, 'Смешанная');
+  assert.equal((await f.service.get(11, partner)).isMixed, true);
+  f.lessons[0].is_mixed_snapshot = 0;
   f.lessons[0].partner_calendar_visible = false;
   assert.deepEqual((await f.service.list({ from: '2026-09-01', to: '2026-09-30' }, partner)).map((item) => item.id), ['13']);
   f.lessons[0].partner_calendar_visible = true;
