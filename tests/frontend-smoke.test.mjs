@@ -448,6 +448,57 @@ test('фактические save handlers подключены к API namespace
   }
 });
 
+test('trial-direction обновляет общий список направлений и оставляет то же занятие открытым', async () => {
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalFetch = globalThis.fetch;
+  let posts = 0; let childReads = 0; let lessonReads = 0;
+  const state = { role: 'partner', page: 'lesson', selectedLesson: 60, selectedChild: 51, modal: '<h3>Действие</h3>',
+    groups: [], children: [{ id: 51, enrollments: [{ id: 101, directionId: 2 }] }],
+    lessons: [{ id: 60, groupId: 10, projectId: 3, directionId: 1, extras: [] }] };
+  globalThis.window = { icubeLegacy: { state, render() {} }, alert(message) { throw new Error(message); } };
+  globalThis.document = { querySelector() { return null; } };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url, 'https://example.test').pathname;
+    if (path === '/api/v1/lessons/60/extras/51/trial-direction' && options.method === 'POST') {
+      posts++; return { ok: true, status: 200, async json() { return { data: {} }; } };
+    }
+    let data = [];
+    if (path === '/api/v1/children') {
+      childReads++;
+      data = [{ id: '51', name: 'Иванов Иван', status: 'active', enrollments: [
+        { id: '101', directionId: '2', directionName: 'Программирование', projectId: '3', status: 'active' },
+        ...(posts ? [{ id: '102', directionId: '1', directionName: 'Робототехника', projectId: '3', status: 'active' }] : []),
+      ] }];
+    }
+    if (path === '/api/v1/lessons') {
+      lessonReads++;
+      data = [{ id: '60', groupId: '10', projectId: '3', directionId: '1', directionName: 'Робототехника',
+        startsAt: '2026-09-14T10:00:00+11:00', endsAt: '2026-09-14T11:00:00+11:00',
+        scheduledStartsAt: '2026-09-14T10:00:00+11:00', scheduledEndsAt: '2026-09-14T11:00:00+11:00',
+        status: 'in_progress', roster: posts ? [{ childId: '51', type: 'extra' }] : [],
+        attendances: posts ? [{ childId: '51', enrollmentId: '102', type: 'extra', present: true, trial: true }] : [] }];
+    }
+    return { ok: true, status: 200, async json() { return { data }; } };
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?trial-direction-refresh=${Date.now()}`);
+    await globalThis.window.icubeApi.makeExtraTrialDirection(51);
+    assert.equal(posts, 1, 'команда создания направления отправлена только один раз');
+    assert.equal(childReads, 1, 'общий API state детей загружен после POST');
+    assert.equal(lessonReads, 1, 'занятие не перезагружается вторым полным запросом');
+    assert.deepEqual(state.children[0].enrollments.map((item) => item.id), [101, 102]);
+    assert.equal(state.page, 'lesson'); assert.equal(state.selectedLesson, 60);
+    assert.equal(state.lessons[0].extras[0].enrollmentId, 102);
+    assert.equal(state.lessons[0].extras[0].trial, true);
+    assert.equal(state.modal, null);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('сохранение группы защищено от двойного submit и использует явное короткое название дня', async () => {
   const [apiSyncSource, uiSource] = await Promise.all([
     readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8'),

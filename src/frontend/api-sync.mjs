@@ -1154,8 +1154,8 @@ async function queueLessonAction(action, { closeModal = false } = {}) {
   } catch (error) { fail(error); }
 }
 
-async function reloadLesson(lessonId, page = legacy.state.page) {
-  await reload({ render: false });
+async function reloadLesson(lessonId, page = legacy.state.page, { refresh = true } = {}) {
+  if (refresh) await reload({ render: false });
   if (!legacy.state.lessons.some((lesson) => lesson.id === Number(lessonId))) {
     const lesson = await api.get('lessons', lessonId);
     legacy.state.lessons.push(mapLesson(lesson));
@@ -1280,7 +1280,9 @@ async function makeExtraTrialDirectionApi(childId) {
   try {
     await lessonActions.sync();
     await api.request(`/lessons/${encodeURIComponent(lesson.id)}/extras/${encodeURIComponent(childId)}/trial-direction`, { method: 'POST' });
-    await reloadLesson(lesson.id, legacy.state.page);
+    const page = legacy.state.page;
+    await reload({ render: false });
+    await reloadLesson(lesson.id, page, { refresh: false });
   } catch (error) { fail(error); }
 }
 function extraOptionsApi(childId) {
