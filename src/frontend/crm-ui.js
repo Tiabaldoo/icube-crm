@@ -92,11 +92,33 @@ function dashboard(){
  <div class="card pad"><div class="section-title"><h2>Ближайшие занятия</h2><button class="btn" onclick="navTo('calendar')">Календарь</button></div><div class="list">${state.lessons.filter(l=>!l.done).slice(0,3).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="kpi-line clickable" onclick="openLesson(${l.id})"><div><b>${l.time.split('–')[0]} · ${g.direction}</b><div class="muted mini">${groupTitle(g)} · ${byId(state.sites,g.siteId).name}</div></div><span class="badge ${g.project==='Зебра'?'purple':'blue'}">${g.project}</span></div>`}).join('')}</div></div></div>
  <div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Сегодня</h2><span class="muted">2 занятия</span></div><div class="grid cols-2">${state.lessons.filter(l=>l.date==='09.09.2026').map(l=>{let g=byId(state.groups,l.groupId);return `<div style="border:1px solid var(--line);border-radius:12px;padding:14px"><div class="muted mini">${l.time}</div><b style="font-size:16px">${groupTitle(g)}</b><div class="muted">${byId(state.sites,g.siteId).name} · ${byId(state.teachers,l.teacherId).name}</div><button class="btn soft" style="margin-top:12px" onclick="openLesson(${l.id})">Открыть занятие</button></div>`}).join('')}</div></div>`;
 }
+function normalizeChildSearch(value){
+ return String(value||'').toLowerCase().replace(/ё/g,'е').replace(/[^\p{L}\p{N}]+/gu,' ').trim().replace(/\s+/g,' ');
+}
+function childMatchesSearch(child,query){
+ const normalized=normalizeChildSearch(query);
+ if(!normalized) return true;
+ const digits=String(query||'').replace(/\D/g,'');
+ const phone=String(child.phone||'').replace(/\D/g,'');
+ if(digits.length>=4 && !/[\p{L}]/u.test(String(query))){
+   return phone.includes(digits) || (digits[0]==='8' && phone.includes('7'+digits.slice(1))) || (digits[0]==='7' && phone.includes('8'+digits.slice(1)));
+ }
+ const fields=[child.name,child.parent,child.school].map(normalizeChildSearch);
+ const grade=normalizeChildSearch(child.grade).replace(/\s/g,'');
+ return normalized.split(' ').every(function(token){
+   const classLike=/^\d{1,2}[\p{L}]?$/u.test(token);
+   if(classLike){
+     if(grade===token || /^\d{1,2}$/.test(token) && new RegExp('^'+token+'[\\p{L}]$','u').test(grade)) return true;
+     return fields.some(function(field){return field.split(' ').includes(token);});
+   }
+   return fields.some(function(field){return field.includes(token)||field.replace(/\s/g,'').includes(token);}) ||
+     (/^\d{3,}$/.test(token) && phone.includes(token));
+ });
+}
 function children(){
  const projectFilter=state.role==='partner'?'all':(state.childProjectFilter||'all');
  const statusFilter=state.childStatusFilter||'all';
  const directionFilter=state.childDirectionFilter||'all';
- const searchFilter=String(state.childSearch||'').toLowerCase();
  const filteredChildren=state.children.filter(c=>{
    if(statusFilter!=='all'&&c.status!==statusFilter) return false;
    if(projectFilter==='all'&&directionFilter==='all') return true;
@@ -106,8 +128,7 @@ function children(){
    );
  });
  const rows=filteredChildren.map(c=>{
-   const searchText=(String(c.name||'')+' '+String(c.parent||'')).toLowerCase();
-   const hidden=searchFilter&&!searchText.includes(searchFilter)?' style="display:none"':'';
+   const hidden=!childMatchesSearch(c,state.childSearch)?' style="display:none"':'';
    return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(c.enrollments.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(c.status)}">${escapeHtml(c.status)}</span></div><div class="child-directions">${c.enrollments.map(e=>{const groupName=groupTitle(byId(state.groups,e.effectiveGroupId??e.groupId)||{name:e.groupName});return `<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName)}</div></div>`;}).join('')}</div><div class="child-groups-desktop">${c.enrollments.map(e=>{const groupName=groupTitle(byId(state.groups,e.effectiveGroupId??e.groupId)||{name:e.groupName});return `<div class="mini">${escapeHtml(groupName)}</div>`;}).join('')}</div><div>${c.enrollments.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
  }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
@@ -120,11 +141,9 @@ function setChildStatusFilter(value){state.childStatusFilter=value;render()}
 function setChildDirectionFilter(value){state.childDirectionFilter=value;render()}
 function filterRows(q){
  state.childSearch=q;
- const needle=String(q||'').toLowerCase();
  document.querySelectorAll('#childRows .row.clickable').forEach(el=>{
    const child=byId(state.children,el.dataset.childId);
-   const searchText=(String(child?.name||'')+' '+String(child?.parent||'')).toLowerCase();
-   el.style.display=searchText.includes(needle)?'grid':'none';
+   el.style.display=child&&childMatchesSearch(child,q)?'grid':'none';
  });
 }
 function childForm(id=null){
