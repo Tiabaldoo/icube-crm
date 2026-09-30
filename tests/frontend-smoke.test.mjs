@@ -978,8 +978,12 @@ test('mixed UI renders real children, two package prices, mixed calendar label a
   state.lessons[0].started = true; state.lessons[0].groupChildIdsV146 = [50];
   state.children[1].enrollments[0].groupId = null;
   const extraResults = { innerHTML: '' }; fields.set('#extraResults', extraResults);
-  context.showExtraResults('Программист'); assert.match(extraResults.innerHTML, /addExtra\(51\)/);
+  context.showExtraResults('Программист'); assert.match(extraResults.innerHTML, /addExtra\(51,101\)/);
+  state.children[1].enrollments.push({ id: 102, projectId: 3, direction: 'Робототехника', status: 'Активный', groupId: null });
+  context.showExtraResults('Программист');
+  assert.match(extraResults.innerHTML, /addExtra\(51,101\)/);
+  assert.match(extraResults.innerHTML, /addExtra\(51,102\)/);
   state.children[1].enrollments[0].projectId = 99;
-  context.showExtraResults('Программист'); assert.doesNotMatch(extraResults.innerHTML, /addExtra\(51\)/);
+  context.showExtraResults('Программист'); assert.doesNotMatch(extraResults.innerHTML, /addExtra\(51,101\)/);
 
 });

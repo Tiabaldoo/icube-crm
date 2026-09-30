@@ -299,6 +299,7 @@ export function createApiRouter(pool, {
     ...lessonContext(request), idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }), 201));
   router.post('/lessons/:id/extras', requirePermission('lessons:extras'), run((request) => lessons.addExtra(request.params.id, request.body, lessonContext(request)), 201));
+  router.post('/lessons/:id/extras/:childId/trial-direction', requirePermission('lessons:extras'), run((request) => lessons.makeExtraTrialDirection(request.params.id, request.params.childId, lessonContext(request))));
   router.delete('/lessons/:id/extras/:childId', requirePermission('lessons:extras'), run((request) => lessons.removeExtra(request.params.id, request.params.childId, lessonContext(request)), 200));
   router.get('/lessons/:id/photos', requirePermission('lessons:read'), run((request) => lessonPhotos.list(request.params.id, lessonContext(request))));
   router.post('/lessons/:id/photos', requirePermission('lessons:photos'),

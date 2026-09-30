@@ -144,7 +144,7 @@ function mapLesson(lesson) {
   const date = isoToRu(timestampDate(lesson.startsAt)); const time = `${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)}`;
   const status = lesson.status === 'completed' ? 'Проведено' : lesson.status === 'in_progress' ? 'Идёт' : lesson.status === 'cancelled' ? 'Отменено' : 'Запланировано';
   return {
-    id: Number(lesson.id), groupId: Number(lesson.groupId), isMixed: Boolean(lesson.isMixed), direction: lesson.directionName, projectId: lesson.projectId == null ? null : Number(lesson.projectId), project: lesson.projectName ?? '',
+    id: Number(lesson.id), groupId: Number(lesson.groupId), isMixed: Boolean(lesson.isMixed), directionId: Number(lesson.directionId), direction: lesson.directionName, projectId: lesson.projectId == null ? null : Number(lesson.projectId), project: lesson.projectName ?? '',
     teacherId: Number(lesson.actualTeacherId ?? lesson.plannedTeacherId),
     plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
     siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: calendarOccurrenceKey(lesson.groupId, scheduledDate, timestampTime(lesson.scheduledStartsAt)),
@@ -1256,17 +1256,52 @@ async function toggleTrialApi(childId, trial, isExtra) {
   await putAttendance(childId, Boolean(present), trial);
 }
 
-async function addExtraApi(childId) {
+async function addExtraApi(childId, enrollmentId) {
   const lesson = currentLesson(); if (!lesson) return;
   const projectId = lesson.projectId ?? legacy.state.groups.find((group) => group.id === lesson.groupId)?.projectId;
-  const available = (legacy.state.children.find((child) => Number(child.id) === Number(childId))?.enrollments ?? []).filter((e) => Number(e.projectId) === Number(projectId) && ['Активный', 'active'].includes(e.status));
-  let selected = available[0];
-  if (available.length > 1) {
-    const answer = window.prompt('Выберите направление: ' + available.map((e, i) => `${i + 1} — ${e.direction}`).join('; '), '1');
-    selected = available[Number(answer) - 1];
-  }
+  const available = (legacy.state.children.find((child) => Number(child.id) === Number(childId))?.enrollments ?? []).filter((e) => Number(e.projectId) === Number(projectId) && ['Активный', 'active'].includes(e.status) && e.editable !== false);
+  const selected = available.find((e) => Number(e.id) === Number(enrollmentId));
   if (!selected) return window.alert('Выберите доступное направление ребёнка.');
-  await queueLessonAction({ type: 'add-extra', lessonId: lesson.id, childId: Number(childId), body: { childId: Number(childId), enrollmentId: selected.id } }, { closeModal: true });
+  if (!lesson.isMixed && Number(selected.directionId) !== Number(lesson.directionId)) {
+    const hasLessonDirection = available.some((e) => Number(e.directionId) === Number(lesson.directionId));
+    legacy.state.modal = `<h3>Направление не совпадает</h3><div class="notice">Это занятие группы «${html(lesson.direction)}», а у ребёнка выбрано направление «${html(selected.direction)}». Если продолжить, обычное посещение будет списано с баланса «${html(selected.direction)}».</div>
+      <div class="modal-actions" style="flex-wrap:wrap">${hasLessonDirection ? '' : `<button class="btn" onclick="icubeApi.makeExtraTrialDirection(${Number(childId)})">Создать направление «${html(lesson.direction)}» и сделать ознакомительным</button>`}
+      <button class="btn primary" onclick="icubeApi.continueExtra(${Number(childId)},${Number(selected.id)})">Продолжить</button><button class="btn" onclick="closeModal()">Отмена</button></div>`;
+    legacy.render(); return;
+  }
+  await continueExtraApi(childId, selected.id);
+}
+async function continueExtraApi(childId, enrollmentId) {
+  const lesson = currentLesson(); if (!lesson) return;
+  await queueLessonAction({ type: 'add-extra', lessonId: lesson.id, childId: Number(childId), body: { childId: Number(childId), enrollmentId: Number(enrollmentId) } }, { closeModal: true });
+}
+async function makeExtraTrialDirectionApi(childId) {
+  const lesson = currentLesson(); if (!lesson) return;
+  try {
+    await lessonActions.sync();
+    await api.request(`/lessons/${encodeURIComponent(lesson.id)}/extras/${encodeURIComponent(childId)}/trial-direction`, { method: 'POST' });
+    await reloadLesson(lesson.id, legacy.state.page);
+  } catch (error) { fail(error); }
+}
+function extraOptionsApi(childId) {
+  const lesson = currentLesson(); const extra = lesson?.extras.find((item) => item.childId === Number(childId)); if (!extra) return;
+  const child = legacy.state.children.find((item) => item.id === Number(childId));
+  const projectId = lesson.projectId;
+  const hasDirection = (child?.enrollments ?? []).some((item) => Number(item.projectId) === Number(projectId) && Number(item.directionId) === Number(lesson.directionId) && ['Активный', 'active'].includes(item.status) && item.editable !== false);
+  legacy.state.modal = `<h3>Дополнительные действия</h3><div class="modal-actions" style="flex-wrap:wrap">
+    <button class="btn" onclick="icubeApi.extraTrial(${Number(childId)},${extra.trial ? 'false' : 'true'})">${extra.trial ? 'Сделать обычным' : 'Сделать ознакомительным'}</button>
+    ${!lesson.isMixed && !hasDirection ? `<button class="btn" onclick="icubeApi.makeExtraTrialDirection(${Number(childId)})">Добавить направление «${html(lesson.direction)}» и сделать ознакомительным</button>` : ''}
+    <button class="btn danger" onclick="icubeApi.extraRemove(${Number(childId)})">Удалить из занятия</button>
+    <button class="btn" onclick="closeModal()">Отмена</button></div>`;
+  legacy.render();
+}
+async function extraTrialApi(childId, trial) {
+  legacy.state.modal = null;
+  await toggleTrialApi(childId, trial, true);
+}
+async function extraRemoveApi(childId) {
+  legacy.state.modal = null;
+  await removeExtraApi(childId);
 }
 async function removeExtraApi(childId) {
   const lesson = currentLesson(); if (!lesson) return;
@@ -1864,7 +1899,8 @@ window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
   deleteChildPaymentPrompt, confirmDeleteChildPayment, deleteDirectoryEntity, reload,
   openCalendarEvent, startLesson: startLessonApi, attend: attendApi, toggleExtraAttendance: toggleExtraAttendanceApi,
-  toggleTrial: toggleTrialApi, addExtra: addExtraApi, removeExtra: removeExtraApi, saveQuickChild: saveQuickChildApi,
+  toggleTrial: toggleTrialApi, addExtra: addExtraApi, continueExtra: continueExtraApi, makeExtraTrialDirection: makeExtraTrialDirectionApi,
+  extraOptions: extraOptionsApi, extraTrial: extraTrialApi, extraRemove: extraRemoveApi, removeExtra: removeExtraApi, saveQuickChild: saveQuickChildApi,
   confirmTeacherCreatedChild: confirmTeacherCreatedChildApi,
   finishLesson: finishLessonApi, confirmFinishLesson: confirmFinishLessonApi, saveLessonEdit: saveLessonEditApi,
   cancelCurrentLesson: cancelCurrentLessonApi, markCurrentLessonEmptyTrip: markCurrentLessonEmptyTripApi,
@@ -1908,6 +1944,7 @@ window.toggleExtraAttendanceV138 = window.icubeApi.toggleExtraAttendance;
 window.toggleVisitTrialV121 = window.icubeApi.toggleTrial;
 window.forceVisitTrialV121 = window.icubeApi.toggleTrial;
 window.addExtra = window.icubeApi.addExtra;
+window.icubeExtraOptions = window.icubeApi.extraOptions;
 window.removeExtraFromLessonV138 = window.icubeApi.removeExtra;
 window.saveTeacherQuickChild = window.icubeApi.saveQuickChild;
 window.saveTeacherQuickChildV121 = window.icubeApi.saveQuickChild;

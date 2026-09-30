@@ -3921,19 +3921,19 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           .concat((lesson.extras||[]).map(function(e){return Number(e.childId);}))
       );
       const lessonProjectId=lesson.projectId!=null?lesson.projectId:group.projectId;
-      results=(state.children||[]).filter(function(c){
-        const matchingEnrollment=(c.enrollments||[]).some(function(enrollment){
-          return String(enrollment.projectId)===String(lessonProjectId) && ['Активный','active'].includes(enrollment.status);
-        });
-        return ['Активный','Лид','active','lead'].includes(c.status) && matchingEnrollment && !lessonChildIds.has(Number(c.id)) &&
-          (String(c.name||'').toLowerCase().includes(query) || String(c.phone||'').toLowerCase().includes(query));
-      }).slice(0,4);
+      results=(state.children||[]).flatMap(function(c){
+        if (!['Активный','Лид','active','lead'].includes(c.status) || lessonChildIds.has(Number(c.id)) ||
+            !(String(c.name||'').toLowerCase().includes(query) || String(c.phone||'').toLowerCase().includes(query))) return [];
+        return (c.enrollments||[]).filter(function(enrollment){
+          return String(enrollment.projectId)===String(lessonProjectId) && ['Активный','active'].includes(enrollment.status) && enrollment.editable!==false;
+        }).map(function(enrollment){return {child:c,enrollment:enrollment};});
+      }).slice(0,8);
     }
 
     let html='';
     if(results.length){
-      html+=results.map(function(c){
-        return '<button class="btn" style="width:100%;margin-top:6px;justify-content:flex-start" onclick="addExtra('+c.id+')">'+esc(c.name)+'</button>';
+      html+=results.map(function(row){
+        return '<button class="btn extra-search-result" onclick="addExtra('+row.child.id+','+row.enrollment.id+')">'+esc(row.child.name)+' · <span class="badge">'+esc(row.enrollment.direction)+'</span></button>';
       }).join('');
     }else if(query){
       html+='<div class="muted mini" style="margin-top:8px">Совпадений не найдено.</div>';
@@ -8584,7 +8584,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     const completedRosterEditable=l.done && typeof window.icubeTemporaryTeacherParentRole==='function' && window.icubeTemporaryTeacherParentRole()==='director';
     const secondaryAction=extra
-      ? ((l.done && !completedRosterEditable) ? '' : '<button class="btn small student-extra-remove" aria-label="Убрать с занятия" title="Убрать с занятия" onclick="removeExtraFromLessonV138('+c.id+')">×</button>')
+      ? ((l.done && !completedRosterEditable) ? '' : '<button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="icubeExtraOptions('+c.id+')">⋯</button>')
       : (l.done?'<button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="visitTrialOptionsV121('+c.id+',false)">⋯</button>':'');
 
     const flags=(absenceNotice?'<span class="lesson-student-flag absence">Не будет</span>':'')+
