@@ -105,11 +105,16 @@ function childMatchesSearch(child,query){
  }
  const fields=[child.name,child.parent,child.school].map(normalizeChildSearch);
  const grade=normalizeChildSearch(child.grade).replace(/\s/g,'');
- return normalized.split(' ').every(function(token){
+ const tokens=normalized.replace(/(^|\s)школа\s+(\d{1,2})(?=\s|$)/gu,'$1школа$2').split(' ');
+ return tokens.every(function(token){
    const classLike=/^\d{1,2}[\p{L}]?$/u.test(token);
    if(classLike){
-     if(grade===token || /^\d{1,2}$/.test(token) && new RegExp('^'+token+'[\\p{L}]$','u').test(grade)) return true;
-     return fields.some(function(field){return field.split(' ').includes(token);});
+     if(grade===token) return true;
+     if(/^\d{1,2}$/.test(token) && grade.startsWith(token)){
+       const suffix=grade.slice(token.length);
+       return suffix==='класс'||/^[\p{L}]$/u.test(suffix);
+     }
+     return false;
    }
    return fields.some(function(field){return field.includes(token)||field.replace(/\s/g,'').includes(token);}) ||
      (/^\d{3,}$/.test(token) && phone.includes(token));

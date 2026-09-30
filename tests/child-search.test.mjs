@@ -42,6 +42,10 @@ test('child search matches card fields instantly with normalized tokens and exac
   assert.equal(matches(3, 'елкин'), true, 'ё и е равнозначны');
   assert.equal(matches(1, '2'), true);
   assert.equal(matches(2, '2'), false, 'класс 12 не совпадает с запросом 2');
+  assert.equal(context.probe.childMatchesSearch({ ...children[1], school: 'Школа №2' }, '2'), false,
+    'класс 12 и школа №2 не дают совпадение по классу 2');
+  assert.equal(context.probe.childMatchesSearch({ ...children[1], grade: '2 класс' }, '2'), true);
+  assert.equal(context.probe.childMatchesSearch({ ...children[1], grade: '2Б' }, '2'), true);
   assert.equal(matches(2, 'иванов школа1'), false, 'каждый токен должен найтись в одной карточке');
   context.probe.state.childSearch = 'иванов школа1';
   const html = context.probe.children();
