@@ -288,7 +288,7 @@ test('all required scheduled teacher/director/partner event types are wired in b
 
 test('service worker preserves app-shell/API exclusion and adds real push + notificationclick deep link', async () => {
   const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
-  assert.match(source, /CACHE_NAME = 'icube-crm-shell-v2-/);
+  assert.match(source, /CACHE_NAME = icubePwaShell\.prefix/);
   assert.match(source, /url\.pathname\.includes\('\/api\/'\).*return/s);
   assert.match(source, /addEventListener\('push'/);
   assert.match(source, /showNotification/);
@@ -314,13 +314,14 @@ test('service worker runtime parses push payload, shows tagged notification and 
         scope: 'https://crm.example/app/',
         async showNotification(title, options) { shown.push({ title, options }); },
       },
-      location: { origin: 'https://crm.example' },
+      location: { origin: 'https://crm.example', href: 'https://crm.example/app/service-worker.js' },
       addEventListener(type, handler) { handlers[type] = handler; },
     },
     clients: {
       async matchAll() { return [client]; },
       async openWindow(url) { throw new Error('openWindow must not be used when CRM window exists: ' + url); },
     },
+    importScripts() {}, icubePwaShell: { prefix: 'icube-crm-shell-v3-', paths: [] },
     caches: { open: async () => ({ addAll: async () => {}, put: async () => {}, match: async () => null }), keys: async () => [] },
     fetch: async () => ({ ok: true, clone() { return this; } }),
   };

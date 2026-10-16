@@ -58,15 +58,16 @@ test('A2: placeholder PNG icons имеют реальные install-размер
 
 test('B: service worker versionирует shell, чистит старые cache, кеширует critical assets и не перехватывает API', async () => {
   const source = await readFile(new URL('../service-worker.js', import.meta.url), 'utf8');
+  const shell = await readFile(new URL('../src/frontend/pwa-shell.js', import.meta.url), 'utf8');
   for (const asset of ['index.html','manifest.webmanifest','crm-ui.js','api-sync.mjs','lesson-action-queue.mjs','offline-teacher-snapshot.mjs','icon-192.png','icon-512.png']) {
-    assert.match(source, new RegExp(asset.replaceAll('.', '\\.')));
+    assert.match(shell, new RegExp(asset.replaceAll('.', '\\.')));
   }
-  assert.match(source, /CACHE_NAME = 'icube-crm-shell-v\d+-/);
+  assert.match(source, /CACHE_NAME = icubePwaShell\.prefix/);
   assert.match(source, /key\.startsWith\(CACHE_PREFIX\).*key !== CACHE_NAME/s);
   assert.match(source, /request\.mode === 'navigate'/);
   assert.match(source, /cache\.match\(fallbackUrl\)/);
   assert.match(source, /url\.pathname\.includes\('\/api\/'\).*return/s);
-  assert.doesNotMatch(source, /skipWaiting\(/);
+  assert.match(source, /PWA_ACTIVATE_UPDATE[\s\S]*windows\.some[\s\S]*skipWaiting\(/);
 });
 
 test('C: online teacher state сохраняется и восстанавливает cold offline UI state без финансов', async () => {

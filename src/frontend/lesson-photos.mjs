@@ -8,6 +8,7 @@ const MAX_SOURCE_BYTES = 15 * 1024 * 1024;
 const MAX_PHOTOS = 5;
 const allowedInput = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const staged = new Map();
+let preparingPhoto = 0;
 const objectUrls = new Map();
 const legacy = window.icubeLegacy;
 
@@ -210,6 +211,7 @@ function openFilePicker(childId, replacePhotoId = null, source = 'camera') {
   const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/jpeg,image/png,image/webp'; if (source === 'camera') input.capture = 'environment';
   input.onchange = async () => {
     const file = input.files?.[0]; if (!file) return;
+    preparingPhoto += 1;
     try {
       const optimized = await optimizePhoto(file); const token = id(); const previewUrl = URL.createObjectURL(optimized.blob);
       staged.set(token, { file, optimized, childId, replacePhotoId, previewUrl });
@@ -217,6 +219,7 @@ function openFilePicker(childId, replacePhotoId = null, source = 'camera') {
         <div class="modal-actions lesson-photo-actions"><button class="btn" onclick="icubePhotos.retake('${token}')">Переснять</button><button class="btn primary" onclick="icubePhotos.confirm('${token}',false)">Загрузить</button><button class="btn primary" onclick="icubePhotos.confirm('${token}',true)">Загрузить и сохранить копию</button></div>`;
       legacy.render();
     } catch (error) { window.alert(error.message); }
+    finally { preparingPhoto -= 1; }
   };
   input.click();
 }
@@ -370,6 +373,7 @@ function choosePhotoSource(childId, replacePhotoId = null) {
   legacy.render();
 }
 window.icubePhotos = { capture: choosePhotoSource, camera: openFilePicker, pick: (childId, replacement) => openFilePicker(childId, replacement, 'gallery'), confirm, retake, open: openPhoto, gallery: openGallery, remove: removePhoto, confirmRemove, retry, retryAll, download,
-  loadLessonPhotos, hasPhoto, pendingCount, control, remapChildId };
+  loadLessonPhotos, hasPhoto, pendingCount, control, remapChildId,
+  hasUnsynced: async () => Boolean(preparingPhoto || staged.size || (await queue.all()).length) };
 window.addEventListener('online', () => retryAll().catch(console.error));
 window.icubeAuthReady?.then((profile) => { if (profile) retryAll().catch(console.error); });

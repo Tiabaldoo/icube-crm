@@ -31,6 +31,7 @@ let paymentCreateKey = null;
 let refundSavePending = false;
 let refundCreateKey = null;
 let childSavePending = false;
+let lessonActionPending = 0;
 let childCreateKey = null;
 let authProfile = null;
 let resolveAuthReady = null;
@@ -162,7 +163,7 @@ function mapLesson(lesson) {
     siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: calendarOccurrenceKey(lesson.groupId, scheduledDate, timestampTime(lesson.scheduledStartsAt)),
     enrollmentByChild: Object.fromEntries(lesson.attendances.map((item) => [Number(item.childId), Number(item.enrollmentId)])),
     attendanceDetailsByChild: Object.fromEntries(lesson.attendances.map((item) => [Number(item.childId), { ...item }])),
-    date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
+    date, time, status, topic: lesson.topic ?? '', syncedTopic: lesson.topic ?? '', attendance, trialChildren,
     extras: extras.map((item) => ({ childId: Number(item.childId), enrollmentId: Number(item.enrollmentId), trial: item.trial, present: item.present })),
     photos: {}, started: ['in_progress', 'completed'].includes(lesson.status), done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
     moved: date !== scheduledDate || time !== scheduledTime, intro: lesson.introGroup, emptyTrip: lesson.emptyTrip,
@@ -1163,11 +1164,13 @@ const lessonActions = createLessonActionQueue({ store: globalThis.indexedDB ? un
   onChildResolved: resolveLocalChild, onSynced: refreshAfterLessonSync });
 
 async function queueLessonAction(action, { closeModal = false } = {}) {
+  lessonActionPending += 1;
   try {
     const record = await lessonActions.enqueue(action); applyLessonAction(record);
     if (closeModal) legacy.state.modal = null;
     legacy.render(); await lessonActions.sync();
   } catch (error) { fail(error); }
+  finally { lessonActionPending -= 1; }
 }
 
 async function reloadLesson(lessonId, page = legacy.state.page, { refresh = true } = {}) {
@@ -1842,6 +1845,8 @@ async function restoreColdOfflineTeacher() {
   if (!snapshot) return null;
   const profile = restoreTeacherOfflineSnapshot(snapshot, legacy.state);
   if (!profile) return null;
+  // Older offline snapshots predate the update guard's topic baseline.
+  for (const lesson of legacy.state.lessons) lesson.syncedTopic ??= lesson.topic ?? '';
   applyAuthProfile(profile);
   legacy.state.offlineBootstrap = true;
   await reapplyQueuedLessonState();
@@ -2045,6 +2050,12 @@ window.icubeLessonOffline = {
   readyForPhoto: (lessonId, childId) => lessonActions.readyForPhoto(lessonId, childId),
   mappings: () => lessonActions.mappings(), acknowledgeMapping: (localId) => lessonActions.acknowledgeMapping(localId),
 };
+window.icubePwaUpdateState = async () => ({
+  pending: (await lessonActions.records()).length,
+  saving: groupSavePending || childSavePending || paymentSavePending || refundSavePending || balanceTransferPending || lessonActionPending > 0,
+  draft: Boolean(legacy.state.modal)
+    || legacy.state.lessons.some((lesson) => lesson.syncedTopic !== undefined && lesson.topic !== lesson.syncedTopic),
+});
 window.addEventListener?.('online', () => reconnectTeacherOffline().catch(console.error));
 
 installDeletionUi();
