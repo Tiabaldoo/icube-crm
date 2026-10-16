@@ -86,7 +86,7 @@ test('lesson DTO exposes date-effective preview but keeps frozen main roster and
   const pool = { query: async (sql) => {
     sqlSeen.push(sql);
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[lessonRow()]];
-    if (sql.startsWith('SELECT lesson_id,child_id,roster_type')) return [frozen ? [{ lesson_id: 50, child_id: 9, roster_type: 'main' }] : []];
+    if (sql.startsWith('SELECT lesson_id,child_id,roster_type')) return [frozen ? [{ lesson_id: 50, child_id: 9, roster_type: 'main' }, { lesson_id: 50, child_id: 11, roster_type: 'extra' }] : []];
     if (sql.startsWith('SELECT id,lesson_id,child_id,enrollment_id')) return [[{ id: 3, lesson_id: 50, child_id: 11, enrollment_id: 15,
       attendance_type: 'extra', present: 1, is_trial: 0, price_snapshot: null, charged_lessons: '0.00000000', marked_at: null }]];
     throw new Error(`Unexpected SQL: ${sql}`);
@@ -94,10 +94,10 @@ test('lesson DTO exposes date-effective preview but keeps frozen main roster and
   const lessons = createMysqlLessons(pool);
   const preview = await lessons.get(50, { roles: [] });
   assert.deepEqual(preview.effectiveRoster, [{ childId: '8', type: 'main' }]);
-  assert.deepEqual(preview.roster, []); assert.equal(preview.attendances[0].type, 'extra');
+  assert.deepEqual(preview.roster, []); assert.deepEqual(preview.attendances, []);
   frozen = true;
   const started = await lessons.get(50, { roles: [] });
-  assert.deepEqual(started.roster, [{ childId: '9', type: 'main' }]);
+  assert.deepEqual(started.roster, [{ childId: '9', type: 'main' }, { childId: '11', type: 'extra' }]);
   assert.deepEqual(started.effectiveRoster, []); assert.equal(started.attendances[0].childId, '11');
   assert.ok(sqlSeen.some((sql) => sql.includes('gm.started_on<=DATE(l.starts_at)')));
 });

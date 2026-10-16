@@ -122,7 +122,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       };
       const roster = rosterRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({ childId: String(item.child_id), type: item.roster_type }));
       const effectiveRoster = jsonIds(row.effective_roster_child_ids).map((childId) => ({ childId, type: 'main' }));
-      const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)).map((item) => ({
+      const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)
+        && roster.some((member) => member.childId === String(item.child_id))).map((item) => ({
         id: String(item.id), childId: String(item.child_id), enrollmentId: item.enrollment_id == null ? null : String(item.enrollment_id),
         type: item.attendance_type, present: bool(item.present), trial: bool(item.is_trial),
         ...(hasRole(context, 'director') ? { priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons) } : {}),
@@ -389,7 +390,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     } catch (error) { throw mysqlError(error); }
   }
 
-  async function enrollmentForAttendance(connection, lesson, childId, enrollmentId = null) {
+  async function enrollmentForAttendance(connection, lesson, childId, enrollmentId = null, requirePrice = true) {
     const date = isoDate(lesson.starts_at);
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.balance_lessons,
       COALESCE(
@@ -410,7 +411,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       projectId: lesson.project_id_snapshot, date, startsAt: lesson.starts_at,
     });
     if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет доступного направления в проекте занятия');
-    if (rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
+    if (requirePrice && rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
     return rows[0];
   }
 
@@ -420,6 +421,37 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       WHERE be.attendance_id=:attendanceId AND be.entry_type='attendance' AND reversal.id IS NULL FOR UPDATE`, { attendanceId });
     if (rows.length > 1) throw new ApiProblem(409, 'ATTENDANCE_LEDGER_INCONSISTENT', 'У посещения несколько активных списаний');
     return rows[0] ?? null;
+  }
+
+  async function restoreRosterEnrollment(connection, lesson, childId, rosterType, requirePrice) {
+    // Old DELETE operations could leave a frozen roster without its attendance.
+    // Never guess the first direction, especially for mixed groups and makeups.
+    const [candidates] = await connection.query(`SELECT DISTINCT e.id FROM child_enrollments e
+      ${rosterType === 'main' ? 'JOIN group_memberships gm ON gm.enrollment_id=e.id' : ''}
+      WHERE e.child_id=:childId AND e.project_id=:projectId
+        AND e.started_on<=DATE(:startsAt) AND (e.superseded_at IS NULL OR e.superseded_at>:startsAt)
+        ${rosterType === 'main' ? 'AND gm.group_id=:groupId AND gm.started_on<=DATE(:startsAt) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(:startsAt))' : 'AND (e.ended_on IS NULL OR e.ended_on>=DATE(:startsAt))'}
+      ORDER BY e.id FOR UPDATE`, { childId, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at, groupId: lesson.group_id });
+    if (candidates.length !== 1) throw new ApiProblem(409, 'ATTENDANCE_ENROLLMENT_AMBIGUOUS',
+      'Не удалось однозначно восстановить направление посещения на дату занятия. Требуется проверка администратором проекта.');
+    return enrollmentForAttendance(connection, lesson, childId, candidates[0].id, requirePrice);
+  }
+
+  async function assertAttendanceCorrectionSafe(connection, attendance, lesson) {
+    // Locking reads must see dependencies committed before the enrollment lock,
+    // even if an earlier teacher-access read opened a REPEATABLE READ snapshot.
+    for (const sql of [
+      'SELECT id FROM balance_transfers WHERE source_enrollment_id=:enrollmentId OR target_enrollment_id=:enrollmentId LIMIT 1 FOR UPDATE',
+      'SELECT id FROM enrollment_project_transfers WHERE source_enrollment_id=:enrollmentId OR target_enrollment_id=:enrollmentId LIMIT 1 FOR UPDATE',
+      'SELECT id FROM refunds WHERE enrollment_id=:enrollmentId AND deleted_at IS NULL LIMIT 1 FOR UPDATE',
+      'SELECT id FROM partner_settlements WHERE project_id=:projectId AND DATE(:startsAt) BETWEEN period_from AND period_to LIMIT 1 FOR UPDATE',
+    ]) {
+      const [dependencies] = await connection.query(sql, {
+        enrollmentId: attendance.enrollment_id, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
+      });
+      if (dependencies.length) throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
+        'Посещение связано с переносами, возвратами или рассчитанным периодом. Для безопасного исправления обратитесь к администратору проекта.');
+    }
   }
 
   async function debitAttendance(connection, attendance, enrollment, lesson, context) {
@@ -447,10 +479,19 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     });
   }
 
-  async function reverseAttendanceDebit(connection, attendance, context) {
+  async function reverseAttendanceDebit(connection, attendance, context, enrollment = null) {
     const debit = await activeAttendanceDebit(connection, attendance.id);
     if (!debit) return null;
     const [consumptions] = await connection.query('SELECT balance_lot_id,lessons FROM balance_lot_consumptions WHERE balance_entry_id=:entryId FOR UPDATE', { entryId: debit.id });
+    if (enrollment) {
+      const funded = consumptions.reduce((sum, item) => sum + lessonUnits(String(item.lessons)), 0n);
+      const uncovered = -lessonUnits(String(debit.lessons_delta)) - funded;
+      const balance = lessonUnits(String(enrollment.balance_lessons));
+      if (String(debit.enrollment_id) !== String(enrollment.id) || uncovered > (balance < 0n ? -balance : 0n)) {
+        throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
+          'Долг за посещение уже погашен последующими операциями. Требуется проверка финансовой истории администратором проекта.');
+      }
+    }
     for (const consumption of consumptions) {
       await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: consumption.balance_lot_id, lessons: String(consumption.lessons) });
     }
@@ -465,7 +506,54 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       id: debit.enrollment_id, lessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))),
     });
     await connection.query('UPDATE attendances SET charged_lessons=0 WHERE id=:id', { id: attendance.id });
-    return { debitId: debit.id, reversalId: reversal.insertId };
+    return { debitId: debit.id, reversalId: reversal.insertId, restoredLessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))) };
+  }
+
+  async function setAttendance(connection, lesson, childId, rosterType, body, context, selectedEnrollment = null) {
+    const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
+    let attendance = rows[0];
+    const present = bool(body.present);
+    const trial = body.trial === undefined ? bool(attendance?.is_trial) : bool(body.trial);
+    if (!attendance && !present && body.trial === undefined) return;
+    const enrollment = selectedEnrollment ?? (attendance?.enrollment_id
+      ? await enrollmentForAttendance(connection, lesson, childId, attendance.enrollment_id, present && !trial)
+      : await restoreRosterEnrollment(connection, lesson, childId, rosterType, present && !trial));
+    if (attendance && bool(attendance.present) === present && bool(attendance.is_trial) === trial
+      && String(attendance.enrollment_id) === String(enrollment.id) && (present || attendance.marked_at == null)) {
+      if (lesson.status !== 'completed') return;
+      const debit = await activeAttendanceDebit(connection, attendance.id);
+      if (present && !trial ? debit != null : debit == null) return;
+    }
+    if (lesson.status === 'completed') {
+      await assertAttendanceCorrectionSafe(connection, attendance ?? { enrollment_id: enrollment.id, child_id: childId }, lesson);
+      if (attendance) {
+        const originalEnrollment = String(attendance.enrollment_id) === String(enrollment.id) ? enrollment
+          : await enrollmentForAttendance(connection, lesson, childId, attendance.enrollment_id, false);
+        const reversal = await reverseAttendanceDebit(connection, attendance, context, originalEnrollment);
+        if (reversal && String(originalEnrollment.id) === String(enrollment.id)) enrollment.balance_lessons = lessonDecimal(lessonUnits(String(enrollment.balance_lessons)) + lessonUnits(reversal.restoredLessons));
+      }
+    }
+    const before = attendance ? { present: bool(attendance.present), trial: bool(attendance.is_trial), enrollmentId: String(attendance.enrollment_id) } : null;
+    if (!attendance) {
+      const [created] = await connection.query(`INSERT INTO attendances
+        (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id)
+        VALUES (:lessonId,:childId,:enrollmentId,:type,FALSE,:trial,:actorId)`, {
+        lessonId: lesson.id, childId, enrollmentId: enrollment.id, type: rosterType, trial, actorId: context.userId ?? null,
+      });
+      attendance = { id: created.insertId, enrollment_id: enrollment.id, child_id: childId };
+    }
+    // Retain the enrollment pin and reversed ledger for restoration/audit. An
+    // absent row has no visit marker, so it cannot block empty-child deletion.
+    await connection.query(`UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=:type,present=:present,is_trial=:trial,
+      marked_by_user_id=:actorId,marked_at=IF(:present,NOW(6),NULL),price_snapshot=NULL,charged_lessons=0 WHERE id=:id`, {
+      id: attendance.id, enrollmentId: enrollment.id, type: rosterType, present, trial, actorId: context.userId ?? null,
+    });
+    if (lesson.status === 'completed' && present && !trial) await debitAttendance(connection, attendance, enrollment, lesson, context);
+    await connection.query('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data) VALUES (:actorId,\'attendance.update\',\'attendance\',:id,:before,:after)', {
+      actorId: context.userId ?? null, id: attendance.id, before: JSON.stringify(before),
+      after: JSON.stringify({ lessonId: String(lesson.id), childId: String(childId), present, trial, enrollmentId: String(enrollment.id) }),
+    });
+    if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
   }
 
   async function purgeAttendanceLedger(connection, attendanceId) {
@@ -523,30 +611,14 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
   }
 
   async function putAttendance(lessonId, childId, body, context = {}) {
+    childId = identifier(childId, 'childId');
     try {
       await inTransaction(pool, async (connection) => {
         const lesson = await lockLesson(connection, lessonId); await assertAccess(connection, lesson, context);
         if (!['in_progress', 'completed'].includes(lesson.status)) throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Сначала начните занятие');
         const [roster] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId: identifier(childId, 'childId') });
         if (!roster.length) throw new ApiProblem(409, 'CHILD_NOT_IN_LESSON', 'Ребёнок не входит в состав занятия');
-        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
-        if (!rows.length) throw new ApiProblem(409, 'ATTENDANCE_NOT_FOUND', 'Строка посещения не создана');
-        const attendance = rows[0];
-        const enrollment = await enrollmentForAttendance(connection, lesson, childId, attendance.enrollment_id);
-        const present = bool(body.present); const trial = body.trial === undefined ? bool(attendance.is_trial) : bool(body.trial);
-        if (attendance.marked_at != null && bool(attendance.present) === present && bool(attendance.is_trial) === trial && String(attendance.enrollment_id) === String(enrollment.id)) return;
-        if (lesson.status === 'completed') await reverseAttendanceDebit(connection, attendance, context);
-        await connection.query(`UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=:type,present=:present,is_trial=:trial,
-          marked_by_user_id=:actorId,marked_at=NOW(6),price_snapshot=IF(:present AND NOT :trial,price_snapshot,NULL),charged_lessons=0 WHERE id=:id`, {
-          id: attendance.id, enrollmentId: enrollment.id, type: roster[0].roster_type, present, trial, actorId: context.userId ?? null,
-        });
-        if (lesson.status === 'completed' && present && !trial) await debitAttendance(connection, attendance, enrollment, lesson, context);
-        await connection.query('INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data) VALUES (:actorId,\'attendance.update\',\'attendance\',:id,:before,:after)', {
-          actorId: context.userId ?? null, id: attendance.id,
-          before: JSON.stringify({ present: bool(attendance.present), trial: bool(attendance.is_trial), enrollmentId: String(attendance.enrollment_id) }),
-          after: JSON.stringify({ present, trial, enrollmentId: String(enrollment.id) }),
-        });
-        if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+        await setAttendance(connection, lesson, childId, roster[0].roster_type, body, context);
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -583,26 +655,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
 
   async function removeAttendance(lessonId, childId, context = {}) {
     if (!hasRole(context, 'director') && !hasRole(context, 'partner')) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить ошибочное посещение может только администратор проекта');
-    childId = identifier(childId, 'childId');
-    try {
-      await inTransaction(pool, async (connection) => {
-        const lesson = await lockLesson(connection, lessonId);
-        await assertAccess(connection, lesson, context);
-        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
-        if (!rows.length) throw new ApiProblem(404, 'ATTENDANCE_NOT_FOUND', 'Посещение не найдено');
-        const attendance = rows[0];
-        await reverseAttendanceDebit(connection, attendance, context);
-        await purgeAttendanceLedger(connection, attendance.id);
-        await connection.query('DELETE FROM attendances WHERE id=:id', { id: attendance.id });
-        if (attendance.attendance_type === 'extra') {
-          await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
-        }
-        if (lesson.status === 'completed') {
-          await recalculateSalary(connection, lesson);
-        }
-      });
-      return get(lessonId, context);
-    } catch (error) { throw mysqlError(error); }
+    return putAttendance(lessonId, childId, { present: false }, context);
   }
 
   async function cancel(lessonId, context = {}) {
@@ -684,15 +737,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         const trial = !(await priorVisit(connection, enrollment.id, lesson));
         await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
           VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
-        const [result] = await connection.query(`INSERT INTO attendances
-          (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id,marked_at)
-          VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,:trial,:actorId,NOW(6))`, {
-          lessonId: lesson.id, childId, enrollmentId: enrollment.id, trial, actorId: context.userId ?? null,
-        });
-        if (lesson.status === 'completed' && !trial) {
-          await debitAttendance(connection, { id: result.insertId }, enrollment, lesson, context);
-          await recalculateSalary(connection, lesson);
-        } else if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+        await setAttendance(connection, lesson, childId, 'extra', { present: true, trial }, context, enrollment);
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -734,26 +779,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         const [roster] = await connection.query(`SELECT roster_type FROM lesson_roster_members
           WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE`, { lessonId: lesson.id, childId });
         if (roster.length && roster[0].roster_type !== 'extra') throw new ApiProblem(409, 'CHILD_ALREADY_IN_LESSON', 'Ребёнок уже в основном составе занятия');
-        if (roster.length) {
-          const [rows] = await connection.query(`SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE`, { lessonId: lesson.id, childId });
-          if (!rows.length) throw new ApiProblem(409, 'ATTENDANCE_NOT_FOUND', 'Посещение не найдено');
-          const attendance = rows[0];
-          if (String(attendance.enrollment_id) === String(enrollmentId) && bool(attendance.is_trial) && lessonUnits(String(attendance.charged_lessons ?? '0')) === 0n) return;
-          if (lesson.status === 'completed') await reverseAttendanceDebit(connection, attendance, context);
-          await connection.query(`UPDATE attendances SET enrollment_id=:enrollmentId,is_trial=TRUE,
-            price_snapshot=NULL,charged_lessons=0,marked_at=NOW(6),marked_by_user_id=:actorId WHERE id=:id`, {
-            enrollmentId, actorId: context.userId ?? null, id: attendance.id,
-          });
-        } else {
+        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
+        if (!roster.length) {
           await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
             VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
-          await connection.query(`INSERT INTO attendances
-            (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id,marked_at)
-            VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,TRUE,:actorId,NOW(6))`, {
-            lessonId: lesson.id, childId, enrollmentId, actorId: context.userId ?? null,
-          });
         }
-        if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+        const selected = await enrollmentForAttendance(connection, lesson, childId, enrollmentId, false);
+        await setAttendance(connection, lesson, childId, 'extra', { present: roster.length ? bool(rows[0]?.present) : true, trial: true }, context, selected);
       });
       return get(lessonId, context);
     } catch (error) { throw mysqlError(error); }
@@ -771,11 +803,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           WHERE a.lesson_id=:lessonId AND a.child_id=:childId AND r.roster_type='extra' FOR UPDATE`, { lessonId: lesson.id, childId });
         if (!rows.length) return;
         if (lesson.status === 'completed') {
-          await reverseAttendanceDebit(connection, rows[0], context);
-          await purgeAttendanceLedger(connection, rows[0].id);
-          await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
+          await setAttendance(connection, lesson, childId, 'extra', { present: false }, context);
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
-          await recalculateSalary(connection, lesson);
         } else {
           await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
@@ -856,7 +885,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: lesson.id, childId, actorId: context.userId ?? null });
         await connection.query(`INSERT INTO attendances
           (lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,marked_by_user_id,marked_at)
-          VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,TRUE,:actorId,NOW(6))`, {
+          VALUES (:lessonId,:childId,:enrollmentId,'extra',TRUE,FALSE,:actorId,NOW(6))`, {
           lessonId: lesson.id, childId, enrollmentId: enrollment.insertId, actorId: context.userId ?? null,
         });
         if (hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
@@ -869,7 +898,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
             childId, body: `${name} создан преподавателем во время занятия и ожидает проверки.`,
           });
         }
-        if (lesson.status === 'completed') await recalculateSalary(connection, lesson);
+        if (lesson.status === 'completed') {
+          const selected = await enrollmentForAttendance(connection, lesson, childId, enrollment.insertId);
+          const [createdAttendance] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
+          await assertAttendanceCorrectionSafe(connection, createdAttendance[0], lesson);
+          await debitAttendance(connection, createdAttendance[0], selected, lesson, context);
+          await recalculateSalary(connection, lesson);
+        }
       });
       return { childId: String(childId), lesson: await get(lessonId, context) };
     } catch (error) { throw mysqlError(error); }

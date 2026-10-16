@@ -146,7 +146,9 @@ function mapLesson(lesson) {
       moved: lesson.startsAt !== lesson.scheduledStartsAt || lesson.endsAt !== lesson.scheduledEndsAt };
   }
   const main = lesson.attendances.filter((item) => item.type === 'main');
-  const extras = lesson.attendances.filter((item) => item.type === 'extra');
+  const extras = lesson.roster.filter((item) => item.type === 'extra').map((member) =>
+    lesson.attendances.find((item) => item.type === 'extra' && String(item.childId) === String(member.childId))
+      ?? { childId: member.childId, enrollmentId: null, present: false, trial: false });
   const attendance = {}; const trialChildren = {};
   main.forEach((item) => { attendance[Number(item.childId)] = item.present; trialChildren[Number(item.childId)] = item.trial; });
   const scheduledDate = isoToRu(timestampDate(lesson.scheduledStartsAt));
@@ -1089,7 +1091,7 @@ function applyLessonAction(action) {
       id: tempId, name: action.body.name, birth: '', school: '', grade: '', parent: '', phone: action.body.phone ?? '', status: 'Лид', note: '',
       needsDirectorReview: true, createdByTeacher: true, enrollments: [],
     });
-    if (!(lesson.extras ?? []).some((item) => Number(item.childId) === tempId)) lesson.extras.push({ childId: tempId, present: true, trial: true, createdByTeacher: true });
+    if (!(lesson.extras ?? []).some((item) => Number(item.childId) === tempId)) lesson.extras.push({ childId: tempId, present: true, trial: false, createdByTeacher: true });
   } else if (action.type === 'finish') {
     lesson.done = true; lesson.started = true; lesson.status = 'Проведено'; lesson.attendanceApplied = true;
   }
@@ -1097,7 +1099,7 @@ function applyLessonAction(action) {
 
 async function reapplyQueuedLessonState(lessonId = null) {
   if (!lessonActions) return;
-  const actions = lessonId == null ? await lessonActions.records() : await lessonActions.pendingForLesson(lessonId);
+  const actions = await lessonActions.optimisticRecords(lessonId);
   for (const action of actions) applyLessonAction(action);
 }
 
@@ -1124,14 +1126,15 @@ async function resolveLocalChild(_lessonId, localId, serverId) {
 
 async function sendLessonAction(action) {
   const lessonId = encodeURIComponent(action.lessonId); const childId = action.childId == null ? null : encodeURIComponent(action.childId);
-  if (action.type === 'start') return api.request(`/lessons/${lessonId}/start`, { method: 'POST', body: action.body });
-  if (action.type === 'attendance') return api.request(`/lessons/${lessonId}/attendance/${childId}`, { method: 'PUT', body: action.body });
-  if (action.type === 'add-extra') return api.request(`/lessons/${lessonId}/extras`, { method: 'POST', body: { childId: Number(action.childId), enrollmentId: action.body?.enrollmentId } });
-  if (action.type === 'remove-extra') return api.request(`/lessons/${lessonId}/extras/${childId}`, { method: 'DELETE' });
-  if (action.type === 'quick-child') return api.request(`/lessons/${lessonId}/quick-child`, { method: 'POST', body: action.body, idempotencyKey: action.id });
+  const command = (path, options) => api.request(path, { ...options, expectedActorId: action.ownerId });
+  if (action.type === 'start') return command(`/lessons/${lessonId}/start`, { method: 'POST', body: action.body });
+  if (action.type === 'attendance') return command(`/lessons/${lessonId}/attendance/${childId}`, { method: 'PUT', body: action.body });
+  if (action.type === 'add-extra') return command(`/lessons/${lessonId}/extras`, { method: 'POST', body: { childId: Number(action.childId), enrollmentId: action.body?.enrollmentId } });
+  if (action.type === 'remove-extra') return command(`/lessons/${lessonId}/extras/${childId}`, { method: 'DELETE' });
+  if (action.type === 'quick-child') return command(`/lessons/${lessonId}/quick-child`, { method: 'POST', body: action.body, idempotencyKey: action.id });
   if (action.type === 'finish') {
-    if (action.body.topic) await api.update('lessons', action.lessonId, { topic: action.body.topic });
-    return api.request(`/lessons/${lessonId}/finish`, { method: 'POST', body: {} });
+    if (action.body.topic) await command(`/lessons/${lessonId}`, { method: 'PATCH', body: { topic: action.body.topic } });
+    return command(`/lessons/${lessonId}/finish`, { method: 'POST', body: {} });
   }
   throw new Error('Неизвестная команда занятия');
 }
@@ -1145,13 +1148,17 @@ async function refreshAfterLessonSync(lessonIds) {
   if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) await reloadTeacher({ render: true });
 }
 
-function setLessonSyncStatus(status) {
-  legacy.state.lessonSyncStatus = status;
+function setLessonSyncStatus(status, items = []) {
+  const rejected = items.find((item) => item.state === 'error' && lessonActions.owns(item));
+  legacy.state.lessonSyncStatus = { ...status, errorMessage: rejected?.lastError ?? null };
   if (legacy.state.page === 'teacherLesson' && globalThis.window && typeof globalThis.window.teacherShell === 'function'
     && globalThis.document?.querySelector?.('#app')) legacy.render();
 }
 
 const lessonActions = createLessonActionQueue({ store: globalThis.indexedDB ? undefined : createMemoryLessonActionStore(), send: sendLessonAction, onStatus: setLessonSyncStatus,
+  getOwner: () => authProfile?.id ?? null,
+  onConflict: (action, error) => error.code === 'LESSON_ACTOR_CHANGED'
+    ? showLogin(error.message) : refreshAfterLessonSync([action.lessonId]),
   onChildResolved: resolveLocalChild, onSynced: refreshAfterLessonSync });
 
 async function queueLessonAction(action, { closeModal = false } = {}) {
@@ -1601,6 +1608,8 @@ function applyAuthProfile(profile) {
 
 async function reconcileOfflineSnapshotIdentity(profile) {
   const snapshot = await loadTeacherOfflineSnapshot().catch(() => null);
+  // Legacy commands have no provable actor. Keep them held across logins, even
+  // when a snapshot exists: older sessions may have left commands in the same DB.
   if (snapshot && !teacherSnapshotMatchesProfile(snapshot, profile)) await clearTeacherOfflineSnapshot().catch(() => {});
 }
 
@@ -1698,6 +1707,8 @@ async function loginFromForm() {
 }
 
 async function logout() {
+  // Let any already dispatched request finish under the current session before logout.
+  await lessonActions.sync().catch(() => {});
   if (window.icubePush?.unbind) await window.icubePush.unbind().catch((error) => console.error('Не удалось отвязать push subscription', error));
   try { await api.request('/auth/logout', { method: 'POST' }); }
   catch (error) { if (!(error instanceof ApiError) || error.status !== 401) console.error(error); }
@@ -2009,11 +2020,13 @@ if (typeof teacherLessonBeforeOffline === 'function') window.teacherLesson = fun
   const lesson = currentLesson(); const localPhotos = Object.values(lesson?.photos ?? {}).flat().filter((photo) => photo?.localId);
   const failed = status.failed + localPhotos.filter((photo) => photo.status === 'error').length;
   const pending = status.pending + localPhotos.filter((photo) => photo.status !== 'error').length;
-  const message = failed ? `Не удалось отправить ${failed} изменений`
+  const held = Number(legacy.state.lessonSyncStatus?.held ?? 0);
+  const message = failed ? `Не удалось отправить ${failed} изменений${status.errorMessage ? ': ' + status.errorMessage : ''}`
+    : held ? `${held} изменений сохранены для другого или неизвестного пользователя; они не отправляются`
     : pending ? `${pending} изменений ожидают отправки` : 'Все изменения сохранены';
-  const tone = failed ? 'error' : pending ? 'pending' : 'saved';
+  const tone = failed ? 'error' : pending || held ? 'pending' : 'saved';
   const retry = failed ? '<button class="btn small" onclick="icubeApi.retryLessonSync();window.icubePhotos?.retryAll()">Повторить синхронизацию</button>' : '';
-  return `<div class="lesson-sync-status is-${tone}"><span>${message}</span>${retry}</div>${output}`;
+  return `<div class="lesson-sync-status is-${tone}"><span>${html(message)}</span>${retry}</div>${output}`;
 };
 
 window.icubeLessonChildDirection = (lesson, childId) => {

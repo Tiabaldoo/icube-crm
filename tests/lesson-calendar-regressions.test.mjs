@@ -42,10 +42,11 @@ test('сервер выбирает собственный enrollment extra в �
   const addEnd = lessonSource.indexOf('async function removeExtra', addStart);
   const addBlock = lessonSource.slice(addStart, addEnd);
   assert.match(addBlock, /\['in_progress', 'completed'\]/);
-  assert.match(addBlock, /lesson\.status === 'completed' && !trial/);
-  assert.match(addBlock, /await debitAttendance/);
-  assert.match(addBlock, /await recalculateSalary/);
-  assert.match(addBlock, /attendance_type,present,is_trial/);
+  assert.match(addBlock, /await setAttendance\(connection, lesson, childId, 'extra'/);
+  const setBlock = lessonSource.slice(lessonSource.indexOf('async function setAttendance'), lessonSource.indexOf('async function purgeAttendanceLedger'));
+  assert.match(setBlock, /lesson\.status === 'completed' && present && !trial/);
+  assert.match(setBlock, /await debitAttendance/);
+  assert.match(setBlock, /await recalculateSalary/);
 });
 
 test('teacher не может менять состав completed lesson, а director temporary teacher-view получает UI-доступ', () => {

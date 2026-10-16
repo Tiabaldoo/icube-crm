@@ -87,7 +87,7 @@ test('teacher DTO реального lesson service не раскрывает sa
       actual_starts_at: null, actual_ends_at: null, status: 'scheduled', topic: null, is_intro_group: 0, is_empty_trip: 0,
       roster_frozen_at: null, attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 1,
     }]];
-    if (sql.includes('lesson_roster_members')) return [[]];
+    if (sql.includes('lesson_roster_members')) return [[{ lesson_id: 1, child_id: 12, roster_type: 'main' }]];
     if (sql.includes('FROM attendances')) return [[{ id: 11, lesson_id: 1, child_id: 12, enrollment_id: 13,
       attendance_type: 'main', present: 1, is_trial: 0, price_snapshot: '1025.00', charged_lessons: '1.00000000', marked_at: null }]];
     throw new Error(`Неожиданный SQL: ${sql}`);
@@ -122,7 +122,7 @@ test('teacher quick-child создаёт ребёнка, enrollment и attendanc
     attendance_applied_at: null, completed_at: null, cancelled_at: null, lock_version: 2,
   };
   const counters = { children: 0, enrollments: 0, roster: 0, attendances: 0, notifications: 0 };
-  let childId = null; let attendanceParams;
+  let childId = null; let attendanceParams; let attendanceTrial;
   const handler = async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
     if (sql.startsWith('SELECT tp.teacher_id FROM teacher_projects')) return [[{ teacher_id: 5 }]];
@@ -130,7 +130,7 @@ test('teacher quick-child создаёт ребёнка, enrollment и attendanc
     if (sql.startsWith('INSERT INTO children')) { counters.children += 1; childId = 91; return [{ insertId: childId }]; }
     if (sql.startsWith('INSERT INTO child_enrollments')) { counters.enrollments += 1; return [{ insertId: 92 }]; }
     if (sql.startsWith('INSERT INTO lesson_roster_members')) { counters.roster += 1; return [{ insertId: 1 }]; }
-    if (sql.startsWith('INSERT INTO attendances')) { counters.attendances += 1; attendanceParams = params; return [{ insertId: 93 }]; }
+    if (sql.startsWith('INSERT INTO attendances')) { counters.attendances += 1; attendanceParams = params; attendanceTrial = sql.includes("'extra',TRUE,TRUE"); return [{ insertId: 93 }]; }
     if (sql.startsWith('INSERT INTO notifications')) { counters.notifications += 1; return [{ insertId: 94 }]; }
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[{
       ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots', site_name: 'Площадка',
@@ -138,7 +138,7 @@ test('teacher quick-child создаёт ребёнка, enrollment и attendanc
     }]];
     if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [[{ lesson_id: 61, child_id: 91, roster_type: 'extra' }]];
     if (sql.includes('FROM attendances WHERE lesson_id IN')) return [[{ id: 93, lesson_id: 61, child_id: 91, enrollment_id: 92,
-      attendance_type: 'extra', present: 1, is_trial: 1, price_snapshot: null, charged_lessons: '0.00000000', marked_at: '2026-09-23 10:05:00' }]];
+      attendance_type: 'extra', present: 1, is_trial: attendanceTrial, price_snapshot: null, charged_lessons: '0.00000000', marked_at: '2026-09-23 10:05:00' }]];
     if (sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [[]];
     throw new Error(`Неожиданный SQL: ${sql}`);
   };
@@ -149,7 +149,7 @@ test('teacher quick-child создаёт ребёнка, enrollment и attendanc
   assert.equal(created.childId, '91'); assert.equal(retried.childId, '91');
   assert.deepEqual(counters, { children: 1, enrollments: 1, roster: 1, attendances: 1, notifications: 1 });
   assert.equal(attendanceParams.childId, 91); assert.equal(attendanceParams.enrollmentId, 92);
-  assert.equal(created.lesson.attendances[0].present, true); assert.equal(created.lesson.attendances[0].trial, true);
+  assert.equal(created.lesson.attendances[0].present, true); assert.equal(created.lesson.attendances[0].trial, false);
   await assert.rejects(
     service.quickChild(61, { name: 'Чужой Ребёнок' }, { ...context, teacherId: '6', idempotencyKey: 'foreign-command' }),
     (error) => error.status === 403,
@@ -592,7 +592,7 @@ test('обычный teacher не может add/remove extra в completed lesso
 });
 
 
-test('completed extra удаляется физически после reversal и второй remove не повторяет reversal', async () => {
+test('completed extra leaves technical reversed attendance outside roster and repeated removal is harmless', async () => {
   const lesson = {
     id: 90, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3,
     planned_teacher_id: 6, actual_teacher_id: 6, status: 'completed', deleted_at: null,
@@ -614,6 +614,11 @@ test('completed extra удаляется физически после reversal 
   let purgeQueries = 0;
   const handler = async (sql, params = {}) => {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId')) return [[attendances.find((a) => String(a.child_id) === String(params.childId))].filter(Boolean)];
+    if (sql.startsWith('SELECT e.id,e.child_id,e.direction_id,e.balance_lessons')) return [[{ id: 9, current_price: '1025.00', balance_lessons: '3.00000000' }]];
+    if (/^SELECT id FROM (balance_transfers|enrollment_project_transfers|refunds|partner_settlements) WHERE/.test(sql)) return [[]];
+    if (sql.startsWith('UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=')) { Object.assign(attendances.find((a) => a.id === params.id), { present: params.present, is_trial: params.trial, marked_at: null }); return [{ affectedRows: 1 }]; }
+    if (sql.startsWith('INSERT INTO audit_log')) return [{ insertId: 1 }];
     if (sql.startsWith('SELECT a.* FROM attendances a JOIN lesson_roster_members')) {
       const row = attendances.find((a) => String(a.child_id) === String(params.childId) && roster.some((r) => String(r.child_id) === String(params.childId)));
       return [[row].filter(Boolean)];
@@ -648,7 +653,9 @@ test('completed extra удаляется физически после reversal 
   assert.equal(afterRemove.roster.some((row) => row.childId === '8'), false);
   assert.equal(afterRemove.attendances.some((row) => row.childId === '8'), false);
   assert.equal(reversalCount, 1);
-  assert.equal(purgeQueries, 3);
+  assert.equal(purgeQueries, 0);
+  assert.equal(attendances.find((a) => a.id === 70).present, false);
+  assert.equal(attendances.find((a) => a.id === 70).marked_at, null);
   assert.equal(salaryCountQueries, 1);
 
   const reloaded = await service.get(90, context);

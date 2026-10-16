@@ -281,7 +281,13 @@ export function createApiRouter(pool, {
     actorUserId: request.auth?.userId ?? null,
   }), 201));
 
-  const lessonContext = (request) => ({ userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [], teacherId: request.auth?.teacherId ?? null, projectIds: request.auth?.projectIds ?? [] });
+  const lessonContext = (request) => {
+    const expectedActor = request.get('X-Expected-Actor-Id');
+    if (expectedActor != null && expectedActor !== String(request.auth?.userId ?? '')) {
+      throw new ApiProblem(409, 'LESSON_ACTOR_CHANGED', 'Пользователь сессии изменился. Войдите под пользователем, который сохранил эти изменения.');
+    }
+    return { userId: request.auth?.userId ?? null, roles: request.auth?.roles ?? [], teacherId: request.auth?.teacherId ?? null, projectIds: request.auth?.projectIds ?? [] };
+  };
   router.get('/lessons', requirePermission('lessons:read'), run((request) => lessons.list(request.query, lessonContext(request))));
   router.get('/lesson-deletions', requirePermission('lessons:read'), run((request) => lessons.deletedOccurrences(lessonContext(request))));
   router.get('/lessons/:id', requirePermission('lessons:read'), run((request) => lessons.get(request.params.id, lessonContext(request))));

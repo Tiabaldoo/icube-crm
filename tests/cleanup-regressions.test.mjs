@@ -51,7 +51,7 @@ test('деактивация группы закрывает memberships, уда
   assert.equal(child.enrollments[0].status, 'active');
 });
 
-test('удаление ошибочного посещения восстанавливает баланс и lot, затем очищает attendance ledger', async () => {
+test('удаление ошибочного посещения возвращает FIFO и сохраняет отменённую проводку для аудита', async () => {
   const lesson = {
     id: 50, group_id: 4, direction_id_snapshot: 1, project_id_snapshot: 2, site_id_snapshot: 3, planned_teacher_id: 6,
     actual_teacher_id: 6, status: 'completed', scheduled_starts_at: '2026-09-14 10:00:00', scheduled_ends_at: '2026-09-14 11:00:00',
@@ -63,6 +63,10 @@ test('удаление ошибочного посещения восстана�
   const handler = async (sql, params = {}) => {
     calls.push({ sql, params });
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
+    if (sql.startsWith('SELECT roster_type FROM lesson_roster_members')) return [[{ roster_type: 'main' }]];
+    if (sql.startsWith('SELECT e.id,e.child_id,e.direction_id,e.balance_lessons')) return [[{ id: 9, current_price: '1025.00', balance_lessons: '3.00000000' }]];
+    if (/^SELECT id FROM (balance_transfers|enrollment_project_transfers|refunds|partner_settlements) WHERE/.test(sql)) return [[]];
+    if (sql.startsWith('INSERT INTO audit_log')) return [{ insertId: 82 }];
     if (sql === 'SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE') return [[{ id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'main', present: 1, is_trial: 0 }]];
     if (sql.includes("be.attendance_id=:attendanceId AND be.entry_type='attendance'")) return [[{ id: 80, enrollment_id: 9, lessons_delta: '-1.00000000', amount_delta: '-1025.00', unit_price_snapshot: '1025.00' }]];
     if (sql.startsWith('SELECT balance_lot_id,lessons')) return [[{ balance_lot_id: 60, lessons: '1.00000000' }]];
@@ -78,8 +82,8 @@ test('удаление ошибочного посещения восстана�
   await createMysqlLessons(transactionPool(handler)).removeAttendance(50, 8, { roles: ['director'] });
   assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE balance_lots SET remaining_lessons=remaining_lessons+') && params.lessons === '1.00000000'));
   assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+') && params.lessons === '1.00000000'));
-  assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE FROM attendances WHERE id=')));
-  assert.ok(calls.some(({ sql }) => sql.startsWith('DELETE reversal FROM balance_entries')));
+  assert.ok(calls.some(({ sql, params }) => sql.startsWith('UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=') && params.present === false));
+  assert.ok(!calls.some(({ sql }) => sql.startsWith('DELETE')));
   assert.ok(calls.some(({ sql }) => sql.startsWith('UPDATE salary_accruals SET reversed_at=')));
 });
 

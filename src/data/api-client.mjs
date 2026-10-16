@@ -15,12 +15,13 @@ export class ApiClient {
     this.fetchImpl = fetchImpl;
   }
 
-  async request(path, { method = 'GET', body, idempotencyKey, signal } = {}) {
+  async request(path, { method = 'GET', body, idempotencyKey, signal, expectedActorId } = {}) {
     const token = await this.getAccessToken();
     const headers = { Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (token) headers.Authorization = `Bearer ${token}`;
     if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    if (expectedActorId != null) headers['X-Expected-Actor-Id'] = String(expectedActorId);
     const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers,

@@ -75,7 +75,13 @@ export function freezeRosterMembers(members) {
   const unique = new Map();
   for (const member of members) {
     const childId = String(member.childId ?? member.child_id);
-    if (!unique.has(childId)) unique.set(childId, { childId, enrollmentId: String(member.enrollmentId ?? member.enrollment_id), type: 'main' });
+    const enrollmentId = String(member.enrollmentId ?? member.enrollment_id);
+    if (unique.has(childId) && unique.get(childId).enrollmentId !== enrollmentId) {
+      throw Object.assign(new Error('У ребёнка несколько направлений в составе занятия. Требуется однозначный выбор направления.'), {
+        status: 409, code: 'ATTENDANCE_ENROLLMENT_AMBIGUOUS',
+      });
+    }
+    unique.set(childId, { childId, enrollmentId, type: 'main' });
   }
   return [...unique.values()];
 }

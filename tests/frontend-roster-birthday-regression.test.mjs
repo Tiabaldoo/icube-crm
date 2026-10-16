@@ -87,6 +87,39 @@ function lessonFixture(overrides = {}) {
   };
 }
 
+function seedAttendanceChild(state) {
+  state.role = 'director';
+  state.groups = [{ id: 4, direction: 'Робототехника', projectId: 1, project: 'iCubeRobots', teacherId: 1, siteId: 2, active: true, time: '18:00–19:00' }];
+  state.sites = [{ id: 2, name: 'Школа' }]; state.teachers = [{ id: 1, name: 'Учитель' }];
+  state.children = [{ id: 8, name: 'Иванов Иван', status: 'Активный', birth: '',
+    enrollments: [{ id: 80, direction: 'Робототехника', projectId: 1, project: 'iCubeRobots', groupId: 4, status: 'Активный', balance: 4 }] }];
+}
+
+for (const extra of [false, true]) test(`child visit history omits cleared ${extra ? 'extra' : 'main'} presence while lesson keeps participant`, async () => {
+  const { context, state } = await loadFrontend();
+  seedAttendanceChild(state);
+  const child = state.children[0]; const group = state.groups[0];
+  const lesson = lessonFixture({ groupId: group.id, teacherId: group.teacherId, started: true, done: true, attendanceApplied: true,
+    groupRosterFrozenV146: true, groupChildIdsV146: extra ? [] : [child.id],
+    attendance: extra ? {} : { [child.id]: true }, extras: extra ? [{ childId: child.id, present: true, trial: false }] : [] });
+  state.lessons = [lesson]; state.selectedLesson = lesson.id; state.selectedChild = child.id; state.childTab = 'visits';
+  assert.match(context.child(), /deleteVisitPrompt\(/);
+  if (extra) lesson.extras[0].present = false; else lesson.attendance[child.id] = false;
+  assert.doesNotMatch(context.child(), /deleteVisitPrompt\(/);
+  assert.match(context.lesson(), new RegExp(child.name));
+  assert.equal(extra ? lesson.extras.length : lesson.groupChildIdsV146.length, 1);
+});
+
+test('teacher-created ordinary participant has a visible unchecked trial control', async () => {
+  const { context, state } = await loadFrontend(); seedAttendanceChild(state); const child = state.children[0];
+  const lesson = lessonFixture({ started: true, extras: [{ childId: child.id, present: true, trial: false, createdByTeacher: true }] });
+  state.lessons = [lesson];
+  const markup = context.studentCheck(child, lesson, true, lesson.extras[0]);
+  assert.match(markup, /Ознакомительное/);
+  const trialInput = markup.match(/<input type="checkbox"([^>]*?)onchange="toggleVisitTrialV121/);
+  assert.ok(trialInput); assert.doesNotMatch(trialInput[1], /checked/);
+});
+
 test('lesson renderers use the lesson effective/frozen roster instead of current group membership', async () => {
   const { context, state } = await loadFrontend();
   state.role = 'director';

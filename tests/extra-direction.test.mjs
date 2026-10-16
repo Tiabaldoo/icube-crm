@@ -25,6 +25,13 @@ function fixture({ completed = false, existingTarget = false, targetStatus = 'ac
     if (sql.startsWith('INSERT INTO child_enrollments')) { state.created++; state.enrollments.push({ id: 102, project_id: 3, status: 'active' }); return [{ insertId: 102 }]; }
     if (sql.startsWith('SELECT roster_type FROM lesson_roster_members')) return [state.roster ? [{ roster_type: state.roster }] : []];
     if (sql.startsWith('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId')) return [state.attendance ? [{ ...state.attendance }] : []];
+    if (sql.startsWith('SELECT e.id,e.child_id,e.direction_id,e.balance_lessons')) return [[{ id: p.enrollmentId, current_price: null, balance_lessons: '3.00000000' }]];
+    if (/^SELECT id FROM (balance_transfers|enrollment_project_transfers|refunds|partner_settlements) WHERE/.test(sql)) return [[]];
+    if (sql.startsWith('INSERT INTO audit_log')) return [{ insertId: 1 }];
+    if (sql.startsWith('UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=')) {
+      Object.assign(state.attendance, { enrollment_id: p.enrollmentId, is_trial: Number(p.trial), present: Number(p.present),
+        charged_lessons: '0.00000000', price_snapshot: null, marked_at: p.present ? '2026-09-14 10:05:00' : null }); return [{ affectedRows: 1 }];
+    }
     if (sql.startsWith('SELECT be.* FROM balance_entries')) return [state.reversals ? [] : [{ id: 301, enrollment_id: 101, lessons_delta: '-1.00000000', amount_delta: '-1125.00', unit_price_snapshot: '1125.00' }]];
     if (sql.startsWith('SELECT balance_lot_id,lessons FROM balance_lot_consumptions')) return [[{ balance_lot_id: 401, lessons: '1.00000000' }]];
     if (sql.startsWith('INSERT INTO balance_entries')) { state.reversals++; return [{ insertId: 302 }]; }
@@ -84,6 +91,14 @@ test('teacher cannot rebind a completed extra', async () => {
   const f = fixture({ completed: true });
   await assert.rejects(f.service.makeExtraTrialDirection(60, 51, { roles: ['teacher'], userId: 9, teacherId: 4 }), { status: 403 });
   assert.equal(f.state.created, 0); assert.equal(f.state.reversals, 0);
+});
+
+test('choosing trial direction for an absent participant preserves absence and does not create a visit', async () => {
+  const f = fixture({ existingTarget: true }); f.state.roster = 'extra';
+  f.state.attendance = { id: 201, child_id: 51, enrollment_id: 102, present: 0, is_trial: 0, marked_at: null, charged_lessons: '0.00000000' };
+  await f.service.makeExtraTrialDirection(60, 51, director);
+  assert.equal(f.state.attendance.present, 0); assert.equal(f.state.attendance.is_trial, 1);
+  assert.equal(f.state.attendance.marked_at, null); assert.equal(f.state.reversals, 0); assert.equal(f.state.salaryChecks, 0);
 });
 
 test('frontend search pins each enrollment and extra menu uses atomic trial action', async () => {
