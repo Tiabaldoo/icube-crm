@@ -516,7 +516,8 @@ function quickChildRemovalFixture(history = {}) {
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
     if (sql.startsWith('SELECT id FROM teachers WHERE user_id=')) return [[{ id: 6 }]];
     if (sql.includes('FROM teacher_projects tp') && sql.includes('teacher_project_directions')) return [[{ teacher_id: 6 }]];
-    if (sql.startsWith('SELECT a.* FROM attendances')) return [[{ id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'extra', present: 1, is_trial: 1 }]];
+    if (sql.startsWith('SELECT roster_type FROM lesson_roster_members')) return [[{ roster_type: 'extra' }]];
+    if (sql.startsWith('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId')) return [[{ id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'extra', present: 1, is_trial: 1 }]];
     if (sql.startsWith('SELECT id,full_name FROM children')) return [[{ id: 8, full_name: 'Новый Ребёнок' }]];
     if (sql === 'SELECT id FROM child_enrollments WHERE child_id=:childId FOR UPDATE') return [[{ id: 9 }]];
     if (sql.includes('(SELECT COUNT(*) FROM payments')) return [[{ payments: 0, refunds: 0, attendances: 0, roster: 0, photos: 0, memberships: 0, balanceEntries: 0, balanceLots: 0, balanceTransfers: 0, nonzeroBalances: 0, enrollmentHistory: 0, childHistory: 0, userAccounts: 0, priceHistory: 0, ...history }]];
@@ -619,14 +620,13 @@ test('completed extra leaves technical reversed attendance outside roster and re
     if (/^SELECT id FROM (balance_transfers|enrollment_project_transfers|refunds|partner_settlements) WHERE/.test(sql)) return [[]];
     if (sql.startsWith('UPDATE attendances SET enrollment_id=:enrollmentId,attendance_type=')) { Object.assign(attendances.find((a) => a.id === params.id), { present: params.present, is_trial: params.trial, marked_at: null }); return [{ affectedRows: 1 }]; }
     if (sql.startsWith('INSERT INTO audit_log')) return [{ insertId: 1 }];
-    if (sql.startsWith('SELECT a.* FROM attendances a JOIN lesson_roster_members')) {
-      const row = attendances.find((a) => String(a.child_id) === String(params.childId) && roster.some((r) => String(r.child_id) === String(params.childId)));
-      return [[row].filter(Boolean)];
-    }
+    if (sql.startsWith('SELECT roster_type FROM lesson_roster_members')) return [roster.filter((r) => String(r.child_id) === String(params.childId) && r.roster_type === 'extra')];
     if (sql.includes("WHERE be.attendance_id=:attendanceId AND be.entry_type='attendance'")) {
       return [activeDebit ? [{ id: 501, enrollment_id: 9, lessons_delta: '-1.00000000', amount_delta: '-1025.00', unit_price_snapshot: '1025.00' }] : []];
     }
     if (sql.startsWith('SELECT balance_lot_id,lessons FROM balance_lot_consumptions')) return [[{ balance_lot_id: 600, lessons: '1.00000000' }]];
+    if (sql.startsWith('SELECT id,enrollment_id,original_lessons,remaining_lessons FROM balance_lots')) return [[{ id: 600, enrollment_id: 9, original_lessons: '4.00000000', remaining_lessons: '3.00000000' }]];
+    if (sql.startsWith('SELECT dependent.id FROM balance_lot_consumptions linked')) return [[]];
     if (sql.startsWith('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons')) return [{ affectedRows: 1 }];
     if (sql.startsWith('INSERT INTO balance_entries') && sql.includes("'reversal'")) { reversalCount += 1; activeDebit = false; return [{ insertId: 502 }]; }
     if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons')) return [{ affectedRows: 1 }];

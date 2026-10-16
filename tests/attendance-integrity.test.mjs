@@ -20,8 +20,8 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
       present: false, is_trial: false, charged_lessons: '0.00000000', marked_at: null }],
     enrollments: [{ id: 11, child_id: 7, direction_id: 1, project_id: 1, status: 'active', current_price: '1000.00', balance_lessons: '4.00000000' },
       { id: 12, child_id: 7, direction_id: 2, project_id: 1, status: 'active', current_price: '1500.00', balance_lessons: '3.00000000' }],
-    lots: [{ id: 40, enrollment_id: 11, remaining_lessons: '4.00000000', unit_price: '900.00' },
-      { id: 41, enrollment_id: 12, remaining_lessons: '3.00000000', unit_price: '1400.00' }],
+    lots: [{ id: 40, enrollment_id: 11, original_lessons: '4.00000000', remaining_lessons: '4.00000000', unit_price: '900.00' },
+      { id: 41, enrollment_id: 12, original_lessons: '3.00000000', remaining_lessons: '3.00000000', unit_price: '1400.00' }],
     entries: [], consumptions: [], salaries: [], audit: [], dependencies: {}, candidates: [{ id: 11 }],
     memberships: [{ child_id: 7, enrollment_id: 11, group_id: 20, started_on: '2026-09-01' }],
     payments: [{ id: 77, amount: '4500.00', price_snapshot: '900.00' }],
@@ -35,7 +35,7 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
     if (failure && sql.startsWith(failure)) throw new Error('injected financial failure');
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[{ ...state.lesson }]];
     if (sql.startsWith('SELECT tp.teacher_id')) return [[{ teacher_id: 5 }]];
-    if (sql.startsWith('SELECT roster_type FROM lesson_roster_members')) return [state.roster.filter((r) => String(r.child_id) === String(p.childId))];
+    if (sql.startsWith('SELECT roster_type FROM lesson_roster_members')) return [state.roster.filter((r) => String(r.child_id) === String(p.childId) && (!sql.includes("roster_type='extra'") || r.roster_type === 'extra'))];
     if (sql.startsWith('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId')) return [state.attendances.filter((a) => String(a.child_id) === String(p.childId)).map((a) => ({ ...a }))];
     if (sql.startsWith('SELECT e.id,e.child_id,e.direction_id,e.balance_lessons')) return [state.enrollments.filter((e) => String(e.id) === String(p.enrollmentId) && String(e.child_id) === String(p.childId) && String(e.project_id) === String(p.projectId)).map((e) => ({ ...e }))];
     if (sql.startsWith('SELECT DISTINCT e.id')) {
@@ -44,16 +44,32 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
       return [state.candidates];
     }
     for (const [table, dependency] of Object.entries({ balance_transfers: 'transfers', enrollment_project_transfers: 'projectTransfers', refunds: 'refunds', partner_settlements: 'settlements' })) {
-      if (sql.startsWith(`SELECT id FROM ${table} WHERE`)) { assert.match(sql, /FOR UPDATE$/); return [state.dependencies[dependency] ? [{ id: 1 }] : []]; }
+      if (sql.startsWith(`SELECT id FROM ${table} WHERE`)) {
+        assert.match(sql, /FOR UPDATE$/);
+        const rows = state.dependencies[dependency] ?? [];
+        return [table === 'enrollment_project_transfers' ? rows.filter((r) => String(r.source_enrollment_id) === String(p.enrollmentId)
+          || (sql.includes('OR target_enrollment_id=') && String(r.target_enrollment_id) === String(p.enrollmentId))) : rows];
+      }
     }
     if (sql.startsWith('SELECT be.* FROM balance_entries')) return [state.entries.filter((e) => e.attendance_id === p.attendanceId && e.entry_type === 'attendance' && !state.entries.some((r) => r.reversal_of_entry_id === e.id))];
     if (sql.startsWith('SELECT balance_lot_id,lessons')) return [state.consumptions.filter((c) => c.balance_entry_id === p.entryId)];
+    if (sql.startsWith('SELECT id,enrollment_id,original_lessons,remaining_lessons FROM balance_lots')) return [state.lots.filter((l) => String(l.id) === String(p.id)).map((l) => ({ ...l }))];
+    if (sql.startsWith('SELECT dependent.id FROM balance_lot_consumptions linked')) {
+      assert.match(sql, /source\.entry_type='transfer_in'/);
+      assert.match(sql, /dependent\.occurred_at>debit\.occurred_at/);
+      const lot = state.lots.find((l) => String(l.id) === String(p.lotId));
+      if (!state.entries.some((e) => e.id === lot?.source_balance_entry_id && e.entry_type === 'transfer_in')) return [[]];
+      const debit = state.entries.find((e) => e.id === p.entryId);
+      return [state.consumptions.filter((c) => String(c.balance_lot_id) === String(p.lotId)).map((c) => state.entries.find((e) => e.id === c.balance_entry_id))
+        .filter((e) => ['transfer_out', 'refund'].includes(e.entry_type) && !state.entries.some((r) => r.reversal_of_entry_id === e.id)
+          && (e.occurred_at > debit.occurred_at || (e.occurred_at === debit.occurred_at && e.id > debit.id)))];
+    }
     if (sql.startsWith('SELECT id,remaining_lessons,unit_price FROM balance_lots')) return [state.lots.filter((l) => String(l.enrollment_id) === String(p.enrollmentId) && lessonUnits(l.remaining_lessons) > 0n).map((l) => ({ ...l }))];
     if (sql.startsWith('INSERT INTO balance_entries')) {
       const id = nextId++; const reversal = sql.includes("'reversal'");
       state.entries.push({ id, enrollment_id: p.enrollmentId, attendance_id: reversal ? null : p.attendanceId,
         entry_type: reversal ? 'reversal' : 'attendance', lessons_delta: reversal ? p.lessons : '-1.00000000',
-        amount_delta: p.amount, unit_price_snapshot: p.price, reversal_of_entry_id: p.oldEntryId });
+        amount_delta: p.amount, unit_price_snapshot: p.price, reversal_of_entry_id: p.oldEntryId, occurred_at: p.occurredAt });
       return [{ insertId: id }];
     }
     if (sql.startsWith('UPDATE balance_lots SET remaining_lessons=')) {
@@ -89,6 +105,7 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
     if (sql.startsWith('INSERT INTO lesson_roster_members')) { state.roster.push({ lesson_id: 10, child_id: Number(p.childId), roster_type: 'extra' }); return mutation(); }
     if (sql.startsWith('SELECT a.* FROM attendances a JOIN lesson_roster_members')) return [state.attendances.filter((a) => String(a.child_id) === String(p.childId) && state.roster.some((r) => r.child_id === a.child_id && r.roster_type === 'extra'))];
     if (sql.startsWith('DELETE FROM lesson_roster_members WHERE lesson_id=')) { state.roster = state.roster.filter((r) => String(r.child_id) !== String(p.childId)); return mutation(); }
+    if (sql.startsWith('SELECT id,full_name FROM children')) return [[]]; // Established child, not a temporary quick child.
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...state.lesson, group_name: 'Смешанная', direction_name: 'Робототехника' }]];
     if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [state.roster];
     if (sql.includes('FROM attendances WHERE lesson_id IN')) return [state.attendances];
@@ -202,9 +219,87 @@ for (const failure of ['INSERT INTO audit_log', 'INSERT INTO salary_accruals']) 
   assert.deepEqual(f.state, before);
 });
 
-for (const dependency of ['transfers', 'projectTransfers', 'refunds', 'settlements']) test(`${dependency} refuses historical correction before any changes`, async () => {
-  const f = fixture(); await mark(f, true); f.state.dependencies[dependency] = 1; const before = structuredClone(f.state);
+for (const dependency of ['projectTransfers', 'settlements', 'lotOwnership', 'lotCapacity']) test(`${dependency} refuses unsafe historical correction before any changes`, async () => {
+  const f = fixture(); await mark(f, true);
+  if (dependency === 'projectTransfers') f.state.dependencies.projectTransfers = [{ id: 1, source_enrollment_id: 11, target_enrollment_id: 90 }];
+  if (dependency === 'settlements') f.state.dependencies.settlements = [{ id: 1 }];
+  if (dependency === 'lotOwnership') f.state.lots[0].enrollment_id = 12;
+  if (dependency === 'lotCapacity') f.state.lots[0].remaining_lessons = '4.00000000';
+  const before = structuredClone(f.state);
   await assert.rejects(mark(f, false), { code: 'ATTENDANCE_FINANCIAL_HISTORY' }); assert.deepEqual(f.state, before);
+  if (dependency === 'projectTransfers') {
+    const absent = fixture(); absent.state.dependencies.projectTransfers = structuredClone(f.state.dependencies.projectTransfers);
+    const beforeAdd = structuredClone(absent.state);
+    await assert.rejects(mark(absent, true), { code: 'ATTENDANCE_FINANCIAL_HISTORY' }); assert.deepEqual(absent.state, beforeAdd);
+  }
+});
+
+test('safe attendance reversal preserves unrelated payments, refunds and transfers and restores exact FIFO and salary', async () => {
+  for (const viaDelete of [false, true]) {
+    const f = fixture(); await mark(f, true);
+    // Later payment, partial refund of the original lot, and incoming transfer.
+    f.state.payments.push({ id: 78, enrollment_id: 11, amount: '2000.00', price_snapshot: '1000.00' });
+    f.state.dependencies.refunds = [{ id: 80, enrollment_id: 11, payment_id: 77, lessons_debit: '1.00000000' }];
+    f.state.dependencies.transfers = [{ id: 81, source_enrollment_id: 90, target_enrollment_id: 11 }];
+    f.state.dependencies.projectTransfers = [{ id: 82, source_enrollment_id: 90, target_enrollment_id: 11 }];
+    f.state.lots[0].remaining_lessons = '2.00000000';
+    f.state.lots.push({ id: 42, enrollment_id: 11, original_lessons: '2.00000000', remaining_lessons: '2.00000000', unit_price: '1000.00' },
+      { id: 43, enrollment_id: 11, original_lessons: '1.00000000', remaining_lessons: '1.00000000', unit_price: '1100.00' });
+    f.state.enrollments[0].balance_lessons = '5.00000000';
+    const history = structuredClone({ dependencies: f.state.dependencies, payments: f.state.payments,
+      memberships: f.state.memberships, otherLesson: f.state.otherLesson, otherEnrollment: f.state.enrollments[1] });
+    if (viaDelete) await f.service.removeAttendance(10, 7, director); else await mark(f, false);
+    assert.equal(balance(f), '6.00000000'); assert.equal(salary(f), 0);
+    assert.deepEqual(f.state.lots.map((l) => l.remaining_lessons), ['3.00000000', '3.00000000', '2.00000000', '1.00000000']);
+    assert.equal(f.state.entries.length, 2); assert.equal(f.state.entries[1].reversal_of_entry_id, f.state.entries[0].id);
+    assert.equal(f.state.entries[1].amount_delta, '900.00');
+    assert.equal(f.state.attendances[0].present, false); assert.equal(f.state.attendances[0].marked_at, null);
+    assert.equal(f.state.roster[0].roster_type, 'main');
+    const cleared = structuredClone(f.state);
+    await f.service.removeAttendance(10, 7, director); assert.deepEqual(f.state, cleared);
+    await mark(f, true); await mark(f, true);
+    assert.equal(balance(f), '5.00000000'); assert.equal(salary(f), 700);
+    assert.equal(f.state.entries.length, 3); assert.equal(f.state.entries[2].amount_delta, '-900.00');
+    assert.equal(f.state.lots[0].remaining_lessons, '2.00000000'); assert.equal(f.state.consumptions.length, 2);
+    await mark(f, false); assert.equal(balance(f), '6.00000000'); assert.equal(salary(f), 0);
+    assert.equal(f.state.entries.length, 4); assert.equal(f.state.lots[0].remaining_lessons, '3.00000000');
+    assert.deepEqual({ dependencies: f.state.dependencies, payments: f.state.payments,
+      memberships: f.state.memberships, otherLesson: f.state.otherLesson, otherEnrollment: f.state.enrollments[1] }, history);
+    await mark(f, false, true); assert.equal(balance(f), '6.00000000'); assert.equal(f.state.entries.length, 4);
+  }
+  const linked = fixture();
+  linked.state.entries.push({ id: 90, enrollment_id: 11, entry_type: 'transfer_in', occurred_at: '2026-09-01 12:00:00' });
+  linked.state.lots[0].source_balance_entry_id = 90;
+  await mark(linked, true);
+  // An outgoing operation from the very transfer-in lot used by this debit
+  // depends on its FIFO attribution; unlike unrelated history it cannot move.
+  linked.state.entries.push({ id: 200, enrollment_id: 11, entry_type: 'transfer_out', occurred_at: '2026-09-11 12:00:00' });
+  linked.state.consumptions.push({ balance_lot_id: 40, balance_entry_id: 200, lessons: '1.00000000', amount: '900.00' });
+  linked.state.lots[0].remaining_lessons = '2.00000000'; linked.state.enrollments[0].balance_lessons = '2.00000000';
+  const before = structuredClone(linked.state);
+  await assert.rejects(mark(linked, false), { code: 'ATTENDANCE_FINANCIAL_HISTORY' }); assert.deepEqual(linked.state, before);
+});
+
+test('extra without attendance is removed from this lesson only, with no phantom visit or repeated financial effects', async () => {
+  for (const status of ['completed', 'in_progress']) {
+    const f = fixture({ type: 'extra', missing: true, status });
+    if (status === 'completed') {
+      await mark(f, true); await mark(f, false);
+      assert.equal(f.state.roster.length, 1); assert.equal(balance(f), '4.00000000'); assert.equal(salary(f), 0);
+      f.state.attendances = []; // Legacy physical deletion left only the frozen extra roster.
+    }
+    f.state.roster.push({ lesson_id: 10, child_id: 8, roster_type: 'main' });
+    f.state.candidates = []; // Removal must not resolve or recreate an enrollment/attendance.
+    const before = structuredClone(f.state);
+    const removed = await f.service.removeExtra(10, 7, director);
+    assert.deepEqual(f.state, { ...before, roster: [before.roster[1]] });
+    assert.equal(removed.roster.some((r) => r.childId === '7'), false); assert.equal(removed.attendances.length, 0);
+    const after = structuredClone(f.state);
+    await f.service.removeExtra(10, 7, director); assert.deepEqual(f.state, after);
+    await f.service.removeExtra(10, 8, director); assert.deepEqual(f.state, after);
+    await assert.rejects(f.service.removeExtra(10, 7, { roles: ['partner'], userId: '4', projectIds: ['2'] }), { status: 403 });
+    assert.deepEqual(f.state, after);
+  }
 });
 
 test('cleared attendance and reversed technical effects do not prevent deleting an otherwise empty erroneous child', async () => {

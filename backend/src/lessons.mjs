@@ -437,21 +437,21 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     return enrollmentForAttendance(connection, lesson, childId, candidates[0].id, requirePrice);
   }
 
-  async function assertAttendanceCorrectionSafe(connection, attendance, lesson) {
-    // Locking reads must see dependencies committed before the enrollment lock,
-    // even if an earlier teacher-access read opened a REPEATABLE READ snapshot.
-    for (const sql of [
-      'SELECT id FROM balance_transfers WHERE source_enrollment_id=:enrollmentId OR target_enrollment_id=:enrollmentId LIMIT 1 FOR UPDATE',
-      'SELECT id FROM enrollment_project_transfers WHERE source_enrollment_id=:enrollmentId OR target_enrollment_id=:enrollmentId LIMIT 1 FOR UPDATE',
-      'SELECT id FROM refunds WHERE enrollment_id=:enrollmentId AND deleted_at IS NULL LIMIT 1 FOR UPDATE',
+  async function assertAttendanceCorrectionSafe(connection, lesson) {
+    // A settled lesson period is a dependency of this correction. Other payments,
+    // refunds and transfers are not: validate the actual debit/lot restoration below.
+    const [dependencies] = await connection.query(
       'SELECT id FROM partner_settlements WHERE project_id=:projectId AND DATE(:startsAt) BETWEEN period_from AND period_to LIMIT 1 FOR UPDATE',
-    ]) {
-      const [dependencies] = await connection.query(sql, {
-        enrollmentId: attendance.enrollment_id, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
-      });
-      if (dependencies.length) throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
-        'Посещение связано с переносами, возвратами или рассчитанным периодом. Для безопасного исправления обратитесь к администратору проекта.');
-    }
+      { projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at });
+    if (dependencies.length) throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
+      'Период занятия уже рассчитан. Для исправления посещения обратитесь к администратору проекта.');
+  }
+
+  async function assertAttendanceEnrollmentCurrent(connection, enrollmentId) {
+    const [projectTransfers] = await connection.query(
+      'SELECT id FROM enrollment_project_transfers WHERE source_enrollment_id=:enrollmentId LIMIT 1 FOR UPDATE', { enrollmentId });
+    if (projectTransfers.length) throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
+      'Направление уже передано в другой проект. Изменение списания требует проверки администратором проекта.');
   }
 
   async function debitAttendance(connection, attendance, enrollment, lesson, context) {
@@ -484,12 +484,37 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     if (!debit) return null;
     const [consumptions] = await connection.query('SELECT balance_lot_id,lessons FROM balance_lot_consumptions WHERE balance_entry_id=:entryId FOR UPDATE', { entryId: debit.id });
     if (enrollment) {
+      await assertAttendanceEnrollmentCurrent(connection, debit.enrollment_id);
       const funded = consumptions.reduce((sum, item) => sum + lessonUnits(String(item.lessons)), 0n);
       const uncovered = -lessonUnits(String(debit.lessons_delta)) - funded;
       const balance = lessonUnits(String(enrollment.balance_lessons));
-      if (String(debit.enrollment_id) !== String(enrollment.id) || uncovered > (balance < 0n ? -balance : 0n)) {
+      if (String(debit.enrollment_id) !== String(enrollment.id) || uncovered < 0n || uncovered > (balance < 0n ? -balance : 0n)) {
         throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
           'Долг за посещение уже погашен последующими операциями. Требуется проверка финансовой истории администратором проекта.');
+      }
+      for (const consumption of consumptions) {
+        const [lots] = await connection.query('SELECT id,enrollment_id,original_lessons,remaining_lessons FROM balance_lots WHERE id=:id FOR UPDATE', { id: consumption.balance_lot_id });
+        const lot = lots[0];
+        if (!lot || String(lot.enrollment_id) !== String(debit.enrollment_id)
+          || lessonUnits(String(consumption.lessons)) <= 0n
+          || lessonUnits(String(lot.remaining_lessons)) + lessonUnits(String(consumption.lessons)) > lessonUnits(String(lot.original_lessons))) {
+          throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
+            'Исходную FIFO-партию списания нельзя восстановить точно. Требуется проверка финансовой истории администратором проекта.');
+        }
+        // Transfer-in lots can mix several payments. Removing an earlier FIFO
+        // consumption would reassign their provenance in a later refund/transfer.
+        const [dependentConsumptions] = await connection.query(`SELECT dependent.id FROM balance_lot_consumptions linked
+          JOIN balance_entries dependent ON dependent.id=linked.balance_entry_id
+          JOIN balance_lots lot ON lot.id=linked.balance_lot_id
+          JOIN balance_entries source ON source.id=lot.source_balance_entry_id
+          JOIN balance_entries debit ON debit.id=:entryId
+          LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=dependent.id
+          WHERE linked.balance_lot_id=:lotId AND source.entry_type='transfer_in'
+            AND dependent.entry_type IN ('transfer_out','refund') AND reversal.id IS NULL
+            AND (dependent.occurred_at>debit.occurred_at OR (dependent.occurred_at=debit.occurred_at AND dependent.id>debit.id))
+          LIMIT 1 FOR UPDATE`, { entryId: debit.id, lotId: consumption.balance_lot_id });
+        if (dependentConsumptions.length) throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
+          'Средства этой FIFO-партии уже использованы последующим возвратом или переносом. Требуется проверка администратором проекта.');
       }
     }
     for (const consumption of consumptions) {
@@ -525,7 +550,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       if (present && !trial ? debit != null : debit == null) return;
     }
     if (lesson.status === 'completed') {
-      await assertAttendanceCorrectionSafe(connection, attendance ?? { enrollment_id: enrollment.id, child_id: childId }, lesson);
+      await assertAttendanceCorrectionSafe(connection, lesson);
+      if (present && !trial) await assertAttendanceEnrollmentCurrent(connection, enrollment.id);
       if (attendance) {
         const originalEnrollment = String(attendance.enrollment_id) === String(enrollment.id) ? enrollment
           : await enrollmentForAttendance(connection, lesson, childId, attendance.enrollment_id, false);
@@ -799,14 +825,15 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (lesson.status === 'completed' && hasRole(context, 'teacher') && !hasRole(context, 'director') && !hasRole(context, 'partner')) {
           throw new ApiProblem(403, 'FORBIDDEN', 'Состав проведённого занятия меняет только администратор проекта');
         }
-        const [rows] = await connection.query(`SELECT a.* FROM attendances a JOIN lesson_roster_members r ON r.lesson_id=a.lesson_id AND r.child_id=a.child_id
-          WHERE a.lesson_id=:lessonId AND a.child_id=:childId AND r.roster_type='extra' FOR UPDATE`, { lessonId: lesson.id, childId });
-        if (!rows.length) return;
+        const [roster] = await connection.query(`SELECT roster_type FROM lesson_roster_members
+          WHERE lesson_id=:lessonId AND child_id=:childId AND roster_type='extra' FOR UPDATE`, { lessonId: lesson.id, childId });
+        if (!roster.length) return;
+        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
         if (lesson.status === 'completed') {
-          await setAttendance(connection, lesson, childId, 'extra', { present: false }, context);
+          if (rows.length) await setAttendance(connection, lesson, childId, 'extra', { present: false }, context);
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
         } else {
-          await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
+          if (rows.length) await connection.query('DELETE FROM attendances WHERE id=:id', { id: rows[0].id });
           await connection.query('DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId', { lessonId: lesson.id, childId });
           const [quickChildren] = await connection.query(`SELECT id,full_name FROM children
             WHERE id=:childId AND needs_director_review=TRUE AND created_from_lesson_id=:lessonId FOR UPDATE`, {
@@ -901,7 +928,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (lesson.status === 'completed') {
           const selected = await enrollmentForAttendance(connection, lesson, childId, enrollment.insertId);
           const [createdAttendance] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: lesson.id, childId });
-          await assertAttendanceCorrectionSafe(connection, createdAttendance[0], lesson);
+          await assertAttendanceCorrectionSafe(connection, lesson);
           await debitAttendance(connection, createdAttendance[0], selected, lesson, context);
           await recalculateSalary(connection, lesson);
         }
