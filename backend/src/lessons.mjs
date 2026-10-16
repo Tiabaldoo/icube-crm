@@ -98,7 +98,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       .map((row) => String(row.id)).join(',');
     const [[rosterRows], [attendanceRows], [salaryRows]] = await Promise.all([
       ids ? connection.query(`SELECT lesson_id,child_id,roster_type FROM lesson_roster_members WHERE lesson_id IN (${ids}) ORDER BY child_id`) : Promise.resolve([[]]),
-      ids ? connection.query(`SELECT id,lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,price_snapshot,charged_lessons,marked_at FROM attendances WHERE lesson_id IN (${ids}) ORDER BY child_id`) : Promise.resolve([[]]),
+      ids ? connection.query(`SELECT id,lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,price_snapshot,charged_lessons,marked_at,
+        (SELECT d.name FROM child_enrollments e JOIN directions d ON d.id=e.direction_id
+          WHERE e.id=attendances.enrollment_id) attendance_direction_name
+        ${hasRole(context, 'director') ? `,(SELECT CASE WHEN COUNT(*)=1 THEN -MIN(be.amount_delta) ELSE NULL END
+          FROM balance_entries be WHERE be.attendance_id=attendances.id AND be.entry_type='attendance'
+            AND NOT EXISTS (SELECT 1 FROM balance_entries reversal WHERE reversal.reversal_of_entry_id=be.id)) charged_amount` : ''}
+        FROM attendances WHERE lesson_id IN (${ids}) ORDER BY child_id`) : Promise.resolve([[]]),
       ids && (hasRole(context, 'director') || partnerProject)
         ? connection.query(`SELECT sa.* FROM salary_accruals sa WHERE sa.lesson_id IN (${ids}) AND sa.reversed_at IS NULL ORDER BY sa.id`)
         : Promise.resolve([[]]),
@@ -125,8 +131,10 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       const attendances = attendanceRows.filter((item) => String(item.lesson_id) === String(row.id)
         && roster.some((member) => member.childId === String(item.child_id))).map((item) => ({
         id: String(item.id), childId: String(item.child_id), enrollmentId: item.enrollment_id == null ? null : String(item.enrollment_id),
+        directionName: item.attendance_direction_name ?? null,
         type: item.attendance_type, present: bool(item.present), trial: bool(item.is_trial),
-        ...(hasRole(context, 'director') ? { priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons) } : {}),
+        ...(hasRole(context, 'director') ? { priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons),
+          chargedAmount: item.charged_amount == null ? null : String(item.charged_amount) } : {}),
         markedAt: isoDateTime(item.marked_at),
       }));
       const salary = salaryRows.find((item) => String(item.lesson_id) === String(row.id));

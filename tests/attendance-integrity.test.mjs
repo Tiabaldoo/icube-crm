@@ -108,7 +108,19 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
     if (sql.startsWith('SELECT id,full_name FROM children')) return [[]]; // Established child, not a temporary quick child.
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...state.lesson, group_name: 'Смешанная', direction_name: 'Робототехника' }]];
     if (sql.includes('lesson_roster_members WHERE lesson_id IN')) return [state.roster];
-    if (sql.includes('FROM attendances WHERE lesson_id IN')) return [state.attendances];
+    if (sql.includes('FROM attendances WHERE lesson_id IN')) {
+      assert.match(sql, /e\.id=attendances\.enrollment_id/);
+      return [state.attendances.map((a) => {
+        const active = state.entries.filter((e) => e.attendance_id === a.id && e.entry_type === 'attendance'
+          && !state.entries.some((r) => r.reversal_of_entry_id === e.id));
+        if (sql.includes('charged_amount')) {
+          assert.match(sql, /-MIN\(be\.amount_delta\)/);
+          assert.match(sql, /reversal\.reversal_of_entry_id=be\.id/);
+        }
+        return { ...a, attendance_direction_name: state.enrollments.find((e) => e.id === a.enrollment_id)?.direction_id === 2 ? 'Программирование' : 'Робототехника',
+          charged_amount: active.length === 1 ? (-Number(active[0].amount_delta)).toFixed(2) : null };
+      })];
+    }
     if (sql.includes('FROM salary_accruals sa WHERE sa.lesson_id IN')) return [state.salaries.filter((s) => !s.reversed_at).map((s) => ({ ...s, lesson_id: 10 }))];
     if (sql.startsWith('SELECT c.id, c.full_name')) return [[{ id: 7, full_name: 'Ошибка', status: 'lead' }]];
     if (sql.startsWith('SELECT e.id, e.child_id')) return [[]];
@@ -132,6 +144,21 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
 const balance = (f, id = 11) => f.state.enrollments.find((e) => e.id === id).balance_lessons;
 const salary = (f) => f.state.salaries.filter((s) => !s.reversed_at).reduce((sum, s) => sum + Number(s.total_amount), 0);
 const mark = (f, present, trial = false, actor = director) => f.service.putAttendance(10, 7, { present, trial }, actor);
+
+test('attendance DTO exposes the exact active FIFO amount that deletion reverses, without changing financial rules', async () => {
+  const f = fixture(); const marked = await mark(f, true); const row = marked.attendances[0];
+  assert.equal(row.directionName, 'Робототехника'); assert.equal(row.priceSnapshot, '1000.00');
+  assert.equal(row.chargedAmount, '900.00', 'FIFO debit differs from the enrollment price snapshot');
+  const nonDirector = (await f.service.get(10, teacher)).attendances[0];
+  assert.equal(Object.hasOwn(nonDirector, 'chargedAmount'), false, 'financial details stay director-only');
+  await f.service.removeAttendance(10, 7, director);
+  assert.equal(f.state.entries[1].amount_delta, row.chargedAmount);
+  assert.equal(f.state.entries[1].reversal_of_entry_id, f.state.entries[0].id);
+  assert.equal(balance(f), '4.00000000'); assert.equal(f.state.lots[0].remaining_lessons, '4.00000000');
+  assert.equal((await f.service.get(10, director)).attendances[0].chargedAmount, null);
+  const again = await mark(f, true); assert.equal(again.attendances[0].chargedAmount, '900.00');
+  assert.equal(f.state.entries.length, 3); assert.equal(balance(f), '3.00000000');
+});
 
 for (const viaDelete of [false, true]) test(`main: mark → ${viaDelete ? 'card delete' : 'uncheck'} → mark preserves exact FIFO, roster and salary`, async () => {
   const f = fixture(); const unchanged = structuredClone({ memberships: f.state.memberships, payments: f.state.payments, otherLesson: f.state.otherLesson });

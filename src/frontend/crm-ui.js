@@ -3038,7 +3038,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(!own&&!extra) return;
       const g=byId(state.groups,l.groupId);
       if(!g) return;
-      rows.push({lesson:l,group:g,extra:extra||null});
+      const direction=window.icubeLessonChildDirection?window.icubeLessonChildDirection(l,childId):g.direction;
+      rows.push({lesson:l,group:g,direction:direction,extra:extra||null});
     });
     return rows.sort(function(a,b){
       return parseRuDate(b.lesson.date)-parseRuDate(a.lesson.date);
@@ -3345,7 +3346,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     }).join(''):'<div class="empty">Оплат пока нет</div>';
 
     const visitMini=visits.length?visits.map(function(x){
-      return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+escapeHtml(x.lesson.date)+' · '+escapeHtml(x.group.direction)+'</b><div class="muted mini">'+escapeHtml(x.lesson.topic||groupTitle(x.group))+'</div></div><span class="badge green">Был</span></div>';
+      const trial=x.extra?!!x.extra.trial:!!x.lesson.trialChildren?.[c.id];
+      return '<div class="kpi-line clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><div><b>'+escapeHtml(x.lesson.date)+' · '+escapeHtml(x.direction)+'</b><div class="muted mini">'+escapeHtml(x.lesson.topic||groupTitle(x.group))+'</div></div><span class="badge '+(trial?'amber':'green')+'">'+(trial?'Ознакомительное':'Был')+'</span></div>';
     }).join(''):'<div class="empty">Посещений пока нет</div>';
 
     const age=childAgeV118(c.birth);
@@ -3408,10 +3410,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!rows.length) return html+'<div class="empty">Посещений пока нет.</div></div>';
     html+='<div class="list"><div class="row header" style="grid-template-columns:1fr 1fr 1.4fr auto auto auto"><div>Дата</div><div>Направление</div><div>Группа</div><div>Статус</div><div>Тип</div><div></div></div>';
     html+=rows.map(function(x){
-      const type=(x.extra?'<span class="badge blue">Добавлен</span>':'')+(x.extra?.trial?' <span class="badge amber">Ознакомительное</span>':'');
+      const trial=x.extra?!!x.extra.trial:!!x.lesson.trialChildren?.[c.id];
+      const type=(x.extra?'<span class="badge blue">Добавлен</span>':'')+(trial?' <span class="badge amber">Ознакомительное</span>':'');
       return '<div class="row" style="grid-template-columns:1fr 1fr 1.4fr auto auto auto">'+
         '<div class="clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><b>'+escapeHtml(x.lesson.date)+'</b><div class="muted mini">'+escapeHtml(x.lesson.time)+'</div></div>'+
-        '<div>'+escapeHtml(x.group.direction)+'</div><div>'+escapeHtml(groupTitle(x.group))+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
+        '<div>'+escapeHtml(x.direction)+'</div><div>'+escapeHtml(groupTitle(x.group))+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
         '<div><button class="btn danger" onclick="deleteVisitPrompt('+c.id+','+x.lesson.id+')">Удалить</button></div>'+
       '</div>';
     }).join('');
@@ -4323,11 +4326,14 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!child||!lesson||!group) return;
     const extra=(lesson.extras||[]).find(function(e){return Number(e.childId)===Number(childId);});
     const trial=extra?!!extra.trial:isMainTrial(lesson,childId);
-    const charged=!!lesson.attendanceApplied&&!trial;
-    const price=charged?historicalPrice(childId,lesson,group):0;
-    let note='Посещение '+lesson.date+' · '+group.direction+' будет удалено.';
-    if(trial) note+=' Оно ознакомительное, поэтому баланс не изменится.';
-    else if(charged) note+=' За него было списано <b>'+money(price)+'</b>; эта сумма вернётся в текущий денежный остаток ребёнка.';
+    const details=lesson.attendanceDetailsByChild?.[childId];
+    const charged=details?.chargedLessons!=null?Number(details.chargedLessons)>0:!!lesson.attendanceApplied&&!trial;
+    const price=charged?(details?(details.chargedAmount==null?null:Number(details.chargedAmount)):historicalPrice(childId,lesson,group)):0;
+    const direction=window.icubeLessonChildDirection?window.icubeLessonChildDirection(lesson,childId):group.direction;
+    let note='Посещение '+lesson.date+' · '+escapeHtml(direction)+' будет удалено.';
+    if(charged && price!=null && Number.isFinite(price)) note+=' За него было списано <b>'+money(price)+'</b>; эта сумма вернётся в текущий денежный остаток ребёнка.';
+    else if(charged) note+=' Сервер отменит списание по исходной исторической проводке; точная сумма сейчас недоступна.';
+    else if(trial) note+=' Оно ознакомительное, поэтому баланс не изменится.';
     else note+=' Списание ещё не применялось, поэтому баланс не изменится.';
     modal('<h3>Удалить посещение?</h3><div class="notice">'+note+'</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn danger" onclick="confirmDeleteVisitV121('+childId+','+lessonId+')">Удалить посещение</button></div>');
   };
@@ -4349,29 +4355,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     state.modal=null;state.childTab='visits';state.page='child';render();
   };
 
-  // Show trial status in the child's visit history without rebuilding the whole child screen.
-  const childBeforeV121=window.child;
-  window.child=function(){
-    let html=childBeforeV121();
-    const child=byId(state.children,state.selectedChild);
-    if(!child) return html;
-    (state.lessons||[]).forEach(function(l){
-      if(!l.done||l.cancelled) return;
-      const ex=(l.extras||[]).find(function(e){return Number(e.childId)===Number(child.id);});
-      const present=!!l.attendance?.[child.id]||!!ex;
-      const trial=ex?!!ex.trial:isMainTrial(l,child.id);
-      if(!present||!trial) return;
-      // Existing extra rows already carry this badge; this adds it to main-group trial rows.
-      if(!ex){
-        const g=byId(state.groups,l.groupId);
-        if(!g) return;
-        const needle='<div><span class="badge green">Был</span></div><div></div>';
-        const replacement='<div><span class="badge green">Был</span></div><div><span class="badge amber">Ознакомительное</span></div>';
-        html=html.replace(needle,replacement);
-      }
-    });
-    return html;
-  };
+  // Visit badges are rendered from each row's lesson/child identity above.
 
   render();
 })();
@@ -4379,51 +4363,6 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 /* ===== Стабилизированный раздел из v122.js ===== */
 // iCube CRM v1.1.12 — trial label in child overview + empty-trip salary independent of completed lesson.
 (function(){
-  function isTrialVisit(lesson,childId){
-    const extra=(lesson?.extras||[]).find(function(e){return Number(e.childId)===Number(childId);});
-    if(extra) return !!extra.trial;
-    return !!(lesson?.trialChildren && lesson.trialChildren[childId]);
-  }
-
-  // In the child's Overview history, show "Ознакомительное" instead of generic "Был".
-  const childBeforeV122=window.child;
-  window.child=function(){
-    let html=childBeforeV122();
-    const child=byId(state.children,state.selectedChild);
-    if(!child || state.childTab!=='overview') return html;
-
-    const visits=[];
-    (state.lessons||[]).forEach(function(l){
-      if(l.cancelled && !l.emptyTrip) return;
-      const main=!!(l.attendance&&l.attendance[child.id]);
-      const extra=(l.extras||[]).some(function(e){return Number(e.childId)===Number(child.id);});
-      if(!main&&!extra) return;
-      const g=byId(state.groups,l.groupId);
-      if(!g) return;
-      visits.push({lesson:l,group:g});
-    });
-    visits.sort(function(a,b){
-      const pa=String(a.lesson.date||'').split('.').reverse().join('');
-      const pb=String(b.lesson.date||'').split('.').reverse().join('');
-      return pb.localeCompare(pa);
-    });
-
-    visits.slice(0,3).forEach(function(x){
-      if(!isTrialVisit(x.lesson,child.id)) return;
-      const marker='<b>'+x.lesson.date+' · '+x.group.direction+'</b>';
-      const pos=html.indexOf(marker);
-      if(pos<0) return;
-      const badgePos=html.indexOf('<span class="badge green">Был</span>',pos);
-      if(badgePos<0) return;
-      const nextRow=html.indexOf('<div class="kpi-line clickable"',pos+marker.length);
-      if(nextRow>=0 && badgePos>nextRow) return;
-      html=html.slice(0,badgePos)+
-        '<span class="badge amber">Ознакомительное</span>'+
-        html.slice(badgePos+'<span class="badge green">Был</span>'.length);
-    });
-    return html;
-  };
-
   function salaryRatesSnapshotV122(){
     return {
       fix:Number(state.settings.salaryFix||0),
@@ -7137,10 +7076,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       });
       ids.forEach(function(childId){
         const child=byId(state.children,childId);
-        if(!child||hasDirection(child,group.direction)) return;
-        const key=childId+'|'+group.direction;
+        const direction=window.icubeLessonChildDirection?window.icubeLessonChildDirection(lesson,childId):group.direction;
+        if(!child||hasDirection(child,direction)) return;
+        const key=childId+'|'+direction;
         const old=map.get(key);
-        if(!old || String(lesson.date||'')>String(old.lesson.date||'')) map.set(key,{child:child,group:group,lesson:lesson});
+        if(!old || String(lesson.date||'')>String(old.lesson.date||'')) map.set(key,{child:child,group:group,lesson:lesson,direction:direction});
       });
     });
     return Array.from(map.values());
@@ -7156,7 +7096,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const rows=issues.map(function(item){
       return '<div class="kpi-line"><div><b>'+esc(item.child.name)+'</b>'+
         '<div class="muted mini">Был на занятии '+esc(item.lesson.date||'')+' · '+esc(groupTitle(item.group)||'')+'</div>'+
-        '<div class="mini" style="margin-top:3px">Добавьте направление «'+esc(item.group.direction)+'» в карточку ребёнка.</div></div>'+
+        '<div class="mini" style="margin-top:3px">Добавьте направление «'+esc(item.direction)+'» в карточку ребёнка.</div></div>'+
         '<button class="btn soft" onclick="openChild('+item.child.id+')">Открыть карточку</button></div>';
     }).join('');
 
@@ -7175,7 +7115,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     if(!selected) return html;
     const issues=directionIssues().filter(function(x){return Number(x.child.id)===Number(selected.id);});
     if(!issues.length) return html;
-    const dirs=Array.from(new Set(issues.map(function(x){return x.group.direction;})));
+    const dirs=Array.from(new Set(issues.map(function(x){return x.direction;})));
     const banner='<div class="notice" style="margin-bottom:16px"><b>Нужно добавить направление</b><div class="mini" style="margin-top:4px">Ребёнок уже был на обычном платном занятии: '+dirs.map(esc).join(', ')+', но этого направления нет в карточке. Используйте «+ Добавить направление» в блоке направлений.</div></div>';
     const tabsPos=html.indexOf('<div class="tabs">');
     return tabsPos>=0?html.slice(0,tabsPos)+banner+html.slice(tabsPos):banner+html;

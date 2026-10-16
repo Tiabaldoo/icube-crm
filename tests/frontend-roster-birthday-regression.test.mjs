@@ -95,6 +95,99 @@ function seedAttendanceChild(state) {
     enrollments: [{ id: 80, direction: 'Робототехника', projectId: 1, project: 'iCubeRobots', groupId: 4, status: 'Активный', balance: 4 }] }];
 }
 
+async function installLessonMapping(context) {
+  const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
+  context.legacy = context.icubeLegacy;
+  const dates = source.match(/^const (?:isoToRu|timestampDate|timestampTime) = .*;$/gm).join('\n');
+  vm.runInContext(dates + '\n' + source.slice(source.indexOf('function calendarOccurrenceKey'), source.indexOf('const salaryTypeLabel'))
+    + '\n' + source.slice(source.indexOf('window.icubeLessonChildDirection ='), source.indexOf('window.icubeLessonOffline =')), context);
+}
+
+function attendanceLessonDto({ id = '166287', date = '2026-10-16', trial = false, type = 'main', amount = '1125.00', direction = 'Робототехника' } = {}) {
+  return { id, groupId: '4', directionId: '1', directionName: 'Робототехника', projectId: '1',
+    plannedTeacherId: '1', actualTeacherId: '1', siteId: '2', status: 'completed',
+    startsAt: `${date}T12:30:00+11:00`, endsAt: `${date}T14:00:00+11:00`,
+    scheduledStartsAt: `${date}T12:30:00+11:00`, scheduledEndsAt: `${date}T14:00:00+11:00`,
+    attendanceAppliedAt: `${date}T14:00:00+11:00`, rosterFrozenAt: `${date}T12:30:00+11:00`,
+    roster: [{ childId: '8', type }], attendances: [{ id: `attendance-${id}`, childId: '8', enrollmentId: '80', directionName: direction,
+      type, present: true, trial, priceSnapshot: trial ? null : '1125.00', chargedLessons: trial ? '0.00000000' : '1.00000000', chargedAmount: trial ? null : amount }] };
+}
+
+function visitTableRow(html, lessonId) {
+  return html.split('<div class="row"').find((row) => row.includes(`deleteVisitPrompt(8,${lessonId})`));
+}
+
+test('visit type stays with its attendance after sorting and deleting the neighbouring visit', async () => {
+  const { context, state } = await loadFrontend(); seedAttendanceChild(state); await installLessonMapping(context);
+  const intro = context.mapLesson(attendanceLessonDto({ id: '80', date: '2026-10-09', trial: true }));
+  const paid = context.mapLesson(attendanceLessonDto());
+  state.lessons = [intro, paid]; state.selectedChild = 8; state.childTab = 'visits';
+  const before = JSON.stringify(state.lessons);
+  for (const sort of ['desc', 'asc']) {
+    state.childLedgerSort = { visits: sort };
+    const html = context.child();
+    assert.match(visitTableRow(html, 80), /09\.10\.2026.*Ознакомительное/);
+    assert.doesNotMatch(visitTableRow(html, 166287), /Ознакомительное/);
+    assert.equal(html.indexOf('09.10.2026') < html.indexOf('16.10.2026'), sort === 'asc');
+  }
+  assert.equal(JSON.stringify(state.lessons), before, 'rendering never changes saved trial flags');
+  paid.attendance[8] = false; // Server result after deleting the neighbouring paid visit.
+  const afterDelete = context.child();
+  assert.match(visitTableRow(afterDelete, 80), /09\.10\.2026.*Ознакомительное/);
+  assert.equal(visitTableRow(afterDelete, 166287), undefined);
+  assert.equal(intro.trialChildren[8], true); assert.equal(paid.trialChildren[8], false);
+  const sameDayPaid = context.mapLesson(attendanceLessonDto({ id: '81', date: '2026-10-09' }));
+  state.lessons = [sameDayPaid, intro]; state.childTab = 'overview';
+  const overviewRows = context.child().split('<div class="kpi-line clickable"');
+  assert.doesNotMatch(overviewRows.find((row) => row.includes('state.selectedLesson=81;')), /Ознакомительное/);
+  assert.match(overviewRows.find((row) => row.includes('state.selectedLesson=80;')), /Ознакомительное/);
+});
+
+test('mixed visit direction uses the pinned enrollment and does not invent a missing direction', async () => {
+  for (const type of ['main', 'extra']) {
+    const { context, state } = await loadFrontend(); seedAttendanceChild(state); await installLessonMapping(context);
+    Object.assign(state.groups[0], { direction: 'Смешанная', isMixed: true });
+    state.children[0].enrollments = [{ id: 81, direction: 'Робототехника', projectId: 1, balance: 0, groupId: 99 },
+      { id: 80, direction: 'Программирование', projectId: 1, balance: 3, groupId: 4, currentPrice: 1125 }];
+    const dto = attendanceLessonDto({ type, direction: 'Программирование' });
+    Object.assign(dto, { isMixed: true, directionName: 'Смешанная' });
+    const lesson = context.mapLesson(dto); state.lessons = [lesson]; state.selectedChild = 8; state.childTab = 'visits';
+    const before = JSON.stringify({ children: state.children, lessons: state.lessons });
+    assert.match(visitTableRow(context.child(), 166287), /<div>Программирование<\/div>/);
+    assert.equal(context.missingDirectionIssuesV137().length, 0);
+    assert.doesNotMatch(context.child(), /Нужно добавить направление/);
+    state.childTab = 'overview'; assert.match(context.child(), /16\.10\.2026 · Программирование/);
+    assert.equal(JSON.stringify({ children: state.children, lessons: state.lessons }), before);
+    delete lesson.attendanceDetailsByChild[8].directionName;
+    assert.equal(context.icubeLessonChildDirection(lesson, 8), 'Программирование', 'existing enrollment pin also resolves direction');
+    assert.equal(context.missingDirectionIssuesV137().length, 0);
+    lesson.attendanceDetailsByChild[8].directionName = 'Программирование';
+    state.children[0].enrollments.pop();
+    assert.equal(context.missingDirectionIssuesV137().length, 1, 'a genuinely missing paid direction still warns');
+  }
+});
+
+test('visit deletion dialog uses the active historical debit amount rather than a current or group price', async () => {
+  const { context, state } = await loadFrontend(); seedAttendanceChild(state); await installLessonMapping(context);
+  Object.assign(state.groups[0], { direction: 'Смешанная', isMixed: true });
+  Object.assign(state.children[0].enrollments[0], { direction: 'Программирование', currentPrice: 1900 });
+  state.settings.robotPrice = 1025; state.selectedChild = 8;
+  for (const amount of ['1125.00', '900.00']) {
+    const dto = attendanceLessonDto({ amount, direction: 'Программирование' });
+    Object.assign(dto, { isMixed: true, directionName: 'Смешанная' });
+    const lesson = context.mapLesson(dto); state.lessons = [lesson];
+    const before = JSON.stringify({ children: state.children, lessons: state.lessons });
+    context.deleteVisitPrompt(8, lesson.id);
+    const displayedAmount = state.modal.match(/За него было списано <b>([^<]+)<\/b>/)?.[1];
+    assert.equal(displayedAmount?.replace(/\s/g, ''), `${Number(amount)}₽`);
+    assert.match(state.modal, /Программирование/);
+    assert.equal(JSON.stringify({ children: state.children, lessons: state.lessons }), before, 'opening a dialog never changes money');
+  }
+  state.lessons[0].attendanceDetailsByChild[8].chargedAmount = null;
+  context.deleteVisitPrompt(8, state.lessons[0].id);
+  assert.match(state.modal, /точная сумма сейчас недоступна/); assert.doesNotMatch(state.modal, /За него было списано/);
+});
+
 for (const extra of [false, true]) test(`child visit history omits cleared ${extra ? 'extra' : 'main'} presence while lesson keeps participant`, async () => {
   const { context, state } = await loadFrontend();
   seedAttendanceChild(state);

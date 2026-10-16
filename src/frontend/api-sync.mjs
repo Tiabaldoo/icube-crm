@@ -161,6 +161,7 @@ function mapLesson(lesson) {
     plannedTeacherId: Number(lesson.plannedTeacherId), siteId: Number(lesson.siteId), siteName: lesson.siteName ?? '',
     siteOverrideId: lesson.siteOverrideId == null ? null : Number(lesson.siteOverrideId), scheduledDate, scheduledTime, occurrenceKey: calendarOccurrenceKey(lesson.groupId, scheduledDate, timestampTime(lesson.scheduledStartsAt)),
     enrollmentByChild: Object.fromEntries(lesson.attendances.map((item) => [Number(item.childId), Number(item.enrollmentId)])),
+    attendanceDetailsByChild: Object.fromEntries(lesson.attendances.map((item) => [Number(item.childId), { ...item }])),
     date, time, status, topic: lesson.topic ?? '', attendance, trialChildren,
     extras: extras.map((item) => ({ childId: Number(item.childId), enrollmentId: Number(item.enrollmentId), trial: item.trial, present: item.present })),
     photos: {}, started: ['in_progress', 'completed'].includes(lesson.status), done: lesson.status === 'completed', cancelled: lesson.status === 'cancelled',
@@ -2030,6 +2031,8 @@ if (typeof teacherLessonBeforeOffline === 'function') window.teacherLesson = fun
 };
 
 window.icubeLessonChildDirection = (lesson, childId) => {
+  const attendanceDirection = lesson?.attendanceDetailsByChild?.[childId]?.directionName;
+  if (attendanceDirection) return attendanceDirection;
   const child = legacy.state.children.find((item) => Number(item.id) === Number(childId));
   const group = legacy.state.groups.find((item) => Number(item.id) === Number(lesson?.groupId));
   const enrollmentId = lesson?.enrollmentByChild?.[childId] ?? lesson?.extras?.find((item) => Number(item.childId) === Number(childId))?.enrollmentId;
