@@ -62,7 +62,7 @@ const money=n=>new Intl.NumberFormat('ru-RU').format(Number(n||0))+' ₽';
 const initials=n=>n.split(' ').slice(0,2).map(x=>x[0]).join('');
 const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber',Закончил:'gray'}[s]||'gray');
 let lessonRosterRendering=false;
-const groupChildren=id=>!lessonRosterRendering&&byId(state.groups,id)?.active===false?[]:state.children.filter(c=>(c.status==='Активный'||c.status==='Лид')&&c.enrollments.some(e=>{
+const groupChildren=id=>!lessonRosterRendering&&byId(state.groups,id)?.active===false?[]:state.children.filter(c=>(lessonRosterRendering?c.enrollments:(window.icubeEnrollmentViews?.currentEnrollments(c)||c.enrollments)).some(e=>{
  const effectiveId=Object.prototype.hasOwnProperty.call(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId;
  return e.groupId!=null&&Number(effectiveId)===Number(id)&&(!e.status||e.status==='Активный');
 }));
@@ -124,17 +124,22 @@ function children(){
  const projectFilter=state.role==='partner'?'all':(state.childProjectFilter||'all');
  const statusFilter=state.childStatusFilter||'all';
  const directionFilter=state.childDirectionFilter||'all';
+ const views=window.icubeEnrollmentViews;
+ const current=c=>views?.currentEnrollments(c)||c.enrollments||[];
+ const unfinished=c=>views?.unfinishedEnrollments(c)||current(c).filter(e=>!['Закончил','finished'].includes(e.status));
+ const listStatus=c=>views?.childListStatus(c)||(current(c).length&&current(c).every(e=>['Закончил','finished'].includes(e.status))?'Закончил':c.status);
+ const matches=e=>(projectFilter==='all'||String(e.projectId)===String(projectFilter))&&(directionFilter==='all'||e.direction===directionFilter);
  const filteredChildren=state.children.filter(c=>{
-   if(statusFilter!=='all'&&c.status!==statusFilter) return false;
+   if(statusFilter!=='all'&&listStatus(c)!==statusFilter) return false;
    if(projectFilter==='all'&&directionFilter==='all') return true;
-   return (c.enrollments||[]).some(e=>
-     (projectFilter==='all'||String(e.projectId)===String(projectFilter))&&
-     (directionFilter==='all'||e.direction===directionFilter)
-   );
+   const live=unfinished(c);
+   return (live.length?live:current(c)).some(matches);
  });
  const rows=filteredChildren.map(c=>{
    const hidden=!childMatchesSearch(c,state.childSearch)?' style="display:none"':'';
-   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(c.enrollments.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(c.status)}">${escapeHtml(c.status)}</span></div><div class="child-directions">${c.enrollments.map(e=>{const groupName=groupTitle(byId(state.groups,e.effectiveGroupId??e.groupId)||{name:e.groupName});return `<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName)}</div></div>`;}).join('')}</div><div class="child-groups-desktop">${c.enrollments.map(e=>{const groupName=groupTitle(byId(state.groups,e.effectiveGroupId??e.groupId)||{name:e.groupName});return `<div class="mini">${escapeHtml(groupName)}</div>`;}).join('')}</div><div>${c.enrollments.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
+   const live=unfinished(c).filter(matches), status=listStatus(c);
+   const groupName=e=>groupTitle(byId(state.groups,Object.hasOwn(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId)||{name:e.groupName});
+   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map((live.length?live:current(c).filter(matches)).map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(status)}">${escapeHtml(status)}</span></div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)} <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span></div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
  }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
  const statusSelect=`<select class="select" style="max-width:180px" onchange="setChildStatusFilter(this.value)"><option value="all" ${statusFilter==='all'?'selected':''}>Все статусы</option>${['Активный','Лид','Пауза','Закончил'].map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join('')}</select>`;
@@ -694,7 +699,8 @@ render();
       kidsHtml = '<div class="empty" style="padding:22px 4px">Пока нет детей в основной группе.</div>';
     } else {
       kidsHtml = kids.map(function(c){
-        return '<div class="kpi-line clickable" onclick="openChild(' + c.id + ')"><div><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.parent) + '</div></div><div class="group-child-badges">' + (window.icubeGroupBalanceBadges?.(c,g.id)||'') + '<span class="badge ' + statusBadge(c.status) + '">' + escapeHtml(c.status) + '</span></div></div>';
+        const statuses=window.icubeEnrollmentViews ? [...new Set(window.icubeEnrollmentViews.groupEnrollments(c,g.id).map(e=>window.icubeEnrollmentViews.directionStatus(c,e)))] : [c.status];
+        return '<div class="kpi-line clickable" onclick="openChild(' + c.id + ')"><div><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.parent) + '</div></div><div class="group-child-badges">' + (window.icubeGroupBalanceBadges?.(c,g.id)||'') + statuses.map(s=>'<span class="badge '+statusBadge(s)+'">'+escapeHtml(s)+'</span>').join('') + '</div></div>';
       }).join('');
     }
 
@@ -2019,8 +2025,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
   state.balanceProject = state.balanceProject || 'all';
 
   function enrollmentProject(e) {
-    const g = byId(state.groups,e.groupId);
-    return g ? g.project : null;
+    return e.project || (state.projects||[]).find(p=>String(p.id)===String(e.projectId))?.name || null;
   }
 
   function matchesBalanceProject(e) {
@@ -2028,12 +2033,15 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return enrollmentProject(e) === state.balanceProject;
   }
 
-  function balanceRows(predicate) {
+  function balanceRows(predicate,hidden=false) {
+    if(window.icubeEnrollmentViews) return window.icubeEnrollmentViews.visibleBalanceRows(state.children,state.balanceProject,state.projects)
+      .filter(x=>x.hidden===hidden && predicate(Number(x.e.balance)))
+      .map(x=>({...x,g:byId(state.groups,Object.hasOwn(x.e,'effectiveGroupId')?x.e.effectiveGroupId:x.e.groupId)}));
     return state.children
-      .filter(function(c){ return c.status!=='Закончил'; })
       .flatMap(function(c){
         return c.enrollments
-          .filter(function(e){ return matchesBalanceProject(e) && predicate(e.balance); })
+          .filter(function(e){ const s=e.status||c.status; return matchesBalanceProject(e) && predicate(e.balance)
+            && (hidden?['Пауза','Закончил'].includes(s):!['Пауза','Закончил'].includes(s)&&(s!=='Лид'||e.hasAttendance)&&(e.balance!==0||e.hasAttendance)); })
           .map(function(e){ return {c:c,e:e,g:byId(state.groups,e.groupId)}; });
       });
   }
@@ -2060,13 +2068,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
   window.setBalanceProject = function(value) {
     state.balanceProject = value;
+    state.hiddenDebtsExpanded = false;
     render();
   };
+  window.toggleHiddenDebts = function(){ state.hiddenDebtsExpanded=!state.hiddenDebtsExpanded; render(); };
 
   window.balances = function () {
     const debt=balanceRows(function(v){return v<0;});
     const zero=balanceRows(function(v){return v===0;});
     const one=balanceRows(function(v){return v===1;});
+    const hidden=balanceRows(function(v){return v<0;},true);
     const debtSum=debt.reduce(function(sum,x){
       return sum + Math.abs(x.e.balance) * effectivePrice(x.e);
     },0);
@@ -2087,6 +2098,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+=block('Осталось 0',zero);
     html+=block('Осталось 1',one);
     html+='</div>';
+    if(hidden.length) html+='<div class="card pad" style="margin-top:16px"><button class="btn" aria-expanded="'+Boolean(state.hiddenDebtsExpanded)+'" aria-controls="hidden-debts" onclick="toggleHiddenDebts()">Скрытые долги · '+hidden.length+'</button>'+
+      (state.hiddenDebtsExpanded?'<div id="hidden-debts" class="info-list" style="margin-top:12px">'+hidden.map(x=>'<button type="button" class="btn" style="width:100%;white-space:normal;text-align:left" onclick="openChild('+Number(x.c.id)+')"><span><b>'+escapeHtml(x.c.name)+'</b> — '+escapeHtml(x.e.direction)+' — '+escapeHtml(x.status||x.e.status)+' — <span class="money negative">'+Number(Number(x.e.balance).toFixed(4))+'</span> занятия</span></button>').join('')+'</div>':'')+'</div>';
     return html;
   };
 

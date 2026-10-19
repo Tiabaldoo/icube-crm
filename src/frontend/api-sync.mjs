@@ -109,21 +109,24 @@ function mapCalendarForeignGroup(group) {
     scheduleSlots: group.scheduleSlots ?? [], startDate: group.startsOn, endDate: group.endsOn, active: group.active };
 }
 function mapChild(child) {
-  return { id: Number(child.id), name: child.name, birth: child.birthDate ?? '', school: child.school ?? '', grade: child.grade ?? '',
-    parent: child.guardian?.name ?? '', phone: child.guardian?.phone ?? '', status: childStatusFromApi[child.status] ?? child.status,
-    createdAt: child.createdAt ?? null, note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
-    enrollments: child.enrollments.map((enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
+  const mapEnrollment = (enrollment) => ({ id: Number(enrollment.id), directionId: Number(enrollment.directionId),
       projectId: Number(enrollment.projectId), project: enrollment.projectName,
       editable: enrollment.editable !== false, direction: enrollment.directionName, groupId: enrollment.groupId == null ? null : Number(enrollment.groupId),
       groupName: enrollment.groupName ?? null, siteName: enrollment.siteName ?? null, weekday: enrollment.weekday ?? null, startTime: enrollment.startTime ?? null,
       groupStartedOn: enrollment.groupStartedOn ?? null,
+      startedOn: enrollment.startedOn ?? null, endedOn: enrollment.endedOn ?? null,
+      hasAttendance: enrollment.hasAttendance === true, groupHistory: enrollment.groupHistory ?? [],
       effectiveGroupId: enrollment.effectiveGroupId === undefined
         ? (enrollment.groupId == null ? null : Number(enrollment.groupId))
         : enrollment.effectiveGroupId == null ? null : Number(enrollment.effectiveGroupId),
       status: enrollmentStatusFromApi[enrollment.status] ?? enrollment.status,
       individualPrice: enrollment.individualPrice == null ? null : Number(enrollment.individualPrice), currentPrice: enrollment.currentPrice == null ? null : Number(enrollment.currentPrice),
       balanceText: enrollment.balanceLessons == null ? null : String(enrollment.balanceLessons),
-      balance: enrollment.balanceLessons == null ? null : Number(enrollment.balanceLessons) })) };
+      balance: enrollment.balanceLessons == null ? null : Number(enrollment.balanceLessons) });
+  return { id: Number(child.id), name: child.name, birth: child.birthDate ?? '', school: child.school ?? '', grade: child.grade ?? '',
+    parent: child.guardian?.name ?? '', phone: child.guardian?.phone ?? '', status: childStatusFromApi[child.status] ?? child.status,
+    createdAt: child.createdAt ?? null, note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
+    enrollments: child.enrollments.map(mapEnrollment), enrollmentHistory: (child.enrollmentHistory ?? []).map(mapEnrollment) };
 }
 
 function calendarOccurrenceKey(groupId, date, startTime) {
@@ -824,9 +827,12 @@ function childPageWithTransferHistory() {
   const output = typeof legacyChildPage === 'function' ? legacyChildPage() : '';
   const child = legacy.state.children.find((item) => item.id === Number(legacy.state.selectedChild));
   const transfers = (legacy.state.balanceTransfers ?? []).filter((item) => item.childId === child?.id);
-  if (!child || legacy.state.childTab !== 'overview' || !transfers.length) return output;
+  if (!child || legacy.state.childTab !== 'overview') return output;
+  const history = [...(child.enrollmentHistory ?? []), ...child.enrollments.filter((e) => (e.groupHistory ?? []).some((g) => g.endedOn != null))];
+  const historyBlock = history.length ? `<div class="card pad" style="margin-top:16px"><h2>История направлений и групп</h2>${history.map((e) => `<div class="info-line"><div><b>${html(e.direction)}</b> · ${html(e.status)} · ${html(e.project)}${(e.groupHistory ?? []).map((g) => `<div class="muted mini">${html(g.groupName)} · ${html(g.startedOn)} — ${html(g.endedOn ?? 'по настоящее время')}</div>`).join('')}</div>${e.balance == null ? '' : `<span class="money ${e.balance < 0 ? 'negative' : ''}">${html(e.balance)} занятий</span>`}</div>`).join('')}</div>` : '';
+  if (!transfers.length) return `${output}${historyBlock}`;
   const block = `<div class="card child-ledger-card" style="margin-top:16px"><div class="child-ledger-head"><div><h2>Переносы остатка</h2><div class="muted mini">${transfers.length} операций</div></div></div><div class="list">${transfers.map((item) => `<div class="kpi-line" style="padding:12px 16px"><div><b>${html(item.sourceDirectionName)} → ${html(item.targetDirectionName)}</b><div class="muted mini">${isoToRu(timestampDate(item.transferredAt))} · ${displayMoney(item.transferredAmount)} · зачислено ${Number(item.targetLessonsCredit).toFixed(4)} занятия</div></div>${item.automaticChangeDirection ? '' : `<button class="btn danger" onclick="icubeApi.cancelBalanceTransferPrompt(${item.id})">Отменить перенос</button>`}</div>`).join('')}</div></div>`;
-  return `${output}${block}`;
+  return `${output}${historyBlock}${block}`;
 }
 
 function partnerProjects() { return directories.projects.filter((project) => project.partnerId != null); }

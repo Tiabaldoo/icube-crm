@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { installQuickStatusUi } from '../src/frontend/quick-status.mjs';
 
 async function loadFrontend() {
   const source = await readFile(new URL('../src/frontend/crm-ui.js', import.meta.url), 'utf8');
@@ -86,6 +87,99 @@ function lessonFixture(overrides = {}) {
     ...overrides,
   };
 }
+
+test('block3 children list hides finished directions but preserves search, filters and child history', async () => {
+  const { context, state } = await loadFrontend(); seedAttendanceChild(state);
+  installQuickStatusUi(context.icubeLegacy, context, context.document);
+  const first = state.children[0];
+  first.enrollments.push({ id:81, direction:'Программирование', projectId:2, project:'Зебра', groupId:null, status:'Закончил', balance:-1 });
+  state.children.push({ ...first, id:9, name:'Завершивший ребёнок', enrollments:first.enrollments.map(e=>({...e,status:'Закончил'})) });
+  const row = (output, id) => output.split('<div class="row clickable"').find(r=>r.startsWith(` data-child-id="${id}"`));
+  const before = JSON.stringify(state.children);
+  let output=context.children();
+  assert.match(row(output,8),/Робототехника/); assert.doesNotMatch(row(output,8),/Программирование/);
+  assert.equal((output.match(/data-child-id="8"/g)||[]).length,1);
+  assert.match(row(output,9),/Закончил.*Нет текущих направлений/);
+  state.childStatusFilter='Активный'; assert.equal(row(context.children(),9),undefined);
+  state.childStatusFilter='Закончил'; state.childSearch='Завершивший';
+  assert.match(row(context.children(),9),/Завершивший ребёнок/);
+  state.childStatusFilter='all'; state.childDirectionFilter='Программирование';
+  assert.equal(row(context.children(),8),undefined); assert.ok(row(context.children(),9));
+  state.childDirectionFilter='all'; state.childProjectFilter='2';
+  assert.equal(row(context.children(),8),undefined);
+  state.selectedChild=8; state.childTab='overview';
+  assert.match(context.child(),/Робототехника/); assert.match(context.child(),/Программирование/);
+  assert.equal(JSON.stringify(state.children),before);
+});
+
+test('block3 hidden debts collapse, count directions, filter projects and reuse child navigation without data writes', async () => {
+  const { context, state } = await loadFrontend(); seedAttendanceChild(state);
+  installQuickStatusUi(context.icubeLegacy, context, context.document);
+  state.page='balances'; state.balanceProject='all';
+  assert.doesNotMatch(context.balances(),/Скрытые долги/);
+  state.children[0].enrollments[0].status='Пауза'; state.children[0].enrollments[0].balance=-2;
+  state.children[0].enrollments.push({id:81,direction:'Программирование',projectId:2,project:'Зебра',groupId:null,status:'Закончил',balance:-1});
+  const before=JSON.stringify(state.children);
+  let output=context.balances();
+  assert.match(output,/aria-expanded="false".*Скрытые долги · 2/);
+  assert.doesNotMatch(output,/<b>Иванов Иван<\/b>/);
+  context.toggleHiddenDebts(); output=context.balances();
+  assert.match(output,/aria-expanded="true"/);
+  const debts=output.slice(output.indexOf('id="hidden-debts"'));
+  assert.equal((debts.match(/onclick="openChild\(8\)"/g)||[]).length,2);
+  assert.match(debts,/Робототехника — Пауза — .*?>-2</);
+  assert.match(debts,/Программирование — Закончил — .*?>-1</);
+  context.toggleHiddenDebts(); assert.doesNotMatch(context.balances(),/id="hidden-debts"/);
+  context.setBalanceProject('Зебра');
+  assert.match(context.balances(),/Скрытые долги · 1/); assert.equal(state.hiddenDebtsExpanded,false);
+  context.toggleHiddenDebts(); output=context.balances().slice(context.balances().indexOf('id="hidden-debts"'));
+  assert.match(output,/Программирование/); assert.doesNotMatch(output,/Робототехника/);
+  context.openChild(8); assert.equal(state.page,'child'); assert.equal(state.selectedChild,8);
+  assert.equal(JSON.stringify(state.children),before);
+  state.children[0].enrollments.forEach(e=>{e.status='Активный';e.hasAttendance=true;});
+  context.setBalanceProject('all'); assert.doesNotMatch(context.balances(),/Скрытые долги/);
+  assert.match(context.balances(),/<b>Иванов Иван<\/b>/);
+});
+
+test('block3 API mapping and child overview preserve old enrollments and closed group history separately', async () => {
+  const { context,state }=await loadFrontend(); seedAttendanceChild(state);
+  const source=await readFile(new URL('../src/frontend/api-sync.mjs',import.meta.url),'utf8');
+  context.legacy=context.icubeLegacy;
+  const statuses=source.match(/^const (?:childStatusFromApi|enrollmentStatusFromApi) = .*;$/gm).join('\n');
+  vm.runInContext(statuses+'\n'+source.slice(source.indexOf('function mapChild('),source.indexOf('function calendarOccurrenceKey')),context);
+  const dto={id:'8',name:'Иванов Иван',status:'active',enrollments:[{id:'80',directionId:'1',directionName:'Робототехника',projectId:'1',projectName:'iCubeRobots',status:'active',hasAttendance:true,balanceLessons:'0.00000000',
+    groupHistory:[{groupId:'3',groupName:'Старая группа',startedOn:'2026-01-01',endedOn:'2026-08-31'},{groupId:'4',groupName:'Новая группа',startedOn:'2026-09-01',endedOn:null}]}],
+    enrollmentHistory:[{id:'79',directionId:'2',directionName:'Программирование',projectId:'1',projectName:'iCubeRobots',status:'finished',editable:false,balanceLessons:'-1.00000000',groupHistory:[]}]};
+  const child=context.mapChild(dto); state.children=[child]; state.selectedChild=8; state.childTab='overview'; state.balanceTransfers=[];
+  assert.equal(child.enrollments.length,1); assert.equal(child.enrollmentHistory.length,1);
+  assert.equal(child.enrollments[0].hasAttendance,true); assert.equal(child.enrollmentHistory[0].editable,false);
+  context.legacyChildPage=context.child;
+  context.html=value=>String(value??'');
+  vm.runInContext(source.slice(source.indexOf('function childPageWithTransferHistory('),source.indexOf('function partnerProjects(')),context);
+  const before=JSON.stringify(state.children); const output=context.childPageWithTransferHistory();
+  assert.match(output,/История направлений и групп/); assert.match(output,/Программирование<\/b> · Закончил/);
+  assert.match(output,/Старая группа · 2026-01-01 — 2026-08-31/); assert.match(output,/Новая группа/);
+  assert.match(output,/>-1 занятий</); assert.equal(JSON.stringify(state.children),before);
+});
+
+test('block3 direction pause and completion save only the chosen enrollment and refresh data', async () => {
+  const source=await readFile(new URL('../src/frontend/api-sync.mjs',import.meta.url),'utf8');
+  const first={id:80,directionId:1,direction:'Робототехника',status:'Активный',groupId:null,balance:4,editable:true};
+  const second={id:81,direction:'Программирование',status:'Активный',groupId:null,balance:-1,editable:true};
+  const child={id:8,status:'Активный',enrollments:[first,second],enrollmentHistory:[{id:79,status:'Закончил'}]};
+  const calls=[];let reloads=0;let status='Пауза';
+  const context=vm.createContext({legacy:{state:{children:[child]}},
+    value:s=>s==='#md-enrollment-status'?status:s==='#md-direction'?'Робототехника':s==='#md-group'?'':s==='#md-individual'?'false':'',
+    element:()=>null, enrollmentStatusToApi:{'Пауза':'paused','Закончил':'finished'},
+    directories:{directions:[{id:1,name:'Робототехника'}]}, byName:(items,name)=>items.find(i=>i.name===name),
+    api:{async updateEnrollment(id,body){calls.push({resource:'enrollments',id,body});}},
+    reload:async()=>{reloads++;},fail:e=>{throw e;},window:{alert:message=>{throw new Error(message);}}});
+  const before=JSON.stringify(child);
+  vm.runInContext(source.slice(source.indexOf('async function saveEnrollment('),source.indexOf('async function addEnrollment(')),context);
+  await context.saveEnrollment(8,'Робототехника'); status='Закончил';await context.saveEnrollment(8,'Робототехника');
+  assert.deepEqual(calls.map(c=>[c.resource,c.id,c.body.status]),[['enrollments',80,'paused'],['enrollments',80,'finished']]);
+  assert.equal(reloads,2); assert.equal(JSON.stringify(child),before);
+});
 
 function seedAttendanceChild(state) {
   state.role = 'director';

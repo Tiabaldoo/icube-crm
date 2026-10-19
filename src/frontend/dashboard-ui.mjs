@@ -1,20 +1,25 @@
 import { groupDisplayName } from './advanced-groups.mjs';
 import { ApiClient } from '../data/api-client.mjs';
 import { addCalendarDays, businessDate, BUSINESS_TIME_ZONE } from '../shared/business-time.mjs';
+import { currentEnrollments, directionStatus } from './quick-status.mjs';
 
-const activeEnrollment = (enrollment) => enrollment?.status === 'Активный';
+const activeEnrollment = (child, enrollment) => directionStatus(child, enrollment) === 'Активный';
 const projectMatches = (projectId, allowedProjectIds) => !allowedProjectIds || allowedProjectIds.has(String(projectId));
 
 export function countActiveChildrenForProject(children, projectId) {
   if (projectId == null) return 0;
-  return (children ?? []).filter((child) => (child.enrollments ?? []).some((enrollment) =>
-    String(enrollment.projectId) === String(projectId) && activeEnrollment(enrollment))).length;
+  return countActiveChildrenTotal(children, [projectId]);
 }
 
 export function countActiveChildrenTotal(children, projectIds = null) {
   const allowed = projectIds == null ? null : new Set(projectIds.map(String));
-  return (children ?? []).filter((child) => (child.enrollments ?? []).some((enrollment) =>
-    activeEnrollment(enrollment) && projectMatches(enrollment.projectId, allowed))).length;
+  const counted = new Set(); let total = 0;
+  for (const child of children ?? []) for (const [index, enrollment] of currentEnrollments(child).entries()) {
+    if (!activeEnrollment(child, enrollment) || !projectMatches(enrollment.projectId, allowed)) continue;
+    const key = `${child.id}:${enrollment.directionId ?? enrollment.direction ?? enrollment.id ?? index}`;
+    if (!counted.has(key)) { counted.add(key); total++; }
+  }
+  return total;
 }
 
 export function countActiveGroups(groups, projectId = null) {
@@ -180,7 +185,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     html += legacy.pageHead('Главная', longToday(now), action);
     html += notificationBlock();
     html += '<div class="dashboard-kpis">';
-    html += `<div class="card metric dashboard-kpi"><div class="label">Активные дети</div><div class="value">${metrics.activeChildren}</div>${kpiBreakdown(metrics.projects, 'activeChildren')}</div>`;
+    html += `<div class="card metric dashboard-kpi"><div class="label">Активные направления</div><div class="value">${metrics.activeChildren}</div>${kpiBreakdown(metrics.projects, 'activeChildren')}</div>`;
     html += `<div class="card metric dashboard-kpi"><div class="label">Активные группы</div><div class="value">${metrics.activeGroups}</div>${kpiBreakdown(metrics.projects, 'activeGroups')}</div>`;
     html += `<div class="card metric dashboard-kpi"><div class="label">Оплаты за ${safe(monthName(now))}</div><div class="value">${safe(money(metrics.monthlyPayments))}</div>${kpiBreakdown(metrics.projects, 'monthlyPayments', money)}</div>`;
     html += '</div>';

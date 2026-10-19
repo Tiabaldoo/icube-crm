@@ -201,9 +201,18 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
     if (!childRows.length) return [];
     const visibleIds = childRows.map((row) => String(row.id));
     const enrollmentRows = await rows(`SELECT e.id, e.child_id, e.direction_id, e.project_id, p.name project_name,
-      d.name direction_name, e.status, e.individual_price, e.balance_lessons,
+      d.name direction_name, e.status, e.individual_price, e.balance_lessons,e.superseded_at,
       e.started_on, e.ended_on, gm.group_id,gm.started_on group_started_on,
       effective_gm.group_id effective_group_id,sg.name group_name,sg.weekday,sg.start_time,s.name site_name,
+      EXISTS(SELECT 1 FROM attendances a JOIN lessons visited ON visited.id=a.lesson_id
+        LEFT JOIN child_enrollments attended ON attended.id=a.enrollment_id
+        WHERE a.child_id=e.child_id AND a.present=TRUE AND visited.deleted_at IS NULL
+          AND ((attended.direction_id=e.direction_id AND attended.project_id=e.project_id)
+            OR (a.enrollment_id IS NULL AND visited.is_mixed_snapshot=FALSE
+              AND visited.direction_id_snapshot=e.direction_id AND visited.project_id_snapshot=e.project_id))) has_attendance,
+      (SELECT JSON_ARRAYAGG(JSON_OBJECT('groupId',history.group_id,'groupName',hg.name,
+        'startedOn',history.started_on,'endedOn',history.ended_on)) FROM group_memberships history
+        JOIN study_groups hg ON hg.id=history.group_id WHERE history.enrollment_id=e.id) group_history,
       COALESCE(e.individual_price,
         (SELECT pv.price FROM price_versions pv WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND pv.group_id=effective_gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
@@ -216,21 +225,28 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       LEFT JOIN group_memberships effective_gm ON effective_gm.id=(SELECT gm3.id FROM group_memberships gm3 WHERE gm3.enrollment_id=e.id
         AND gm3.started_on<=:today AND (gm3.ended_on IS NULL OR gm3.ended_on>=:today) ORDER BY gm3.started_on DESC,gm3.id DESC LIMIT 1)
       LEFT JOIN study_groups sg ON sg.id=gm.group_id LEFT JOIN sites s ON s.id=sg.site_id
-      WHERE e.child_id IN (${visibleIds.join(',')}) AND e.superseded_at IS NULL
+      WHERE e.child_id IN (${visibleIds.join(',')})
+        AND (e.superseded_at IS NULL OR (:actorTeacherId IS NULL AND (:projectId IS NULL OR e.project_id=:projectId)))
         AND (:actorTeacherId IS NULL OR EXISTS (SELECT 1 FROM teacher_projects tp
           LEFT JOIN teacher_project_directions tpd ON tpd.teacher_id=tp.teacher_id AND tpd.project_id=tp.project_id
           WHERE tp.teacher_id=:actorTeacherId AND tp.project_id=e.project_id AND tp.active=TRUE ))
       ORDER BY e.child_id, e.id`, { projectId, actorTeacherId, today });
-    return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
-      createdAt: isoDate(row.created_at), status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
-      enrollments: enrollmentRows.filter((item) => String(item.child_id) === String(row.id)).map((item) => ({ id: String(item.id), directionId: String(item.direction_id),
-        projectId: String(item.project_id), projectName: item.project_name, editable: projectId == null || String(item.project_id) === projectId,
+    const mapEnrollment = (item) => ({ id: String(item.id), directionId: String(item.direction_id),
+        projectId: String(item.project_id), projectName: item.project_name, editable: item.superseded_at == null && (projectId == null || String(item.project_id) === projectId),
         directionName: item.direction_name, groupId: item.group_id == null ? null : String(item.group_id), groupName: item.group_name,
         groupStartedOn: isoDate(item.group_started_on), effectiveGroupId: item.effective_group_id == null ? null : String(item.effective_group_id),
         siteName: item.site_name, weekday: item.weekday == null ? null : Number(item.weekday), startTime: item.start_time == null ? null : String(item.start_time).slice(0, 5), status: item.status,
         ...(actorTeacherId == null && (projectId == null || String(item.project_id) === projectId) ? { individualPrice: item.individual_price == null ? null : String(item.individual_price),
           currentPrice: item.current_price == null ? null : String(item.current_price), balanceLessons: String(item.balance_lessons) } : {}),
-        startedOn: isoDate(item.started_on), endedOn: isoDate(item.ended_on) })) }));
+        ...(projectId == null || String(item.project_id) === projectId ? {
+          hasAttendance: Number(item.has_attendance) === 1,
+          groupHistory: typeof item.group_history === 'string' ? JSON.parse(item.group_history) : item.group_history ?? [],
+        } : {}),
+        startedOn: isoDate(item.started_on), endedOn: isoDate(item.ended_on) });
+    return childRows.map((row) => ({ id: rowId(row), name: row.full_name, birthDate: isoDate(row.birth_date), school: row.school, grade: row.grade,
+      createdAt: isoDate(row.created_at), status: row.status, note: row.note, needsDirectorReview: Boolean(row.needs_director_review), guardian: { name: row.guardian_name, phone: row.guardian_phone },
+      enrollments: enrollmentRows.filter((item) => String(item.child_id) === String(row.id) && item.superseded_at == null).map(mapEnrollment),
+      enrollmentHistory: enrollmentRows.filter((item) => String(item.child_id) === String(row.id) && item.superseded_at != null).map(mapEnrollment) }));
   }
 
   const collection = { projects, directions, sites, teachers, groups, children };

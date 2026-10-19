@@ -16,7 +16,7 @@ const partner = { roles: ['partner'], projectIds: ['2'], userId: '17' };
 const director = { roles: ['director'], projectIds: [], userId: '1' };
 const pool = (query) => ({ query });
 
-test('active children are distinct globally and independently inside each project', () => {
+test('active directions count independently for each child and project', () => {
   const children = [
     { id: 1, enrollments: [
       { projectId: 1, status: 'Активный' },
@@ -29,8 +29,8 @@ test('active children are distinct globally and independently inside each projec
     { id: 3, enrollments: [{ projectId: 2, status: 'Активный' }] },
     { id: 4, enrollments: [{ projectId: 1, status: 'Пауза' }] },
   ];
-  assert.equal(countActiveChildrenTotal(children), 3);
-  assert.equal(countActiveChildrenForProject(children, 1), 2);
+  assert.equal(countActiveChildrenTotal(children), 5);
+  assert.equal(countActiveChildrenForProject(children, 1), 3);
   assert.equal(countActiveChildrenForProject(children, 2), 2);
   assert.equal(countActiveChildrenTotal(children, ['2']), 2);
 });

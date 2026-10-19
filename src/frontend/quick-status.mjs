@@ -1,6 +1,46 @@
 const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const statusNames = { active: 'Активный', lead: 'Лид', paused: 'Пауза', finished: 'Закончил', archived: 'Закончил' };
+export function directionStatus(child, enrollment) {
+  const status = statusNames[enrollment.status] ?? enrollment.status ?? 'Активный';
+  // Lead belongs to the child in the existing schema. Explicit enrollment
+  // pause/completion takes precedence; other child statuses do not rewrite it.
+  return status === 'Активный' && ['lead', 'Лид'].includes(child.status) ? 'Лид' : status;
+}
+export function currentEnrollments(child) {
+  const seen = new Set();
+  return (child.enrollments ?? []).filter((e) => {
+    if (e.supersededAt != null || e.current === false) return false;
+    if (e.id == null) return true;
+    if (seen.has(String(e.id))) return false;
+    seen.add(String(e.id)); return true;
+  });
+}
+export function unfinishedEnrollments(child) {
+  return currentEnrollments(child).filter((e) => directionStatus(child, e) !== 'Закончил');
+}
+export function childListStatus(child) {
+  const current = currentEnrollments(child);
+  return current.length && current.every((e) => directionStatus(child, e) === 'Закончил')
+    ? 'Закончил' : statusNames[child.status] ?? child.status;
+}
+export function groupEnrollments(child, groupId) {
+  return currentEnrollments(child).filter((e) => ['Активный', 'Лид'].includes(directionStatus(child, e))
+    && Number(Object.hasOwn(e, 'effectiveGroupId') ? e.effectiveGroupId : e.groupId) === Number(groupId));
+}
+export function visibleBalanceRows(children, project = 'all', projects = []) {
+  return (children ?? []).flatMap((c) => currentEnrollments(c).flatMap((e) => {
+    const projectName = e.project ?? projects.find((p) => String(p.id) === String(e.projectId))?.name;
+    if (project !== 'all' && String(e.projectId) !== String(project) && projectName !== project) return [];
+    if (e.balance == null || e.balance === '' || !Number.isFinite(Number(e.balance))) return [];
+    const status = directionStatus(c, e); const balance = Number(e.balance);
+    const visited = e.hasAttendance === true;
+    const hidden = ['Пауза', 'Закончил'].includes(status);
+    if (hidden ? balance >= 0 : !['Активный', 'Лид'].includes(status) || status === 'Лид' && !visited || balance === 0 && !visited) return [];
+    return [{ c, e, status, hidden }];
+  }));
+}
 export function groupBalanceBadges(child, groupId) {
-  return (child.enrollments ?? []).filter((item) => Number(item.groupId) === Number(groupId)).map((item) => {
+  return groupEnrollments(child, groupId).map((item) => {
     const raw = String(item.balanceText ?? item.balance ?? '');
     const display = /^-?\d+(\.\d+)?$/.test(raw) ? raw.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') : '—';
     const balance = Number(raw);
@@ -9,6 +49,7 @@ export function groupBalanceBadges(child, groupId) {
   }).join('');
 }
 export function installQuickStatusUi(legacy, host = globalThis.window, document = globalThis.document) {
+  host.icubeEnrollmentViews = { currentEnrollments, unfinishedEnrollments, childListStatus, directionStatus, groupEnrollments, visibleBalanceRows };
   const allowed = () => ['director', 'partner'].includes(legacy.state.role);
   let popover = null; let pending = null; let saving = false;
   const byId = (items, id) => items?.find((item) => Number(item.id) === Number(id));
