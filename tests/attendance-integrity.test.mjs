@@ -9,7 +9,7 @@ const teacher = { roles: ['teacher'], userId: '2', teacherId: '5' };
 
 // Stateful SQL fixture, following the project's existing transaction-pool tests.
 // Financial rows and rollback are modelled; unexpected queries fail the test.
-function fixture({ type = 'main', missing = false, status = 'completed', mode = 'standard' } = {}) {
+function fixture({ type = 'main', missing = false, status = 'completed', mode = 'standard', notificationEvents = null } = {}) {
   let state = {
     lesson: { id: 10, group_id: 20, project_id_snapshot: 1, direction_id_snapshot: 1, is_mixed_snapshot: 1,
       planned_teacher_id: 5, actual_teacher_id: 5, status, starts_at: '2026-09-10 10:00:00', ends_at: '2026-09-10 11:00:00',
@@ -138,12 +138,22 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
   const connection = { query, async beginTransaction() { snapshot = structuredClone(state); }, async commit() {},
     async rollback() { state = snapshot; }, release() {} };
   const pool = { query, getConnection: async () => connection };
-  return { service: createMysqlLessons(pool), catalog: createMysqlCatalog(pool), get state() { return state; }, failAt(prefix) { failure = prefix; } };
+  return { service: createMysqlLessons(pool,{notificationEvents}), catalog: createMysqlCatalog(pool), get state() { return state; }, failAt(prefix) { failure = prefix; } };
 }
 
 const balance = (f, id = 11) => f.state.enrollments.find((e) => e.id === id).balance_lessons;
 const salary = (f) => f.state.salaries.filter((s) => !s.reversed_at).reduce((sum, s) => sum + Number(s.total_amount), 0);
 const mark = (f, present, trial = false, actor = director) => f.service.putAttendance(10, 7, { present, trial }, actor);
+
+test('lead paid alert hook runs only after actual paid debit, never trial, absence or repeated identical request',async()=>{
+  const alerts=[];const f=fixture({notificationEvents:{leadPaidAttendance:async(_c,p)=>alerts.push(p),debtThreshold:async()=>{}}});
+  await mark(f,true,true);assert.equal(alerts.length,0);
+  await mark(f,false,true);assert.equal(alerts.length,0);
+  await mark(f,true,false);assert.deepEqual(alerts,[{enrollmentId:11}]);
+  await mark(f,true,false);assert.equal(alerts.length,1);
+  await mark(f,false);assert.equal(alerts.length,1);
+  await mark(f,true);assert.equal(alerts.length,2,'event service deduplicates re-marking using the enrollment key');
+});
 
 test('attendance DTO exposes the exact active FIFO amount that deletion reverses, without changing financial rules', async () => {
   const f = fixture(); const marked = await mark(f, true); const row = marked.attendances[0];

@@ -20,8 +20,8 @@ const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Ч�
 const dayShortNames = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const childStatusFromApi = { lead: 'Лид', active: 'Активный', paused: 'Пауза', finished: 'Закончил', archived: 'Закончил' };
 const childStatusToApi = { 'Лид': 'lead', 'Активный': 'active', 'Пауза': 'paused', 'Закончил': 'finished' };
-const enrollmentStatusFromApi = { active: 'Активный', paused: 'Пауза', finished: 'Закончил' };
-const enrollmentStatusToApi = { 'Активный': 'active', 'Пауза': 'paused', 'Закончил': 'finished' };
+const enrollmentStatusFromApi = { lead: 'Лид', active: 'Активный', paused: 'Пауза', finished: 'Закончил' };
+const enrollmentStatusToApi = { 'Лид': 'lead', 'Активный': 'active', 'Пауза': 'paused', 'Закончил': 'finished' };
 let directories = { projects: [], directions: [] };
 let groupSavePending = false;
 let balanceTransferPending = false;
@@ -636,35 +636,48 @@ async function saveGroup(resourceId, { active } = {}) {
 
 async function saveChild(resourceId, { status } = {}) {
   if (childSavePending) return;
-  childSavePending = true;
-  try {
-    const statusOnly = resourceId && status !== undefined;
-    const statusEnrollment = statusOnly ? legacy.state.children.find((item) => item.id === Number(resourceId))?.enrollments.find((item) => item.editable !== false) : null;
-    const child = statusOnly ? { status: childStatusToApi[status] } : { name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null, school: value('#cf-school'), grade: value('#cf-grade'),
-      status: childStatusToApi[value('#cf-status')] ?? 'lead', note: value('#cf-note'), guardian: { name: value('#cf-parent'), phone: value('#cf-phone') } };
-    const selectedGroupId = statusOnly ? statusEnrollment?.groupId ?? null : value('#cf-group') ? Number(value('#cf-group')) : null;
-    let saved; let enrollment;
-    if (resourceId) {
-      const existing = legacy.state.children.find((item) => item.id === Number(resourceId));
-      enrollment = statusOnly ? statusEnrollment : existing?.enrollments.find((item) => item.editable !== false && item.groupId === selectedGroupId)
-        ?? existing?.enrollments.find((item) => item.editable !== false && item.direction === value('#cf-direction'));
-      if (!enrollment) throw new ApiError('Не найдено редактируемое направление текущего проекта');
-      saved = await api.request(`/children/${resourceId}/with-enrollment`, { method: 'PATCH', body: {
-        child, enrollmentId: enrollment.id, enrollment: statusOnly ? {} : { groupId: selectedGroupId },
-      } });
-    } else {
-      const direction = byName(directories.directions, value('#cf-direction'));
-      if (!direction) throw new ApiError('Направление отсутствует в серверном справочнике');
-      childCreateKey ||= operationKey();
-      saved = await api.request('/children-with-enrollment', { method: 'POST', idempotencyKey: childCreateKey, body: { child,
-        enrollment: { directionId: direction.id, projectId: value('#cf-project') || undefined, groupId: selectedGroupId, status: 'active' },
-      } });
-      childCreateKey = null;
-    }
-    legacy.state.selectedChild = saved.id; legacy.state.modal = null; legacy.state.page = 'child'; await reload();
-    return saved;
-  } catch (error) { fail(error); }
-  finally { childSavePending = false; }
+  const statusOnly = resourceId && status !== undefined;
+  const existing = (legacy.state.children ?? []).find(item => item.id === Number(resourceId));
+  const child = statusOnly ? {status: childStatusToApi[status]} : {
+    name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null,
+    school: value('#cf-school'), grade: value('#cf-grade'), status: childStatusToApi[value('#cf-status')] ?? 'lead',
+    note: value('#cf-note'), guardian: {name: value('#cf-parent'), phone: value('#cf-phone')},
+  };
+  if (existing && !statusOnly && child.status === (childStatusToApi[existing.status] ?? existing.status)) delete child.status;
+  const selectedGroupId = statusOnly ? null : value('#cf-group') ? Number(value('#cf-group')) : null;
+  const enrollment = !statusOnly && existing ? existing.enrollments.find(item => item.editable !== false && item.groupId === selectedGroupId)
+    ?? existing.enrollments.find(item => item.editable !== false && item.direction === value('#cf-direction')) : null;
+  async function persist(enrollmentIds) {
+    if (childSavePending) return;
+    childSavePending = true;
+    try {
+      let saved;
+      if (statusOnly) {
+        saved = await api.request('/children/' + resourceId + '/status', {method:'PATCH', body:{status:child.status, ...(enrollmentIds ? {enrollmentIds} : {})}});
+      } else if (resourceId) {
+        if (!enrollment) throw new ApiError('Не найдено редактируемое направление текущего проекта');
+        saved = await api.request('/children/' + resourceId + '/with-enrollment', {method:'PATCH', body:{
+          child, enrollmentId:enrollment.id, enrollment:{groupId:selectedGroupId}, ...(enrollmentIds ? {enrollmentIds} : {}),
+        }});
+      } else {
+        const direction = byName(directories.directions, value('#cf-direction'));
+        if (!direction) throw new ApiError('Направление отсутствует в серверном справочнике');
+        childCreateKey ||= operationKey();
+        saved = await api.request('/children-with-enrollment', {method:'POST', idempotencyKey:childCreateKey, body:{child,
+          enrollment:{directionId:direction.id, projectId:value('#cf-project') || undefined, groupId:selectedGroupId, status:child.status},
+        }});
+        childCreateKey = null;
+      }
+      legacy.state.selectedChild = Number(saved.id); legacy.state.modal = null; legacy.state.page = 'child'; await reload();
+      return saved;
+    } catch (error) { fail(error); }
+    finally { childSavePending = false; }
+  }
+  if (resourceId && ['active','lead'].includes(child.status)) {
+    window.icubeChildStatusSelection(resourceId, childStatusFromApi[child.status], persist);
+    return {selection:true};
+  }
+  return persist();
 }
 
 async function saveEnrollment(childId, oldDirection) {
@@ -677,7 +690,7 @@ async function saveEnrollment(childId, oldDirection) {
     if (individual && !(packagePrice > 0)) return window.alert('Укажите индивидуальную цену абонемента за 4 занятия.');
     const selectedGroupId = value('#md-group') ? Number(value('#md-group')) : null;
     const targetValues = { groupId: selectedGroupId,
-      ...(selectedGroupId ? { groupStartedOn: value('#md-group-started-on') || businessDate() } : {}),
+      ...(selectedGroupId ? { groupStartedOn: value('#md-group-started-on') || enrollment.groupStartedOn || businessDate() } : {}),
       status: enrollmentStatusToApi[value('#md-enrollment-status')] ?? enrollmentStatusToApi[enrollment.status] ?? 'active', individualPrice: individual ? packagePrice / 4 : null };
     const directionChanged = String(direction.id) !== String(enrollment.directionId);
     const currentIndividual = enrollment.individualPrice == null ? null : Number(enrollment.individualPrice);
@@ -687,7 +700,9 @@ async function saveEnrollment(childId, oldDirection) {
         directionId: direction.id, ...targetValues, status: targetValues.status === 'finished' ? 'active' : targetValues.status,
       } });
     } else {
-      await api.updateEnrollment(enrollment.id, { directionId: direction.id, ...targetValues });
+      const membershipChanged = Number(enrollment.groupId || 0) !== Number(selectedGroupId || 0)
+        || (selectedGroupId && value('#md-group-started-on') && targetValues.groupStartedOn !== enrollment.groupStartedOn);
+      await api.updateEnrollment(enrollment.id, membershipChanged ? { directionId: direction.id, ...targetValues } : {status:targetValues.status});
     }
     legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; await reload();
   } catch (error) { fail(error); }
@@ -701,7 +716,7 @@ async function addEnrollment() {
     if (individual && !(packagePrice > 0)) return window.alert('Укажите индивидуальную цену абонемента за 4 занятия.');
     await api.createEnrollment(childId, { directionId: direction.id, projectId: value('#ad-project') || undefined,
       groupId: value('#ad-group') ? Number(value('#ad-group')) : null,
-      status: 'active', individualPrice: individual ? packagePrice / 4 : null });
+      status: enrollmentStatusToApi[value('#ad-status')] ?? 'lead', individualPrice: individual ? packagePrice / 4 : null });
     legacy.state.modal = null; legacy.state.childTab = 'overview'; legacy.state.page = 'child'; await reload();
   } catch (error) { fail(error); }
 }
@@ -1099,7 +1114,7 @@ function applyLessonAction(action) {
     lesson.started = true; lesson.status = 'Идёт'; lesson.groupRosterFrozenV146 = true;
     if (!(lesson.groupChildIdsV146 ?? []).length) {
       lesson.groupChildIdsV146 = (lesson.effectiveGroupChildIds ?? legacy.state.children.filter((child) => (child.enrollments ?? []).some((enrollment) =>
-        Number(enrollment.groupId) === Number(lesson.groupId) && ['Активный', 'active'].includes(enrollment.status))).map((child) => Number(child.id)));
+        Number(enrollment.groupId) === Number(lesson.groupId) && ['Активный', 'active', 'Лид', 'lead'].includes(enrollment.status))).map((child) => Number(child.id)));
     }
     for (const id of lesson.groupChildIdsV146) {
       if (!Object.prototype.hasOwnProperty.call(lesson.attendance ?? {}, id)) lesson.attendance[id] = false;
@@ -1318,7 +1333,7 @@ async function toggleTrialApi(childId, trial, isExtra) {
 async function addExtraApi(childId, enrollmentId) {
   const lesson = currentLesson(); if (!lesson) return;
   const projectId = lesson.projectId ?? legacy.state.groups.find((group) => group.id === lesson.groupId)?.projectId;
-  const available = (legacy.state.children.find((child) => Number(child.id) === Number(childId))?.enrollments ?? []).filter((e) => Number(e.projectId) === Number(projectId) && ['Активный', 'active'].includes(e.status) && e.editable !== false);
+  const available = (legacy.state.children.find((child) => Number(child.id) === Number(childId))?.enrollments ?? []).filter((e) => Number(e.projectId) === Number(projectId) && ['Активный', 'active', 'Лид', 'lead'].includes(e.status) && e.editable !== false);
   const selected = available.find((e) => Number(e.id) === Number(enrollmentId));
   if (!selected) return window.alert('Выберите доступное направление ребёнка.');
   if (!lesson.isMixed && Number(selected.directionId) !== Number(lesson.directionId)) {
@@ -1348,7 +1363,7 @@ function extraOptionsApi(childId) {
   const lesson = currentLesson(); const extra = lesson?.extras.find((item) => item.childId === Number(childId)); if (!extra) return;
   const child = legacy.state.children.find((item) => item.id === Number(childId));
   const projectId = lesson.projectId;
-  const hasDirection = (child?.enrollments ?? []).some((item) => Number(item.projectId) === Number(projectId) && Number(item.directionId) === Number(lesson.directionId) && ['Активный', 'active'].includes(item.status) && item.editable !== false);
+  const hasDirection = (child?.enrollments ?? []).some((item) => Number(item.projectId) === Number(projectId) && Number(item.directionId) === Number(lesson.directionId) && ['Активный', 'active', 'Лид', 'lead'].includes(item.status) && item.editable !== false);
   legacy.state.modal = `<h3>Дополнительные действия</h3><div class="modal-actions" style="flex-wrap:wrap">
     <button class="btn" onclick="icubeApi.extraTrial(${Number(childId)},${extra.trial ? 'false' : 'true'})">${extra.trial ? 'Сделать обычным' : 'Сделать ознакомительным'}</button>
     ${!lesson.isMixed && !hasDirection ? `<button class="btn" onclick="icubeApi.makeExtraTrialDirection(${Number(childId)})">Добавить направление «${html(lesson.direction)}» и сделать ознакомительным</button>` : ''}
@@ -1413,8 +1428,7 @@ function renderAddChildrenListApi() {
   const box = element('#ac-list'); if (!group || !box) return;
   const filter = value('#ac-filter') || 'active';
   const candidates = legacy.state.children.flatMap((child) => {
-    if (!['Активный', 'Лид'].includes(child.status) || filter === 'active' && child.status !== 'Активный' || filter === 'leads' && child.status !== 'Лид' || filter === 'pause') return [];
-    return child.enrollments.filter((e) => Number(e.projectId) === Number(group.projectId) && ['Активный','active'].includes(e.status) && e.groupId == null && (group.isMixed || e.direction === group.direction)).map((enrollment) => ({ child, enrollment }));
+    return child.enrollments.filter((e) => Number(e.projectId) === Number(group.projectId) && (filter === 'active' ? ['Активный','active'].includes(e.status) : filter === 'leads' ? ['Лид','lead'].includes(e.status) : filter !== 'pause' && ['Активный','active','Лид','lead'].includes(e.status)) && e.groupId == null && (group.isMixed || e.direction === group.direction)).map((enrollment) => ({ child, enrollment }));
   });
   box.innerHTML = candidates.length ? candidates.map(({ child, enrollment }) => `<label class="student-check"><input type="checkbox" class="ac-check" value="${child.id}" data-enrollment="${enrollment.id}" onchange="updateAddChildrenCount()"><div><b>${html(child.name)}</b><div class="muted mini">${html(enrollment.direction)}</div></div></label>`).join('') : '<div class="empty">Нет подходящих детей без основной группы.</div>';
   window.updateAddChildrenCount();

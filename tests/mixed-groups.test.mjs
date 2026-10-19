@@ -16,6 +16,9 @@ function catalogFixture(mixed = false) {
   const settings = { teacherDirections: true };
   const names = { 1: 'Робототехника', 2: 'Программирование' };
   const handler = async (sql, p = {}) => {
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{id:p.childId,status:'active'}]];
+    if (sql.startsWith('SELECT id,status FROM child_enrollments')) return [enrollments.filter(e=>String(e.childId)===String(p.childId)).map(e=>({id:e.id,status:e.status}))];
+    if (sql.startsWith('UPDATE children SET status=') || sql.startsWith('INSERT INTO child_status_history')) return [{affectedRows:1}];
     if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: p.groupId, is_individual: 0 }]];
     calls.push({ sql, p });
     if (sql.includes('FROM study_groups g JOIN directions')) return [[{ ...group }]];
@@ -225,6 +228,7 @@ test('mixed quick-child keeps a real chosen direction and retry creates no extra
   assert.equal(result.childId, '52');
   const inserts = f.calls.filter(({ sql }) => sql.startsWith('INSERT INTO child_enrollments'));
   assert.equal(inserts[0].p.directionId, 2);
+  assert.match(inserts[0].sql, /'lead'/);
   await f.service.quickChild(60, { name: 'Новый ребёнок', directionName: 'Программирование' }, context);
   assert.equal(f.calls.filter(({ sql }) => sql.startsWith('INSERT INTO child_enrollments')).length, 1);
   const invalid = lessonFixture();

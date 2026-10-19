@@ -88,18 +88,38 @@ function lessonFixture(overrides = {}) {
   };
 }
 
+for (const [statuses, names, badges] of [
+  [['Активный'],1,0], [['Закончил'],1,0], [['Активный','Активный'],2,0], [['Закончил','Закончил'],2,0],
+  [['Активный','Лид'],2,2], [['Пауза','Лид'],2,2], [['Активный','Закончил'],1,0],
+  [['Лид','Закончил'],1,0], [['Пауза','Закончил'],1,0],
+]) test(`final block3 child list ${statuses}: direction names and only necessary badges`,async()=>{
+  const {context,state}=await loadFrontend();seedAttendanceChild(state);
+  installQuickStatusUi(context.icubeLegacy,context,context.document);
+  const child=state.children[0];child.status='Закончил';
+  child.enrollments=statuses.map((status,i)=>({id:80+i,direction:i?'Программирование':'Робототехника',projectId:1,project:'iCubeRobots',status,balance:0,groupId:null}));
+  child.enrollmentHistory=[{id:70,direction:'Робототехника',status:'Закончил'}];
+  const before=JSON.stringify(child);const output=context.children();
+  const directions=output.split('class="child-directions"')[1].split('class="child-groups-desktop"')[0];
+  assert.equal((directions.match(/child-enrollment-direction/g)||[]).length,names);
+  assert.equal((directions.match(/class="badge /g)||[]).length,badges);
+  assert.doesNotMatch(output,/Нет текущих направлений/);
+  assert.match(output,/event.stopPropagation\(\);icubeQuickChildStatus\(8,this\)/);
+  assert.equal((output.match(/data-child-id="8"/g)||[]).length,1);assert.equal(JSON.stringify(child),before);
+});
+
 test('block3 children list hides finished directions but preserves search, filters and child history', async () => {
   const { context, state } = await loadFrontend(); seedAttendanceChild(state);
   installQuickStatusUi(context.icubeLegacy, context, context.document);
   const first = state.children[0];
   first.enrollments.push({ id:81, direction:'Программирование', projectId:2, project:'Зебра', groupId:null, status:'Закончил', balance:-1 });
-  state.children.push({ ...first, id:9, name:'Завершивший ребёнок', enrollments:first.enrollments.map(e=>({...e,status:'Закончил'})) });
+  state.children.push({ ...first, id:9, status:'Закончил', name:'Завершивший ребёнок', enrollments:first.enrollments.map(e=>({...e,status:'Закончил'})) });
   const row = (output, id) => output.split('<div class="row clickable"').find(r=>r.startsWith(` data-child-id="${id}"`));
   const before = JSON.stringify(state.children);
   let output=context.children();
   assert.match(row(output,8),/Робототехника/); assert.doesNotMatch(row(output,8),/Программирование/);
   assert.equal((output.match(/data-child-id="8"/g)||[]).length,1);
-  assert.match(row(output,9),/Закончил.*Нет текущих направлений/);
+  assert.match(row(output,9),/Закончил/);assert.match(row(output,9),/Робототехника/);assert.match(row(output,9),/Программирование/);
+  assert.doesNotMatch(row(output,9),/Нет текущих направлений/);
   state.childStatusFilter='Активный'; assert.equal(row(context.children(),9),undefined);
   state.childStatusFilter='Закончил'; state.childSearch='Завершивший';
   assert.match(row(context.children(),9),/Завершивший ребёнок/);
@@ -164,12 +184,12 @@ test('block3 API mapping and child overview preserve old enrollments and closed 
 
 test('block3 direction pause and completion save only the chosen enrollment and refresh data', async () => {
   const source=await readFile(new URL('../src/frontend/api-sync.mjs',import.meta.url),'utf8');
-  const first={id:80,directionId:1,direction:'Робототехника',status:'Активный',groupId:null,balance:4,editable:true};
+  const first={id:80,directionId:1,direction:'Робототехника',status:'Активный',groupId:4,groupStartedOn:'2026-09-01',balance:4,editable:true};
   const second={id:81,direction:'Программирование',status:'Активный',groupId:null,balance:-1,editable:true};
   const child={id:8,status:'Активный',enrollments:[first,second],enrollmentHistory:[{id:79,status:'Закончил'}]};
   const calls=[];let reloads=0;let status='Пауза';
   const context=vm.createContext({legacy:{state:{children:[child]}},
-    value:s=>s==='#md-enrollment-status'?status:s==='#md-direction'?'Робототехника':s==='#md-group'?'':s==='#md-individual'?'false':'',
+    value:s=>s==='#md-enrollment-status'?status:s==='#md-direction'?'Робототехника':s==='#md-group'?'4':s==='#md-individual'?'false':'',
     element:()=>null, enrollmentStatusToApi:{'Пауза':'paused','Закончил':'finished'},
     directories:{directions:[{id:1,name:'Робототехника'}]}, byName:(items,name)=>items.find(i=>i.name===name),
     api:{async updateEnrollment(id,body){calls.push({resource:'enrollments',id,body});}},
@@ -178,6 +198,7 @@ test('block3 direction pause and completion save only the chosen enrollment and 
   vm.runInContext(source.slice(source.indexOf('async function saveEnrollment('),source.indexOf('async function addEnrollment(')),context);
   await context.saveEnrollment(8,'Робототехника'); status='Закончил';await context.saveEnrollment(8,'Робототехника');
   assert.deepEqual(calls.map(c=>[c.resource,c.id,c.body.status]),[['enrollments',80,'paused'],['enrollments',80,'finished']]);
+  assert.deepEqual(calls.map(c=>Object.keys(c.body)),[['status'],['status']],'status-only saves never move membership start dates');
   assert.equal(reloads,2); assert.equal(JSON.stringify(child),before);
 });
 

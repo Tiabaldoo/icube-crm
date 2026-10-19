@@ -10,11 +10,11 @@ function atomicFixture({ failMembership = false } = {}) {
     if (sql.startsWith('SELECT id FROM directions') || sql.startsWith('SELECT id FROM projects')) return [[{ id: params.id }]];
     if (sql.startsWith('SELECT id FROM study_groups WHERE id=')) return [[{ id: params.groupId }]];
     if (sql.startsWith('SELECT id FROM children WHERE create_idempotency_key=')) return [state.key === params.key ? [{ id: state.childId }] : []];
-    if (sql.startsWith('INSERT INTO children')) { state.childId = 10; state.key = params.commandKey; state.inserts += 1; return [{ insertId: 10 }]; }
+    if (sql.startsWith('INSERT INTO children')) { state.childStatus=params.status; state.childId = 10; state.key = params.commandKey; state.inserts += 1; return [{ insertId: 10 }]; }
     if (sql.startsWith('SELECT g.id FROM guardians')) return [[]];
     if (sql.startsWith('INSERT INTO guardians')) return [{ insertId: 20 }];
     if (sql.startsWith('INSERT INTO child_guardians')) return [{ affectedRows: 1 }];
-    if (sql.startsWith('INSERT INTO child_enrollments')) { state.enrollmentId = 30; return [{ insertId: 30 }]; }
+    if (sql.startsWith('INSERT INTO child_enrollments')) { state.enrollmentStatus=params.status; state.enrollmentId = 30; return [{ insertId: 30 }]; }
     if (sql.startsWith('INSERT INTO group_memberships')) { if (failMembership) throw new Error('membership failed'); return [{ affectedRows: 1 }]; }
     if (sql.includes('FROM children c LEFT JOIN child_guardians')) return [[{ id: 10, full_name: 'Ребёнок', status: 'active', needs_director_review: 0,
       guardian_name: 'Родитель', guardian_phone: '+7' }]];
@@ -37,6 +37,14 @@ test('child and first enrollment are committed atomically and duplicate command 
   const repeated = await catalog.saveChildWithEnrollment(null, command, context);
   assert.equal(first.id, '10'); assert.equal(repeated.id, '10'); assert.equal(first.enrollments[0].id, '30');
   assert.equal(fixture.state.inserts, 1); assert.equal(fixture.state.commits, 2);
+});
+
+test('new child and assigned direction share the chosen status, including lead default',async()=>{
+  for(const status of ['lead','active','paused','finished']) {
+    const f=atomicFixture();const catalog=createMysqlCatalog(f.pool);
+    await catalog.saveChildWithEnrollment(null,{child:{name:'Новый ребёнок',status},enrollment:{directionId:1,projectId:1}}, {roles:['director'],userId:'7',idempotencyKey:'new-'+status});
+    assert.equal(f.state.childStatus,status);assert.equal(f.state.enrollmentStatus,status);
+  }
 });
 
 test('failure while creating enrollment rolls back the child transaction', async () => {

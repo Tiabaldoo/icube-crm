@@ -1,4 +1,5 @@
 import { inTransaction } from './db.mjs';
+import { lockEnrollmentStatusChild, refreshChildStatus } from './enrollment-status.mjs';
 import { ApiProblem } from './catalog.mjs';
 
 const numericId = (value, field = 'id') => {
@@ -172,6 +173,7 @@ export function createDeletionService(pool) {
     const enrollmentId = numericId(rawId, 'enrollmentId');
     try {
       await inTransaction(pool, async (connection) => {
+        await lockEnrollmentStatusChild(connection, enrollmentId);
         const [foundRows] = await connection.query('SELECT id,child_id,balance_lessons FROM child_enrollments WHERE id=:id FOR UPDATE', { id: enrollmentId });
         const enrollment = foundRows[0];
         if (!enrollment) throw new ApiProblem(404, 'NOT_FOUND', 'Направление ребёнка не найдено');
@@ -200,6 +202,7 @@ export function createDeletionService(pool) {
         await connection.query('DELETE FROM enrollment_status_history WHERE enrollment_id=:id', { id: enrollmentId });
         await connection.query('DELETE FROM price_versions WHERE enrollment_id=:id', { id: enrollmentId });
         await connection.query('DELETE FROM child_enrollments WHERE id=:id', { id: enrollmentId });
+        await refreshChildStatus(connection, enrollment.child_id);
       });
     } catch (error) {
       if (error?.code === 'ER_ROW_IS_REFERENCED_2') throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', 'Нельзя удалить направление ребёнка, потому что по нему уже есть оплаты, посещения или другая история.');

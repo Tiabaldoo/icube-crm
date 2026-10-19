@@ -1,3 +1,4 @@
+import { lockEnrollmentStatusChild, refreshChildStatus } from './enrollment-status.mjs';
 import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { lessonUnits } from './lesson-rules.mjs';
@@ -12,7 +13,7 @@ const identifier = (value, field = 'id') => {
   return result;
 };
 
-const statuses = new Set(['active', 'paused', 'finished']);
+const statuses = new Set(['lead', 'active', 'paused', 'finished']);
 const samePrice = (left, right) => left == null && right == null
   || left != null && right != null && normalizeMoney(left) === normalizeMoney(right);
 
@@ -29,7 +30,7 @@ export function createEnrollmentChanges(pool, balanceTransfers, { notificationEv
     const targetDirectionId = identifier(body.directionId, 'directionId');
     const targetStatus = body.status ?? 'active';
     if (!statuses.has(targetStatus) || targetStatus === 'finished') {
-      throw new ApiProblem(400, 'VALIDATION_ERROR', 'Новое направление должно быть активным или на паузе');
+      throw new ApiProblem(400, 'VALIDATION_ERROR', 'Новое направление должно быть лидом, активным или на паузе');
     }
     const requestedPrice = body.individualPrice === undefined || body.individualPrice === '' || body.individualPrice == null
       ? null : normalizeMoney(body.individualPrice, 'individualPrice');
@@ -37,6 +38,7 @@ export function createEnrollmentChanges(pool, balanceTransfers, { notificationEv
 
     try {
       return await inTransaction(pool, async (connection) => {
+        await lockEnrollmentStatusChild(connection, sourceEnrollmentId);
         const [sources] = await connection.query('SELECT * FROM child_enrollments WHERE id=:id FOR UPDATE', { id: sourceEnrollmentId });
         const source = sources[0];
         if (!source) throw new ApiProblem(404, 'NOT_FOUND', 'Направление ребёнка не найдено');
@@ -75,7 +77,8 @@ export function createEnrollmentChanges(pool, balanceTransfers, { notificationEv
               sourceId: sourceEnrollmentId, targetId: target.id,
             });
             if (completed.length || lessonUnits(String(source.balance_lessons)) === 0n) {
-              return { childId: String(source.child_id), sourceEnrollmentId, targetEnrollmentId: String(target.id),
+              await refreshChildStatus(connection, source.child_id, context.userId);
+        return { childId: String(source.child_id), sourceEnrollmentId, targetEnrollmentId: String(target.id),
                 balanceTransferId: completed[0] == null ? null : String(completed[0].id), repeated: true };
             }
           }

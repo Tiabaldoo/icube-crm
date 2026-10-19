@@ -32,6 +32,9 @@ function groupHandler(handler) {
 function enrollmentHandler({ ids = [10, 20], dependencies = emptyEnrollmentDependencies(), onSql = () => {} } = {}) {
   return async (sql, params) => {
     onSql(sql, params);
+    if (sql.startsWith('SELECT child_id FROM child_enrollments')) return [{child_id:5}];
+    if (sql.startsWith('SELECT id,status FROM children')) return [{id:5,status:'active'}];
+    if (sql.startsWith('SELECT id,status FROM child_enrollments')) return ids.map(id=>({id,status:'active'}));
     if (sql.startsWith('SELECT id,child_id,balance_lessons FROM child_enrollments')) return [{ id: 10, child_id: 5, balance_lessons: '0.00000000' }];
     if (sql.startsWith('SELECT id FROM child_enrollments WHERE child_id')) return ids.map((id) => ({ id }));
     if (sql.includes('FROM payments WHERE enrollment_id')) return [dependencies];

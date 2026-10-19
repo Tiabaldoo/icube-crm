@@ -2,9 +2,7 @@ const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&
 const statusNames = { active: 'Активный', lead: 'Лид', paused: 'Пауза', finished: 'Закончил', archived: 'Закончил' };
 export function directionStatus(child, enrollment) {
   const status = statusNames[enrollment.status] ?? enrollment.status ?? 'Активный';
-  // Lead belongs to the child in the existing schema. Explicit enrollment
-  // pause/completion takes precedence; other child statuses do not rewrite it.
-  return status === 'Активный' && ['lead', 'Лид'].includes(child.status) ? 'Лид' : status;
+  return status;
 }
 export function currentEnrollments(child) {
   const seen = new Set();
@@ -19,9 +17,7 @@ export function unfinishedEnrollments(child) {
   return currentEnrollments(child).filter((e) => directionStatus(child, e) !== 'Закончил');
 }
 export function childListStatus(child) {
-  const current = currentEnrollments(child);
-  return current.length && current.every((e) => directionStatus(child, e) === 'Закончил')
-    ? 'Закончил' : statusNames[child.status] ?? child.status;
+  return statusNames[child.status] ?? child.status;
 }
 export function groupEnrollments(child, groupId) {
   return currentEnrollments(child).filter((e) => ['Активный', 'Лид'].includes(directionStatus(child, e))
@@ -53,6 +49,39 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
   const allowed = () => ['director', 'partner'].includes(legacy.state.role);
   let popover = null; let pending = null; let saving = false;
   const byId = (items, id) => items?.find((item) => Number(item.id) === Number(id));
+  let statusSelection = null;
+  host.icubeChildStatusSelection = (childId, status, confirm) => {
+    if (!allowed()) return;
+    const child = byId(legacy.state.children, childId); if (!child) return;
+    const fields = [...(document.querySelectorAll?.('.modal input,.modal select,.modal textarea') ?? [])]
+      .filter(el => el.id).map(el => ({ id: el.id, value: el.value, checked: el.checked }));
+    statusSelection = { confirm, modal: legacy.state.modal, fields, saving: false };
+    const label = status === 'Активный' ? 'Сделать активным' : 'Перевести в лиды';
+    legacy.state.modal = `<h3>${label}</h3><div class="muted mini">Выберите направления. Остальные сохранят свои статусы. Изменять можно направления своего проекта.</div><div class="info-list" style="margin-top:12px">${currentEnrollments(child).map(e => `<label class="info-line"><span><input type="checkbox" class="child-status-selection" value="${Number(e.id)}" ${e.editable === false ? 'disabled' : ''} onchange="icubeChildStatusSelectionChanged()"> ${esc(e.direction)}</span><span class="badge ${legacy.statusBadge(directionStatus(child,e))}">${esc(directionStatus(child,e))}</span></label>`).join('')}</div><div class="modal-actions"><button class="btn" onclick="icubeCancelChildStatusSelection()">Отмена</button><button class="btn primary" id="child-status-confirm" disabled onclick="icubeConfirmChildStatusSelection()">${label}</button></div>`;
+    legacy.render();
+  };
+  host.icubeChildStatusSelectionChanged = () => {
+    const button = document.querySelector('#child-status-confirm');
+    if (button) button.disabled = !document.querySelectorAll('.child-status-selection:checked:not(:disabled)').length;
+  };
+  host.icubeCancelChildStatusSelection = () => {
+    if (!statusSelection || statusSelection.saving) return;
+    const previous = statusSelection; statusSelection = null;
+    legacy.state.modal = previous.modal; legacy.render();
+    for (const field of previous.fields) {
+      const el = document.getElementById(field.id);
+      if (el) { el.value = field.value; el.checked = field.checked; }
+    }
+  };
+  host.icubeConfirmChildStatusSelection = async () => {
+    const selection = statusSelection; if (!selection || selection.saving || !allowed()) return;
+    const ids = [...document.querySelectorAll('.child-status-selection:checked:not(:disabled)')].map(el => Number(el.value));
+    if (!ids.length) return;
+    selection.saving = true;
+    const button = document.querySelector('#child-status-confirm'); if (button) button.disabled = true;
+    try { if (await selection.confirm(ids)) statusSelection = null; }
+    finally { selection.saving = false; host.icubeChildStatusSelectionChanged(); }
+  };
   function close() { popover?.remove(); popover = null; pending = null; }
   function open(type, id, anchor) {
     close();
@@ -83,7 +112,7 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
   async function select(value) {
     if (!pending || !allowed() || saving) return;
     const { type, id, initial } = pending;
-    if (value === initial) { close(); return; }
+    if (value === initial && type !== 'child') { close(); return; }
     if (type === 'group' && value === 'false') {
       close(); host.groupForm(id);
       const active = document.querySelector('#gf-active');

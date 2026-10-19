@@ -1,4 +1,5 @@
 import { inTransaction } from './db.mjs';
+import { refreshChildStatus } from './enrollment-status.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { assertProjectScope, partnerProjectId } from './project-scope.mjs';
 import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
@@ -55,8 +56,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN children c ON c.id=e.child_id
       WHERE gm.group_id=l.group_id AND l.roster_frozen_at IS NULL
         AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
-        AND e.status='active' AND e.superseded_at IS NULL
-        AND c.deleted_at IS NULL AND c.status IN ('lead','active')) effective_roster_child_ids,
+        AND e.status IN ('active','lead') AND e.superseded_at IS NULL
+        AND c.deleted_at IS NULL) effective_roster_child_ids,
     (SELECT JSON_ARRAYAGG(an.child_id) FROM lesson_child_absence_notices an
       WHERE an.lesson_id=l.id AND an.cancelled_at IS NULL) absence_notice_child_ids,
     (SELECT JSON_ARRAYAGG(c.id) FROM children c WHERE c.deleted_at IS NULL AND c.status<>'archived'
@@ -65,7 +66,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         EXISTS (SELECT 1 FROM lesson_roster_members br WHERE br.lesson_id=l.id AND br.child_id=c.id) OR
         (NOT EXISTS (SELECT 1 FROM lesson_roster_members frozen WHERE frozen.lesson_id=l.id) AND EXISTS (
           SELECT 1 FROM child_enrollments be JOIN group_memberships bgm ON bgm.enrollment_id=be.id
-          WHERE be.child_id=c.id AND be.status='active' AND be.superseded_at IS NULL AND bgm.group_id=l.group_id
+          WHERE be.child_id=c.id AND be.status IN ('active','lead') AND be.superseded_at IS NULL AND bgm.group_id=l.group_id
             AND bgm.started_on<=DATE(l.starts_at) AND (bgm.ended_on IS NULL OR bgm.ended_on>=DATE(l.starts_at))
         ))
       )) birthday_child_ids,
@@ -372,7 +373,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           SELECT e.child_id,e.id enrollment_id,gm.id membership_id FROM group_memberships gm
           JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN children c ON c.id=e.child_id
           WHERE gm.group_id=:groupId AND gm.started_on<=DATE(:startsAt) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(:startsAt))
-            AND e.status='active' AND c.deleted_at IS NULL AND c.status IN ('lead','active')
+            AND e.status IN ('active','lead') AND c.deleted_at IS NULL
         ) gm ORDER BY gm.child_id`, { groupId: lesson.group_id, startsAt: lesson.starts_at });
         if (lesson.calculation_mode_snapshot === 'attendance_share' && bool(lesson.custom_tax_enabled_snapshot)) {
           const [taxRates] = await connection.query(`SELECT tax_percent FROM partner_agreement_versions
@@ -482,6 +483,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     const balanceAfter = notificationEvents ? lessonDecimal(lessonUnits(balanceBefore) - lessonUnits('1.00000000')) : null;
     await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-1.00000000 WHERE id=:id', { id: enrollment.id });
     await connection.query('UPDATE attendances SET enrollment_id=:enrollmentId,price_snapshot=:price,charged_lessons=1.00000000 WHERE id=:id', { id: attendance.id, enrollmentId: enrollment.id, price: String(enrollment.current_price) });
+    if (lessonKind(lesson) === 'regular') await notificationEvents?.leadPaidAttendance?.(connection, { enrollmentId: enrollment.id });
     if (notificationEvents) await notificationEvents.debtThreshold(connection, {
       enrollmentId: enrollment.id, before: balanceBefore, after: balanceAfter,
       causeKey: `balance-entry-${entry.insertId}`, actorUserId: context.userId,
@@ -765,8 +767,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           throw new ApiProblem(403, 'FORBIDDEN', 'Состав проведённого занятия меняет только администратор проекта');
         }
         const [available] = await connection.query(`SELECT e.id,e.direction_id FROM child_enrollments e JOIN children c ON c.id=e.child_id
-          WHERE e.child_id=:childId AND e.project_id=:projectId AND e.status='active' AND e.superseded_at IS NULL
-            AND c.deleted_at IS NULL AND c.status IN ('lead','active') ORDER BY e.id FOR UPDATE`, { childId, projectId: lesson.project_id_snapshot });
+          WHERE e.child_id=:childId AND e.project_id=:projectId AND e.status IN ('active','lead') AND e.superseded_at IS NULL
+            AND c.deleted_at IS NULL ORDER BY e.id FOR UPDATE`, { childId, projectId: lesson.project_id_snapshot });
         const selected = body.enrollmentId == null ? (available.length === 1 ? available[0] : null) : available.find((e) => String(e.id) === identifier(body.enrollmentId, 'enrollmentId'));
         if (!selected) throw new ApiProblem(409, 'ENROLLMENT_REQUIRED', 'Выберите доступное направление ребёнка в проекте занятия');
         const enrollment = await enrollmentForAttendance(connection, lesson, childId, selected.id);
@@ -809,10 +811,11 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         } else {
           const [created] = await connection.query(`INSERT INTO child_enrollments
             (child_id,direction_id,project_id,status,started_on)
-            VALUES (:childId,:directionId,:projectId,'active',DATE(:startsAt))`, {
+            VALUES (:childId,:directionId,:projectId,'lead',DATE(:startsAt))`, {
             childId, directionId: lesson.direction_id_snapshot, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
           });
           enrollmentId = created.insertId;
+          await refreshChildStatus(connection, childId, context.userId);
         }
         const [roster] = await connection.query(`SELECT roster_type FROM lesson_roster_members
           WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE`, { lessonId: lesson.id, childId });
@@ -917,7 +920,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           await connection.query('INSERT INTO child_guardians (child_id,guardian_id,is_primary) VALUES (:childId,:guardianId,TRUE)', { childId, guardianId: guardian.insertId });
         }
         const [enrollment] = await connection.query(`INSERT INTO child_enrollments
-          (child_id,direction_id,project_id,status,started_on) VALUES (:childId,:directionId,:projectId,'active',DATE(:startsAt))`, {
+          (child_id,direction_id,project_id,status,started_on) VALUES (:childId,:directionId,:projectId,'lead',DATE(:startsAt))`, {
           childId, directionId, projectId: lesson.project_id_snapshot, startsAt: lesson.starts_at,
         });
         await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)

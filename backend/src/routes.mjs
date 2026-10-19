@@ -200,6 +200,7 @@ export function createApiRouter(pool, {
     await assertOwned(pool, 'children', request.params.id, request.auth);
     return catalog.saveChildWithEnrollment(request.params.id, request.body, request.auth);
   }));
+  router.patch('/children/:id/status', requirePermission('children:write'), run((request) => catalog.changeChildStatus(request.params.id, request.body, request.auth)));
   router.post('/children/:id/enrollments', requirePermission('enrollments:write'), run((request) => catalog.createEnrollment(request.params.id, request.body, request.auth), 201));
   router.patch('/enrollments/:id', requirePermission('enrollments:write'), run((request) => catalog.updateEnrollment(request.params.id, request.body, request.auth)));
   router.post('/enrollments/:id/change-direction', requirePermission('enrollments:write'), run(async (request) => {

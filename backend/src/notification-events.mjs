@@ -219,6 +219,20 @@ export function createNotificationEvents(pool) {
     });
   }
 
+  async function leadPaidAttendance(connection, { enrollmentId }) {
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.status,c.full_name,d.name direction_name
+      FROM child_enrollments e JOIN children c ON c.id=e.child_id JOIN directions d ON d.id=e.direction_id
+      WHERE e.id=:enrollmentId AND e.status='lead' AND e.superseded_at IS NULL`, { enrollmentId });
+    const row = rows[0]; if (!row) return 0;
+    return createForDirectors(connection, {
+      type: 'director_lead_paid_attendance', title: 'Лид посетил платное занятие',
+      body: `${row.full_name} посетил платное занятие по направлению «${row.direction_name}», но направление всё ещё имеет статус «Лид». Возможно, стоит сделать его активным.`,
+      entityType: 'child', entityId: row.child_id, childId: row.child_id, destination: 'child',
+      dedupKey: `director:lead_paid:${row.child_id}:${row.direction_id}`, referenceType: 'lead_enrollment', referenceId: enrollmentId,
+      pushEnabled: false,
+    });
+  }
+
   async function getSettings(userId, roles = []) {
     const role = roles.includes('director') ? 'director' : roles.includes('partner') ? 'partner' : roles.includes('teacher') ? 'teacher' : null;
     if (!role) return [];
@@ -247,6 +261,6 @@ export function createNotificationEvents(pool) {
   return {
     createUser, enqueueDeliveries, userSetting, roleUsers, partnerUsers, teacherUser,
     lessonMoved, lessonCancelled, quickChildCreated, childAddedToGroup, absenceNotice, debtThreshold,
-    getSettings, updateSettings,
+    getSettings, updateSettings, leadPaidAttendance,
   };
 }

@@ -24,7 +24,7 @@ function fixture(statusBadge = (s) => ({ Лид: 'blue', Активный: 'gree
     children: [{ id: 8, status: 'Активный' }], groups: [{ id: 10, active: true }] };
   let forms = 0; let changed = 0;
   const document = { documentElement: {}, body: { append(root) { roots.push(root); } },
-    querySelector(s) { return fields.get(s); }, addEventListener(name, fn) { listeners[name] = fn; },
+    querySelector(s) { return fields.get(s); }, querySelectorAll(s) { return fields.get(s) ?? []; }, getElementById(id) { return fields.get('#'+id); }, addEventListener(name, fn) { listeners[name] = fn; },
     createElement() {
       const root = { style: {}, buttons: [], setAttribute() {},
         set innerHTML(value) { this.html = value; this.buttons = [...value.matchAll(/data-quick-status="([^"]+)"/g)].map((m) => ({ dataset: { quickStatus: m[1] }, focus() {} })); },
@@ -47,7 +47,7 @@ function fixture(statusBadge = (s) => ({ Лид: 'blue', Активный: 'gree
     icubeApi: { async saveChild(id, options) { saves.push(['child', id, options]); state.children[0].status = options.status; return { id }; },
       async saveGroup(id, options) { saves.push(['group', id, options]); state.groups[0].active = options.active; return { id }; } } };
   const childForm = host.childForm; const groupForm = host.groupForm;
-  installQuickStatusUi({ state, statusBadge }, host, document);
+  installQuickStatusUi({ state, statusBadge, render() {} }, host, document);
   const anchor = { getBoundingClientRect: () => ({ left: 320, bottom: 620 }) };
   async function choose(value) { roots.at(-1).click({ target: { closest: () => ({ dataset: { quickStatus: value } }) } }); await new Promise((resolve) => setImmediate(resolve)); }
   return { state, host, fields, saves, roots, anchor, listeners, choose, childForm, groupForm, get forms() { return forms; }, get changed() { return changed; } };
@@ -81,9 +81,9 @@ test('child badge opens compact colored popover; immediate save delegates and up
   assert.match(f.host.child(), /icubeQuickChildStatus\(8,this\)[\s\S]*Пауза/);
   assert.equal(f.host.childForm, f.childForm);
 });
-test('same status closes without saving; outside click and Escape close the popover', async () => {
+test('same child status still delegates to reconcile directions; outside click and Escape close the popover', async () => {
   const f = fixture(); f.host.icubeQuickChildStatus(8, f.anchor); await f.choose('Активный');
-  assert.equal(f.saves.length, 0); assert.equal(f.roots[0].removed, true);
+  assert.equal(f.saves.length, 1); assert.equal(f.roots[0].removed, true);
   f.host.icubeQuickChildStatus(8, f.anchor); f.listeners.click({ target: { closest: () => null } }); assert.equal(f.roots[1].removed, true);
   f.host.icubeQuickChildStatus(8, f.anchor); f.listeners.keydown({ key: 'Escape' }); assert.equal(f.roots[2].removed, true);
 });
@@ -146,7 +146,7 @@ test('quick child uses original atomic with-enrollment save and server reload, n
   assert.equal(enrollment.balance, 4); assert.equal(reloads, 1); assert.equal(context.legacy.state.modal, null);
 });
 
-test('popover child status uses existing saveChild without form fields or membership changes', async () => {
+test('popover child status uses atomic status API without form fields or membership changes', async () => {
   const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('async function saveChild('), source.indexOf('async function saveEnrollment('));
   const calls = []; let reloads = 0;
@@ -156,10 +156,42 @@ test('popover child status uses existing saveChild without form fields or member
     api: { async request(path, options) { calls.push({ path, options }); return { id: 8 }; } },
     reload: async () => { reloads++; }, fail(error) { throw error; }, ApiError: Error });
   vm.runInContext(body, context); const saved = await context.saveChild(8, { status: 'Пауза' });
-  assert.equal(saved.id, 8); assert.equal(calls[0].path, '/children/8/with-enrollment');
-  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options.body)), { child: { status: 'paused' }, enrollmentId: 40, enrollment: {} });
+  assert.equal(saved.id, 8); assert.equal(calls[0].path, '/children/8/status');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options.body)), { status: 'paused' });
   assert.equal(reloads, 1); assert.equal(enrollment.groupId, 10); assert.equal(enrollment.balance, 4);
 });
+test('status picker requires a choice, submits multiple directions and cancels without writes', async () => {
+  const f=fixture();const selected='.child-status-selection:checked:not(:disabled)';const calls=[];
+  f.state.children[0].enrollments=[{id:40,direction:'Робототехника',status:'Пауза'},{id:41,direction:'Программирование',status:'Закончил'}];
+  f.fields.set('#child-status-confirm',{disabled:true});
+  f.state.modal='original form';
+  f.host.icubeChildStatusSelection(8,'Активный',async ids=>{calls.push(ids);return {id:8};});
+  assert.match(f.state.modal,/Сделать активным/);assert.match(f.state.modal,/Программирование/);assert.match(f.state.modal,/Закончил/);
+  await f.host.icubeConfirmChildStatusSelection();assert.equal(calls.length,0);
+  f.fields.set(selected,[{value:'40'},{value:'41'}]);f.host.icubeChildStatusSelectionChanged();
+  assert.equal(f.fields.get('#child-status-confirm').disabled,false);
+  await f.host.icubeConfirmChildStatusSelection();assert.deepEqual(calls,[[40,41]]);
+  f.state.modal='original form';f.host.icubeChildStatusSelection(8,'Лид',()=>{throw new Error('cancel must not save');});
+  assert.match(f.state.modal,/Перевести в лиды/);f.host.icubeCancelChildStatusSelection();assert.equal(f.state.modal,'original form');
+});
+
+test('active and lead child saves wait for selected directions, then send one atomic request and reload',async()=>{
+  const source=await readFile(new URL('../src/frontend/api-sync.mjs',import.meta.url),'utf8');
+  for(const [label,status] of [['Активный','active'],['Лид','lead']]) for(const ids of [[40],[40,41]]) {
+    const calls=[];let confirm;let reloads=0;
+    const context=vm.createContext({childSavePending:false,childStatusToApi:{[label]:status},childStatusFromApi:{[status]:label},
+      legacy:{state:{children:[{id:8,status:'Пауза',enrollments:[{id:40,editable:true},{id:41,editable:true}]}]}},
+      window:{icubeChildStatusSelection(id,requested,callback){assert.equal(id,8);assert.equal(requested,label);confirm=callback;}},
+      api:{async request(path,options){calls.push({path,options});return {id:'8'};}},
+      reload:async()=>{reloads++;},fail:e=>{throw e;}});
+    vm.runInContext(source.slice(source.indexOf('async function saveChild('),source.indexOf('async function saveEnrollment(')),context);
+    await context.saveChild(8,{status:label});assert.equal(calls.length,0);
+    await confirm(ids);assert.equal(calls.length,1);assert.equal(calls[0].path,'/children/8/status');
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[0].options.body)),{status,enrollmentIds:ids});
+    assert.equal(reloads,1);assert.equal(context.legacy.state.children[0].status,'Пауза','only server reload supplies new statuses');
+  }
+});
+
 test('popover activation uses existing saveGroup update and server reload without unrelated fields', async () => {
   const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('async function saveGroup('), source.indexOf('async function saveChild('));

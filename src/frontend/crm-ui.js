@@ -64,7 +64,7 @@ const statusBadge=s=>({Активный:'green',Лид:'blue',Пауза:'amber'
 let lessonRosterRendering=false;
 const groupChildren=id=>!lessonRosterRendering&&byId(state.groups,id)?.active===false?[]:state.children.filter(c=>(lessonRosterRendering?c.enrollments:(window.icubeEnrollmentViews?.currentEnrollments(c)||c.enrollments)).some(e=>{
  const effectiveId=Object.prototype.hasOwnProperty.call(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId;
- return e.groupId!=null&&Number(effectiveId)===Number(id)&&(!e.status||e.status==='Активный');
+ return e.groupId!=null&&Number(effectiveId)===Number(id)&&(!e.status||['Активный','Лид'].includes(e.status));
 }));
 const effectivePrice=e=>e?.currentPrice ?? e?.individualPrice ?? (byId(state.groups,e?.groupId)?.price ?? (e?.direction==='Программирование'?state.settings.codePrice:state.settings.robotPrice));
 function navTo(p){state.page=p;render();window.scrollTo({top:0,behavior:'smooth'})}
@@ -137,9 +137,14 @@ function children(){
  });
  const rows=filteredChildren.map(c=>{
    const hidden=!childMatchesSearch(c,state.childSearch)?' style="display:none"':'';
-   const live=unfinished(c).filter(matches), status=listStatus(c);
+   const open=unfinished(c);
+   const history=(c.enrollmentHistory||[]).filter((e,i,all)=>all.findIndex(other=>other.direction===e.direction)===i);
+   const live=(open.length?open:current(c).length?current(c):history).filter(matches), status=listStatus(c);
+   const statuses=live.map(e=>views?.directionStatus(c,e)||e.status||c.status);
+   const showBadges=live.length===2&&statuses.every(s=>!['Закончил','finished'].includes(s))&&new Set(statuses).size>1;
+   const statusHtml=['director','partner'].includes(state.role)?`<button class="badge ${statusBadge(status)} quick-status-badge" onclick="event.stopPropagation();icubeQuickChildStatus(${c.id},this)">${escapeHtml(status)}</button>`:`<span class="badge ${statusBadge(status)}">${escapeHtml(status)}</span>`;
    const groupName=e=>groupTitle(byId(state.groups,Object.hasOwn(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId)||{name:e.groupName});
-   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map((live.length?live:current(c).filter(matches)).map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div><span class="badge ${statusBadge(status)}">${escapeHtml(status)}</span></div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)} <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span></div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
+   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map((live.length?live:current(c).filter(matches)).map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div>${statusHtml}</div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}${showBadges?` <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span>`:''}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
  }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
  const statusSelect=`<select class="select" style="max-width:180px" onchange="setChildStatusFilter(this.value)"><option value="all" ${statusFilter==='all'?'selected':''}>Все статусы</option>${['Активный','Лид','Пауза','Закончил'].map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join('')}</select>`;
@@ -3965,7 +3970,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         if (!['Активный','Лид','active','lead'].includes(c.status) || lessonChildIds.has(Number(c.id)) ||
             !(String(c.name||'').toLowerCase().includes(query) || String(c.phone||'').toLowerCase().includes(query))) return [];
         return (c.enrollments||[]).filter(function(enrollment){
-          return String(enrollment.projectId)===String(lessonProjectId) && ['Активный','active'].includes(enrollment.status) && enrollment.editable!==false;
+          return String(enrollment.projectId)===String(lessonProjectId) && ['Активный','active','Лид','lead'].includes(enrollment.status) && enrollment.editable!==false;
         }).map(function(enrollment){return {child:c,enrollment:enrollment};});
       }).slice(0,8);
     }
@@ -6395,6 +6400,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field"><label>Направление</label><select class="select" id="ad-dir" onchange="refreshAddDirectionGroupsV132()">';
     dirs.forEach(function(d){html+='<option>'+d+'</option>';});
     html+='</select></div>';
+    html+='<div class="field"><label>Статус направления</label><select class="select" id="ad-status"><option>Лид</option><option>Активный</option><option>Пауза</option><option>Закончил</option></select></div>';
     html+='<div class="field"><label>Основная группа</label><select class="select" id="ad-group" onchange="refreshAddDirectionPreviewV132()">'+groupsHtml(initial)+'</select></div>';
     html+='<div class="field span-2"><label>Цена</label><select class="select" id="ad-price-mode" onchange="toggleAddDirectionPriceV132()"><option value="standard">Обычная цена направления / группы</option><option value="individual">Индивидуальная цена</option></select><div class="muted mini" style="margin-top:5px">Для второго направления можно сразу задать скидочную индивидуальную цену.</div></div>';
     html+='<div class="field span-2" id="ad-individual-wrap" style="display:none"><label>Индивидуальная цена абонемента за 4 занятия, ₽</label><input class="input" id="ad-individual-package" type="number" min="0" step="1" placeholder="Например, 2500" oninput="refreshAddDirectionPreviewV132()"><div class="muted mini" style="margin-top:5px">Система разделит эту сумму на 4 и будет считать отдельную стоимость занятия для этого направления.</div></div>';
@@ -7466,16 +7472,16 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 /* ===== Стабилизированный раздел из v141.js ===== */
 // iCube CRM v1.1.41 — independent status per child direction while preserving global child status.
 (function(){
-  const DIR_STATUSES=['Активный','Пауза','Закончил'];
+  const DIR_STATUSES=['Лид','Активный','Пауза','Закончил'];
 
   function isoToday(){
     return businessTodayIso();
   }
   function badgeClass(status){
-    return status==='Активный'?'green':status==='Пауза'?'amber':'gray';
+    return status==='Лид'?'blue':status==='Активный'?'green':status==='Пауза'?'amber':'gray';
   }
   function enrollmentStatus(e){ return e?.status||'Активный'; }
-  function isEnrollmentActive(e){ return enrollmentStatus(e)==='Активный'; }
+  function isEnrollmentActive(e){ return ['Активный','Лид'].includes(enrollmentStatus(e)); }
   function childGloballyActive(c){ return c && (c.status==='Активный'||c.status==='Лид'); }
 
   (state.children||[]).forEach(function(c){
@@ -7555,7 +7561,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       if(!grid||!e||document.querySelector('#md-enrollment-status')) return;
       const field=document.createElement('div');
       field.className='field span-2';
-      field.innerHTML='<label>Статус направления</label><select class="select" id="md-enrollment-status">'+DIR_STATUSES.map(function(s){return '<option'+(s===enrollmentStatus(e)?' selected':'')+'>'+s+'</option>';}).join('')+'</select><div class="muted mini" style="margin-top:5px">Этот статус действует только на данное направление. Общий статус ребёнка по-прежнему можно менять отдельно.</div>';
+      field.innerHTML='<label>Статус направления</label><select class="select" id="md-enrollment-status">'+DIR_STATUSES.map(function(s){return '<option'+(s===enrollmentStatus(e)?' selected':'')+'>'+s+'</option>';}).join('')+'</select><div class="muted mini" style="margin-top:5px">Меняется только это направление. Общий статус ребёнка пересчитается после сохранения.</div>';
       grid.appendChild(field);
     };
   }
@@ -7630,7 +7636,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 // iCube CRM v1.1.42 — price changes affect future payments only; closed directions can transfer remaining value.
 (function(){
   const EPS=1e-7;
-  const DIR_STATUSES=['Активный','Пауза','Закончил'];
+  const DIR_STATUSES=['Лид','Активный','Пауза','Закончил'];
 
   function isoToday(){
     return businessTodayIso();

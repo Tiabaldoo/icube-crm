@@ -28,6 +28,11 @@ function fixture({ existingTarget = false, failTransfer = false, sourceStartedOn
   const currentPrice = (item) => item.individual_price ?? (Number(item.direction_id) === 2 ? '1125.00' : '1025.00');
 
   const query = async (sql, params = {}) => {
+    if (sql === 'SELECT child_id FROM child_enrollments WHERE id=:enrollmentId') return [[{child_id:enrollment(params.enrollmentId).child_id}]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{id:8,status:state.childStatus??'active'}]];
+    if (sql.startsWith('SELECT id,status FROM child_enrollments')) return [state.enrollments.filter(e=>e.superseded_at==null).map(e=>({id:e.id,status:e.status}))];
+    if (sql.startsWith('UPDATE children SET status=')) {state.childStatus=params.status;return [{affectedRows:1}];}
+    if (sql.startsWith('INSERT INTO child_status_history')) return [{insertId:1}];
     if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
     state.calls.push({ sql, params: clone(params) });
     if (sql === 'SELECT * FROM child_enrollments WHERE id=:id FOR UPDATE') return [[clone(enrollment(params.id))].filter(Boolean)];
@@ -205,6 +210,8 @@ test('router требует idempotency key для атомарной смены
 test('обычный PATCH не может сохранить новую цену без атомарного переноса ненулевого остатка', async () => {
   let mutated = false; let rollbacks = 0;
   const query = async (sql) => {
+    if (sql === 'SELECT child_id FROM child_enrollments WHERE id=:enrollmentId') return [[{child_id:8}]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{id:8,status:'active'}]];
     if (sql === 'SELECT * FROM child_enrollments WHERE id=:id FOR UPDATE') return [[{ id: 9, child_id: 8, direction_id: 1,
       project_id: 1, status: 'active', individual_price: null, balance_lessons: '4.00000000', superseded_at: null }]];
     if (sql.startsWith('UPDATE child_enrollments')) { mutated = true; return [{ affectedRows: 1 }]; }

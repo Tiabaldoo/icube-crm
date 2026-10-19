@@ -14,7 +14,7 @@ for (const [statuses, visible, status] of [
 ]) test(`block3 current directions ${statuses.join('/')}: separate states, unchanged history`, () => {
   const child = { id: 1, status: 'Активный', enrollments: statuses.map((s, i) => enrollment(i + 1, i + 1, s)) };
   const before = JSON.stringify(child);
-  assert.equal(unfinishedEnrollments(child).length, visible); assert.equal(childListStatus(child), status);
+  assert.equal(unfinishedEnrollments(child).length, visible); assert.equal(childListStatus(child), child.status, 'legacy general status is not synthesized on read');
   assert.equal(JSON.stringify(child), before);
 });
 
@@ -24,7 +24,7 @@ test('block3 active directions count separate directions, not children, historie
     { id: 2, status: 'Активный', enrollments: [enrollment(4,1)] },
     { id: 3, status: 'Активный', enrollments: [enrollment(5,2,'Пауза')] },
     { id: 4, status: 'Активный', enrollments: [enrollment(6,1,'Закончил')] },
-    { id: 5, status: 'Лид', enrollments: [enrollment(7,2)] },
+    { id: 5, status: 'Лид', enrollments: [enrollment(7,2,'Лид')] },
   ];
   const before = JSON.stringify(children);
   const metrics = calculateDashboardMetrics({ children, projects: [{id:1,name:'iCubeRobots'},{id:2,name:'Зебра'}] });
