@@ -70,6 +70,8 @@ test('удаление ошибочного посещения возвраща�
     if (sql === 'SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE') return [[{ id: 70, lesson_id: 50, child_id: 8, enrollment_id: 9, attendance_type: 'main', present: 1, is_trial: 0 }]];
     if (sql.includes("be.attendance_id=:attendanceId AND be.entry_type='attendance'")) return [[{ id: 80, enrollment_id: 9, lessons_delta: '-1.00000000', amount_delta: '-1025.00', unit_price_snapshot: '1025.00' }]];
     if (sql.startsWith('SELECT balance_lot_id,lessons')) return [[{ balance_lot_id: 60, lessons: '1.00000000' }]];
+    if (sql.startsWith('SELECT id,enrollment_id,original_lessons,remaining_lessons FROM balance_lots')) return [[{ id: 60, enrollment_id: 9, original_lessons: '4.00000000', remaining_lessons: '3.00000000' }]];
+    if (sql.startsWith('SELECT dependent.id FROM balance_lot_consumptions linked')) return [[]];
     if (sql.startsWith('INSERT INTO balance_entries')) return [{ insertId: 81 }];
     if (sql.startsWith('SELECT * FROM salary_accruals WHERE')) return [[{ id: 90, teacher_id: 6 }]];
     if (sql.startsWith('SELECT COUNT(*) present_count')) return [[{ present_count: 0 }]];
@@ -131,7 +133,7 @@ function paymentUpdateDebtPool() {
   const decimal = (value) => Number(value).toFixed(8);
   const handler = async (sql, params = {}) => {
     if (sql.startsWith('SELECT * FROM payments WHERE id=')) return [[{ ...state.payment }]];
-    if (sql.startsWith('SELECT id FROM refunds WHERE payment_id=')) return [[]];
+    if (sql.startsWith('SELECT id FROM refunds WHERE payment_id=') || sql.startsWith('SELECT id,amount,refunded_on FROM refunds')) return [[]];
     if (sql.includes('FROM child_enrollments e')) return [[{
       id: 9, child_id: 8, direction_id: 1, group_id: 4, project_id: 2, superseded_at: null,
       balance_lessons: state.balance, current_price: '1025.00',
@@ -148,10 +150,18 @@ function paymentUpdateDebtPool() {
       return [{ affectedRows: 1 }];
     }
     if (sql.startsWith('SELECT id FROM balance_entries WHERE payment_id=')) return [[{ id: 12 }]];
-    if (sql.startsWith('SELECT id FROM balance_lots WHERE source_balance_entry_id=')) return [[{ id: 20 }]];
-    if (sql.startsWith('SELECT id FROM balance_lot_consumptions WHERE balance_lot_id=')) return [[]];
+    if (sql.startsWith('SELECT id,original_lessons,remaining_lessons FROM balance_lots WHERE source_balance_entry_id=')) return [[{ id: 20, original_lessons: '4.00000000', remaining_lessons: '1.00000000' }]];
+    if (sql.startsWith('SELECT blc.id,debit.entry_type FROM balance_lot_consumptions') || sql.startsWith('SELECT id FROM balance_transfer_lot_changes')) return [[]];
     if (sql.startsWith('UPDATE balance_entries SET')) return [{ affectedRows: 1 }];
     if (sql.startsWith('UPDATE balance_lots SET enrollment_id=')) return [{ affectedRows: 1 }];
+    if (sql.startsWith('SELECT id,balance_lessons FROM child_enrollments')) return [[{ id: 9, balance_lessons: state.balance }]];
+    if (sql.startsWith('SELECT be.*,r.payment_id refund_payment_id')) return [[
+      ...[1,2,3].map((id) => ({ id, entry_type: 'attendance', lessons_delta: '-1.00000000', amount_delta: '-1025.00' })),
+      { id: 12, entry_type: 'payment', payment_id: 11, lessons_delta: state.payment.lessons_credit, unit_price_snapshot: '1025.00' },
+    ]];
+    if (sql.startsWith('SELECT id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price')) return [[{ id: 20, source_balance_entry_id: 12, unit_price: '1025.00' }]];
+    if (sql.startsWith('SELECT blc.* FROM balance_lot_consumptions')) return [[]];
+    if (sql.startsWith('UPDATE balance_lots SET original_lessons=')) return [{ affectedRows: 1 }];
     if (sql.includes('FROM payments p JOIN children c')) return [[{
       ...state.payment, child_name: 'Иван', direction_name: 'Робототехника', refunded_amount: '0.00', remaining_lessons: '0.00000000',
     }]];

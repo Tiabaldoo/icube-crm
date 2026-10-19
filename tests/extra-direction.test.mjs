@@ -34,6 +34,8 @@ function fixture({ completed = false, existingTarget = false, targetStatus = 'ac
     }
     if (sql.startsWith('SELECT be.* FROM balance_entries')) return [state.reversals ? [] : [{ id: 301, enrollment_id: 101, lessons_delta: '-1.00000000', amount_delta: '-1125.00', unit_price_snapshot: '1125.00' }]];
     if (sql.startsWith('SELECT balance_lot_id,lessons FROM balance_lot_consumptions')) return [[{ balance_lot_id: 401, lessons: '1.00000000' }]];
+    if (sql.startsWith('SELECT id,enrollment_id,original_lessons,remaining_lessons FROM balance_lots')) return [[{ id: 401, enrollment_id: 101, original_lessons: '4.00000000', remaining_lessons: '3.00000000' }]];
+    if (sql.startsWith('SELECT dependent.id FROM balance_lot_consumptions linked')) return [[]];
     if (sql.startsWith('INSERT INTO balance_entries')) { state.reversals++; return [{ insertId: 302 }]; }
     if (sql.startsWith('UPDATE balance_lots') || sql.startsWith('UPDATE child_enrollments') || sql.startsWith('UPDATE attendances SET charged_lessons')) return [{ affectedRows: 1 }];
     if (sql.startsWith('UPDATE attendances SET enrollment_id=:enrollmentId,is_trial=TRUE')) {

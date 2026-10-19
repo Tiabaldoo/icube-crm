@@ -853,7 +853,8 @@ test('редактирование оплаты сохраняет истори�
   const saveSource = source.slice(source.indexOf('async function savePayment'), source.indexOf('function deletePaymentPrompt'));
   assert.match(formSource, /id="pf-price"[^>]*value="\$\{html\(existing\?\.price \?\? ''\)\}" readonly/);
   assert.doesNotMatch(formSource, /data-price-edited|priceEdited/);
-  assert.match(priceSource, /priceInput && !existing/);
+  assert.match(priceSource, /priceInput && needsQuote/);
+  assert.match(priceSource, /!existing \|\| String\(existing.enrollmentId\) !== String\(enrollmentId\)/);
   assert.match(saveSource, /if \(existing\) body\.priceSnapshot = String\(existing\.price\)/);
 
   const originalWindow = globalThis.window;

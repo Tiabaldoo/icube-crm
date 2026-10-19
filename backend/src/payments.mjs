@@ -4,6 +4,7 @@ import { lessonDecimal, lessonUnits, moneyCents, moneyDecimal } from './lesson-r
 import { parseCalendarDate, businessDate } from '../../src/shared/business-time.mjs';
 import { scopedIdempotencyKey } from './idempotency.mjs';
 import { loadPaymentLineage } from './balance-lineage.mjs';
+import { rebuildPaymentFunding } from './payment-funding.mjs';
 
 const SCALE = 100000000n;
 const methods = new Set(['cashless', 'cash']);
@@ -122,7 +123,9 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
     return mapPayment(row);
   }
   async function lockEnrollment(connection, enrollmentId, { requirePrice = true, priceDate = businessDate() } = {}) {
-    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,g.calculation_mode,
+    const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.individual_price,e.balance_lessons,gm.group_id,e.project_id,e.superseded_at,g.calculation_mode,g.package_lesson_count,
+      (e.individual_price IS NOT NULL AND :priceDate<:today AND NOT EXISTS
+        (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id)) price_history_missing,
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<DATE_ADD(:priceDate,INTERVAL 1 DAY) AND (pv.valid_to IS NULL OR pv.valid_to>=DATE_ADD(:priceDate,INTERVAL 1 DAY)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
@@ -134,8 +137,9 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
       ) current_price
       FROM child_enrollments e
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=:priceDate AND (gm2.ended_on IS NULL OR gm2.ended_on>=:priceDate) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
-      LEFT JOIN study_groups g ON g.id=gm.group_id WHERE e.id=:id FOR UPDATE`, { id: identifier(enrollmentId, 'enrollmentId'), priceDate });
+      LEFT JOIN study_groups g ON g.id=gm.group_id WHERE e.id=:id FOR UPDATE`, { id: identifier(enrollmentId, 'enrollmentId'), priceDate, today: businessDate() });
     if (!rows.length) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
+    if (requirePrice && rows[0].price_history_missing) throw new ApiProblem(409, 'PRICE_HISTORY_UNAVAILABLE', 'Для прошлой даты отсутствует история индивидуальной цены. Требуется проверка тарифа администратором проекта');
     if (requirePrice && rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для направления не настроена цена занятия');
     return rows[0];
   }
@@ -195,18 +199,42 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
         const [payments] = await connection.query('SELECT * FROM payments WHERE id=:id AND deleted_at IS NULL FOR UPDATE', { id: paymentId });
         if (!payments.length) throw new ApiProblem(404, 'NOT_FOUND', 'Оплата не найдена');
         const old = payments[0];
-        const [refunds] = await connection.query('SELECT id FROM refunds WHERE payment_id=:id AND deleted_at IS NULL LIMIT 1', { id: paymentId });
-        if (refunds.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплату с возвратом изменить нельзя');
+        const [refunds] = await connection.query('SELECT id,amount,refunded_on FROM refunds WHERE payment_id=:id AND deleted_at IS NULL FOR UPDATE', { id: paymentId });
         const date = paidOn(body.paidOn ?? isoDate(old.paid_on));
         const oldEnrollment = await lockEnrollment(connection, old.enrollment_id, { requirePrice: false, priceDate: date });
         const targetId = identifier(body.enrollmentId ?? old.enrollment_id, 'enrollmentId');
-        const target = String(oldEnrollment.id) === targetId ? oldEnrollment : await lockEnrollment(connection, targetId, { requirePrice: body.priceSnapshot === undefined, priceDate: date });
+        const target = String(oldEnrollment.id) === targetId ? oldEnrollment : await lockEnrollment(connection, targetId, { priceDate: date });
         if (String(old.project_id_snapshot) !== String(target.project_id)) throw new ApiProblem(409, 'PAYMENT_PROJECT_LOCKED', 'Нельзя перенести историческую оплату в другой проект');
         const amount = normalizeMoney(body.amount ?? old.amount);
-        const price = body.priceSnapshot === undefined
-          ? normalizeMoney(String(old.enrollment_id) === targetId ? old.price_snapshot : target.current_price, 'priceSnapshot')
-          : normalizeMoney(body.priceSnapshot, 'priceSnapshot');
+        const sameEnrollment = String(old.enrollment_id) === targetId;
+        const price = normalizeMoney(sameEnrollment ? old.price_snapshot : target.current_price, 'priceSnapshot');
+        if (sameEnrollment && body.priceSnapshot !== undefined && normalizeMoney(body.priceSnapshot, 'priceSnapshot') !== price) {
+          throw new ApiProblem(409, 'PAYMENT_PRICE_LOCKED', 'Историческую цену оплаты изменять нельзя');
+        }
+        const refunded = refunds.reduce((sum, r) => sum + moneyCents(String(r.amount)), 0n);
+        if (moneyCents(amount) < refunded) throw new ApiProblem(409, 'PAYMENT_BELOW_REFUNDED', 'Сумма оплаты не может быть меньше уже возвращённой суммы');
+        if (refunds.some((r) => isoDate(r.refunded_on) < date)) throw new ApiProblem(409, 'REFUND_BEFORE_PAYMENT', 'Дата оплаты не может быть позже связанного возврата');
         const lessons = calculateLessonsCredit(amount, price);
+        const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:paymentId AND entry_type='payment' FOR UPDATE`, { paymentId });
+        if (entries.length !== 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Не найдена единственная запись баланса для оплаты');
+        const [lots] = await connection.query('SELECT id,original_lessons,remaining_lessons FROM balance_lots WHERE source_balance_entry_id=:entryId FOR UPDATE', { entryId: entries[0].id });
+        if (lots.length > 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Для оплаты найдено несколько партий баланса');
+        const [consumptions] = lots.length ? await connection.query(`SELECT blc.id,debit.entry_type FROM balance_lot_consumptions blc
+          JOIN balance_entries debit ON debit.id=blc.balance_entry_id
+          LEFT JOIN balance_entries reversal ON reversal.reversal_of_entry_id=debit.id
+          WHERE blc.balance_lot_id=:lotId AND reversal.id IS NULL FOR UPDATE`, { lotId: lots[0].id }) : [[]];
+        const history = refunds.length > 0 || consumptions.length > 0;
+        const unspent = lots.length === 1 && lessonUnits(String(lots[0].remaining_lessons)) === lessonUnits(String(old.lessons_credit))
+          && lessonUnits(String(oldEnrollment.balance_lessons)) >= lessonUnits(String(old.lessons_credit));
+        if (!sameEnrollment && (history || !unspent)) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Нельзя изменить направление оплаты со связанными списаниями, погашением долга или возвратами');
+        if (history && date !== isoDate(old.paid_on)) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Изменение даты оплаты со связанными операциями требует проверки финансовой истории');
+        const financialChange = !sameEnrollment || amount !== normalizeMoney(old.amount) || lessons !== String(old.lessons_credit);
+        if (financialChange || date !== isoDate(old.paid_on)) {
+          const [transfers] = await connection.query(`SELECT id FROM balance_transfer_lot_changes
+            WHERE balance_lot_id=:lotId LIMIT 1 FOR UPDATE`, { lotId: lots[0]?.id ?? null });
+          if (transfers.length || consumptions.some((c) => c.entry_type === 'transfer_out') || oldEnrollment.superseded_at != null) throw new ApiProblem(409, 'PAYMENT_TRANSFER_HISTORY',
+            'Изменение суммы затронет связанный перенос остатка. Сначала требуется согласованная корректировка цепочки переноса.');
+        }
         const targetBalanceBefore = String(old.enrollment_id) === targetId
           ? lessonDecimal(lessonUnits(String(oldEnrollment.balance_lessons)) - lessonUnits(String(old.lessons_credit)))
           : String(target.balance_lessons);
@@ -216,6 +244,12 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
         const oldBalanceAfter = String(oldEnrollment.id) === String(target.id)
           ? lessonDecimal(lessonUnits(oldBalanceBefore) - lessonUnits(String(old.lessons_credit)) + lessonUnits(lessons))
           : lessonDecimal(lessonUnits(oldBalanceBefore) - lessonUnits(String(old.lessons_credit)));
+        const delta = lessonUnits(lessons) - lessonUnits(String(old.lessons_credit));
+        const remainingAfter = lots.length ? lessonUnits(String(lots[0].remaining_lessons)) + delta : -1n;
+        const localLotChange = sameEnrollment && lots.length === 1
+          && lessonUnits(String(lots[0].original_lessons)) === lessonUnits(String(old.lessons_credit))
+          && lessonUnits(oldBalanceBefore) >= 0n && lessonUnits(oldBalanceAfter) >= 0n
+          && remainingAfter >= 0n && remainingAfter <= lessonUnits(lessons);
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons-:lessons WHERE id=:id', { id: old.enrollment_id, lessons: String(old.lessons_credit) });
         await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', { id: target.id, lessons });
         if (notificationEvents) await notificationEvents.debtThreshold(connection, {
@@ -227,24 +261,21 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
           group_id_snapshot=:groupId,project_id_snapshot=:projectId,paid_on=:paidOn,amount=:amount,
           price_snapshot=:price,lessons_credit=:lessons,method=:method,note=:note,calculation_mode_snapshot=:calculationMode WHERE id=:id`, {
           id: paymentId, enrollmentId: target.id, childId: target.child_id, directionId: target.direction_id,
-          groupId: target.group_id, projectId: target.project_id, paidOn: date, amount, price, lessons, method,
+          groupId: sameEnrollment ? old.group_id_snapshot : target.group_id, projectId: sameEnrollment ? old.project_id_snapshot : target.project_id, paidOn: date, amount, price, lessons, method,
           calculationMode: String(old.enrollment_id) === targetId ? old.calculation_mode_snapshot ?? 'standard' : target.calculation_mode ?? 'standard',
           note: body.note === undefined ? old.note : body.note == null || body.note === '' ? null : String(body.note).trim(),
         });
-        const [entries] = await connection.query(`SELECT id FROM balance_entries WHERE payment_id=:paymentId AND entry_type='payment' FOR UPDATE`, { paymentId });
-        if (entries.length !== 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Не найдена единственная запись баланса для оплаты');
-        const [lots] = await connection.query('SELECT id FROM balance_lots WHERE source_balance_entry_id=:entryId FOR UPDATE', { entryId: entries[0].id });
-        if (lots.length > 1) throw new ApiProblem(409, 'PAYMENT_LEDGER_INCONSISTENT', 'Для оплаты найдено несколько партий баланса');
-        if (lots.length) {
-          const [consumptions] = await connection.query('SELECT id FROM balance_lot_consumptions WHERE balance_lot_id=:lotId LIMIT 1', { lotId: lots[0].id });
-          if (consumptions.length) throw new ApiProblem(409, 'PAYMENT_HAS_HISTORY', 'Оплата уже использована в финансовой истории');
-        }
         await connection.query(`UPDATE balance_entries SET enrollment_id=:enrollmentId,lessons_delta=:lessons,
           amount_delta=:amount,unit_price_snapshot=:price,occurred_at=CONCAT(:paidOn,' 12:00:00'),created_by_user_id=COALESCE(:actorId,created_by_user_id)
           WHERE id=:entryId`, { enrollmentId: target.id, lessons, amount, price, paidOn: date, actorId: context.actorUserId ?? null, entryId: entries[0].id });
-        if (lots.length) {
+        if (sameEnrollment && financialChange && !localLotChange) {
+          await rebuildPaymentFunding(connection, target.id);
+        } else if (!financialChange) {
+          // Metadata edits must not refill consumed lots or rewrite their provenance.
+        } else if (lots.length) {
           await connection.query(`UPDATE balance_lots SET enrollment_id=:enrollmentId,original_lessons=:lessons,
-            remaining_lessons=:remainingLessons,unit_price=:price WHERE id=:lotId`, { enrollmentId: target.id, lessons, remainingLessons: lotLessons, price, lotId: lots[0].id });
+            remaining_lessons=:remainingLessons,unit_price=:price WHERE id=:lotId`, { enrollmentId: target.id, lessons,
+            remainingLessons: localLotChange ? lessonDecimal(remainingAfter) : lotLessons, price, lotId: lots[0].id });
         } else {
           await connection.query(`INSERT INTO balance_lots
             (enrollment_id,source_balance_entry_id,original_lessons,remaining_lessons,unit_price)
@@ -301,10 +332,11 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
       directionId: String(row.direction_id), directionName: row.direction_name, balanceLessons: String(row.balance_lessons) }));
   }
   async function quote(enrollmentId, priceDate = businessDate()) {
+    priceDate = paidOn(priceDate);
     return inTransaction(pool, async (connection) => {
       const enrollment = await lockEnrollment(connection, enrollmentId, { priceDate });
       const currentPrice = normalizeMoney(enrollment.current_price, 'priceSnapshot');
-      return { currentPrice, subscriptionAmount: moneyDecimal(moneyCents(currentPrice) * 4n) };
+      return { currentPrice, subscriptionAmount: moneyDecimal(moneyCents(currentPrice) * BigInt(enrollment.package_lesson_count ?? 4)) };
     });
   }
   return { list, get, create, update, remove, balances, quote };

@@ -104,6 +104,18 @@ test('F: несколько partial refunds суммарно уменьшают 
   assert.equal(buildPaymentLineage({ lots, consumptions: rows, paymentId: 11 }).availableAmount, '2075.00');
 });
 
+test('calendar dates cannot put consumption before its actual source or lose transfer provenance', () => {
+  const lots = [
+    paymentLot(20, 7, 12, 11, '0.00000000', '1025.00', '2026-10-20 12:00:00'),
+    transferLot(21, 8, 14, 70, '1.82222222', '1.82222222', '1125.00', '2026-10-19 12:00:01'),
+  ];
+  const rows = [
+    consumption(100, 20, 13, 'transfer_out', '2050.00', '2.00000000', '2026-10-19 12:00:00', { transferId: 70 }),
+  ];
+  const lineage = buildPaymentLineage({ lots, consumptions: rows, paymentId: 11 });
+  assert.equal(lineage.availableAmount, '2050.00'); assert.equal(lineage.allocations[0].lotId, '21');
+});
+
 function transferredRefundFixture() {
   let nextRefundId = 30;
   let nextEntryId = 50;

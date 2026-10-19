@@ -1,4 +1,5 @@
 import { lessonUnits, moneyCents, moneyDecimal } from './lesson-rules.mjs';
+import { ApiProblem } from './catalog.mjs';
 
 const SCALE = 100000000n;
 
@@ -104,8 +105,19 @@ export function buildPaymentLineage({ lots, consumptions, paymentId }) {
   const queues = new Map();
   const moved = new Map();
 
-  for (const event of events) {
+  // Calendar dates may be backdated (including visits booked after a payment).
+  // Process a consumption only after its actual funding lot, and transfer-in
+  // only after its source transfer-out. Keep the existing order otherwise.
+  const pending = events.slice(); const initialized = new Set();
+  const outgoingTransfers = new Set(events.filter((e) => e.kind === 'consume' && e.entryType === 'transfer_out').map((e) => e.transferId));
+  while (pending.length) {
+    const index = pending.findIndex((e) => e.kind === 'lot'
+      ? e.entryType !== 'transfer_in' || !outgoingTransfers.has(e.transferId) || moved.has(e.transferId)
+      : e.rows.every((r) => initialized.has(String(r.balance_lot_id))));
+    if (index < 0) throw new ApiProblem(409, 'BALANCE_LINEAGE_INCONSISTENT', 'Не удалось восстановить порядок связанных финансовых операций');
+    const [event] = pending.splice(index, 1);
     if (event.kind === 'lot') {
+      initialized.add(event.lotId);
       const capacity = capacities.get(event.lotId) ?? 0n;
       if (event.entryType === 'transfer_in') {
         const incoming = cloneSegments(moved.get(event.transferId) ?? []);

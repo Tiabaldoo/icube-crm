@@ -2,6 +2,7 @@ import { inTransaction } from './db.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { assertProjectScope, partnerProjectId } from './project-scope.mjs';
 import { calculateSalary, freezeRosterMembers, lessonDecimal, lessonUnits, moneyCents, moneyDecimal, occurrenceDates, planFifoConsumption } from './lesson-rules.mjs';
+import { rebuildPaymentFunding } from './payment-funding.mjs';
 import { addCalendarDays, businessDate, parseCalendarDate, BUSINESS_UTC_OFFSET } from '../../src/shared/business-time.mjs';
 import { scopedIdempotencyKey } from './idempotency.mjs';
 import { attendanceShares, groupSlots } from './group-settings.mjs';
@@ -491,11 +492,13 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     const debit = await activeAttendanceDebit(connection, attendance.id);
     if (!debit) return null;
     const [consumptions] = await connection.query('SELECT balance_lot_id,lessons FROM balance_lot_consumptions WHERE balance_entry_id=:entryId FOR UPDATE', { entryId: debit.id });
+    let rebuildFunding = false;
     if (enrollment) {
       await assertAttendanceEnrollmentCurrent(connection, debit.enrollment_id);
       const funded = consumptions.reduce((sum, item) => sum + lessonUnits(String(item.lessons)), 0n);
       const uncovered = -lessonUnits(String(debit.lessons_delta)) - funded;
       const balance = lessonUnits(String(enrollment.balance_lessons));
+      rebuildFunding = balance < 0n && funded > 0n;
       if (String(debit.enrollment_id) !== String(enrollment.id) || uncovered < 0n || uncovered > (balance < 0n ? -balance : 0n)) {
         throw new ApiProblem(409, 'ATTENDANCE_FINANCIAL_HISTORY',
           'Долг за посещение уже погашен последующими операциями. Требуется проверка финансовой истории администратором проекта.');
@@ -525,7 +528,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           'Средства этой FIFO-партии уже использованы последующим возвратом или переносом. Требуется проверка администратором проекта.');
       }
     }
-    for (const consumption of consumptions) {
+    for (const consumption of rebuildFunding ? [] : consumptions) {
       await connection.query('UPDATE balance_lots SET remaining_lessons=remaining_lessons+:lessons WHERE id=:id', { id: consumption.balance_lot_id, lessons: String(consumption.lessons) });
     }
     const [reversal] = await connection.query(`INSERT INTO balance_entries
@@ -538,6 +541,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     await connection.query('UPDATE child_enrollments SET balance_lessons=balance_lessons+:lessons WHERE id=:id', {
       id: debit.enrollment_id, lessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))),
     });
+    if (rebuildFunding) await rebuildPaymentFunding(connection, debit.enrollment_id);
     await connection.query('UPDATE attendances SET charged_lessons=0 WHERE id=:id', { id: attendance.id });
     return { debitId: debit.id, reversalId: reversal.insertId, restoredLessons: lessonDecimal(-lessonUnits(String(debit.lessons_delta))) };
   }

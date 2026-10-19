@@ -205,7 +205,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
       e.started_on, e.ended_on, gm.group_id,gm.started_on group_started_on,
       effective_gm.group_id effective_group_id,sg.name group_name,sg.weekday,sg.start_time,s.name site_name,
       COALESCE(e.individual_price,
-        (SELECT pv.price FROM price_versions pv WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND pv.group_id=gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
+        (SELECT pv.price FROM price_versions pv WHERE (pv.scope_type='group' OR (pv.scope_type='mixed_group' AND pv.direction_id=e.direction_id)) AND pv.group_id=effective_gm.group_id AND pv.valid_from<=NOW(6) AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6)) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='direction' AND pv.direction_id=e.direction_id
           AND (pv.project_id=e.project_id OR pv.project_id IS NULL) AND pv.valid_from<=NOW(6)
           AND (pv.valid_to IS NULL OR pv.valid_to>NOW(6))

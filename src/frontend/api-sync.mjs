@@ -28,6 +28,7 @@ let balanceTransferPending = false;
 let balanceTransferKey = null;
 let paymentSavePending = false;
 let paymentCreateKey = null;
+let paymentQuoteSequence = 0;
 let refundSavePending = false;
 let refundCreateKey = null;
 let childSavePending = false;
@@ -920,7 +921,7 @@ function paymentForm(childId, direction, paymentId) {
   const todayIso = businessDate();
   paymentCreateKey = existing ? null : operationKey(); paymentSavePending = false;
   legacy.state.modal = `<h3>${existing ? 'Редактировать оплату' : 'Новая оплата'}</h3><div class="form-grid">
-    <div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="${html(existing?.paidOn ?? todayIso)}"></div>
+    <div class="field"><label>Дата</label><input class="input" id="pf-date" type="date" value="${html(existing?.paidOn ?? todayIso)}" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})"></div>
     <div class="field"><label>Ребёнок</label><select class="select" id="pf-child" onchange="icubeApi.refreshPaymentDirections(${existing?.id ?? 'null'});window.icubePaymentReceipts?.refreshCandidates?.()" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.childId}">${html(existing.childName)}</option>` : legacy.state.children.map((item) => `<option value="${item.id}"${item.id === child.id ? ' selected' : ''}>${html(item.name)}</option>`).join('')}</select></div>
     <div class="field"><label>Направление</label><select class="select" id="pf-enrollment" onchange="icubeApi.updatePaymentPrice(${existing?.id ?? 'null'})" ${historical ? 'disabled' : ''}>${historical ? `<option value="${existing.enrollmentId}">${html(existing.direction)}</option>` : ''}</select></div>
     <div class="field"><label>Сумма, ₽</label><input class="input" id="pf-amount" type="number" min="0.01" step="0.01" value="${html(existing?.amount ?? '4100')}" oninput="icubeApi.updatePaymentCalc()"></div>
@@ -943,11 +944,30 @@ function refreshPaymentDirections(paymentId, preferredEnrollmentId) {
   updatePaymentPrice(paymentId);
 }
 
-function updatePaymentPrice(paymentId) {
+async function updatePaymentPrice(paymentId) {
+  const sequence = ++paymentQuoteSequence;
   const existing = paymentId ? legacy.state.payments.find((payment) => payment.id === Number(paymentId)) : null;
   const enrollment = paymentEnrollment(value('#pf-child'), value('#pf-enrollment'));
   const priceInput = element('#pf-price');
-  if (priceInput && !existing) priceInput.value = enrollment ? String(enrollment.currentPrice ?? legacy.effectivePrice(enrollment) ?? '') : '';
+  const enrollmentId = value('#pf-enrollment');
+  const needsQuote = !existing || String(existing.enrollmentId) !== String(enrollmentId);
+  if (priceInput && !needsQuote) priceInput.value = String(existing.price);
+  if (priceInput && needsQuote) {
+    priceInput.value = '';
+    updatePaymentCalc();
+    const date = value('#pf-date');
+    if (enrollment && date) {
+      try {
+        const quote = await api.request(`/enrollments/${encodeURIComponent(enrollmentId)}/payment-quote?paidOn=${encodeURIComponent(date)}`);
+        if (sequence !== paymentQuoteSequence || element('#pf-price') !== priceInput) return;
+        priceInput.value = quote.currentPrice;
+      } catch (error) {
+        if (sequence !== paymentQuoteSequence || element('#pf-price') !== priceInput) return;
+        const box = element('#pf-calc'); if (box) box.textContent = error.message;
+        return;
+      }
+    }
+  }
   updatePaymentCalc();
 }
 

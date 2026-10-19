@@ -175,7 +175,7 @@ function paymentModeUpdateFixture({ snapshot = 'standard', sourceMode = 'standar
   };
   const query = async (sql, p = {}) => {
     if (sql.startsWith('SELECT * FROM payments')) return [[{ ...state.payment }]];
-    if (sql.startsWith('SELECT id FROM refunds')) return [refunds ? [{ id: 30 }] : []];
+    if (sql.startsWith('SELECT id,amount,refunded_on FROM refunds')) return [refunds ? [{ id: 30, amount: '100.00', refunded_on: '2026-09-16' }] : []];
     if (sql.includes('FROM child_enrollments e')) return [[{ ...state.enrollments.find((e) => String(e.id) === String(p.id)) }]];
     if (sql.startsWith('UPDATE child_enrollments SET balance_lessons=')) {
       const enrollment = state.enrollments.find((e) => String(e.id) === String(p.id));
@@ -190,8 +190,9 @@ function paymentModeUpdateFixture({ snapshot = 'standard', sourceMode = 'standar
       return [{ affectedRows: 1 }];
     }
     if (sql.startsWith('SELECT id FROM balance_entries')) return [[{ id: 21 }]];
-    if (sql.startsWith('SELECT id FROM balance_lots')) return [[{ id: 22 }]];
-    if (sql.startsWith('SELECT id FROM balance_lot_consumptions')) return [consumed ? [{ id: 40 }] : []];
+    if (sql.startsWith('SELECT id,original_lessons,remaining_lessons FROM balance_lots')) return [[{ id: 22, original_lessons: state.payment.lessons_credit, remaining_lessons: state.lot.remainingLessons }]];
+    if (sql.startsWith('SELECT blc.id,debit.entry_type FROM balance_lot_consumptions')) return [consumed ? [{ id: 40, entry_type: 'attendance' }] : []];
+    if (sql.startsWith('SELECT id FROM balance_transfer_lot_changes')) return [[]];
     if (sql.startsWith('UPDATE balance_entries SET')) { Object.assign(state.entry, p); return [{ affectedRows: 1 }]; }
     if (sql.startsWith('UPDATE balance_lots SET')) { Object.assign(state.lot, p); return [{ affectedRows: 1 }]; }
     if (sql.includes('FROM payments p JOIN children')) return [[{ ...state.payment, child_name: 'Ребёнок', direction_name: 'Программирование', remaining_lessons: state.lot.remainingLessons }]];

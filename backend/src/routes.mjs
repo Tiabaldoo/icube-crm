@@ -245,6 +245,10 @@ export function createApiRouter(pool, {
   ), 201));
   router.post('/payment-receipts/:id/close', requirePermission('payments:write'), run((request) => paymentReceipts.close(request.params.id, request.auth), 204));
   router.get('/payments', requirePermission('payments:read'), run((request) => payments.list(projectFilters(request))));
+  router.get('/enrollments/:id/payment-quote', requirePermission('payments:read'), run(async (request) => {
+    await assertOwned(pool, 'enrollments', request.params.id, request.auth);
+    return payments.quote(request.params.id, request.query.paidOn);
+  }));
   router.get('/payments/:id', requirePermission('payments:read'), run(async (request) => { await assertOwned(pool, 'payments', request.params.id, request.auth); return payments.get(request.params.id); }));
   router.post('/payments', requirePermission('payments:write'), run(async (request) => {
     await assertOwned(pool, 'enrollments', request.body.enrollmentId, request.auth);
