@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
+import { financeFixture } from './helpers/finance-sql-fixture.mjs';
 
 const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
 function fixture() {
@@ -36,4 +37,29 @@ test('missing historical tariff displays the server reason and never falls back 
   const f = fixture(); const pending = f.update(null);
   f.requests[0].reject(new Error('Для направления не настроена цена занятия')); await pending;
   assert.equal(f.controls['#pf-price'].value, ''); assert.equal(f.controls['#pf-calc'].textContent, 'Для направления не настроена цена занятия');
+});
+
+test('form and backend agree on known individual tariff and reject unknown history with string flags', async (t) => {
+  const f = financeFixture(t, { price: '825.00', packageCount: 8, mode: 'attendance_share' });
+  f.db.exec(`UPDATE child_enrollments SET individual_price='825.00' WHERE id=7;
+    INSERT INTO price_versions VALUES(4,'enrollment',7,NULL,NULL,NULL,'825.00','2026-09-30',NULL);`);
+  const form = fixture(); form.controls['#pf-date'].value = '2026-10-19';
+  const known = form.update(null);
+  form.requests[0].resolve(await f.payments.quote(7, '2026-10-19')); await known;
+  assert.equal(form.controls['#pf-price'].value, '825.00');
+  assert.match(form.controls['#pf-calc'].innerHTML, /8 занятия/);
+  const saved = await f.pay(form.controls['#pf-amount'].value, { paidOn: form.controls['#pf-date'].value });
+  assert.equal(saved.priceSnapshot, form.controls['#pf-price'].value); assert.equal(saved.lessonsCredit, '8.00000000');
+  assert.equal(f.balance(), 8);
+
+  f.db.exec('DELETE FROM price_versions WHERE id=4');
+  form.controls['#pf-date'].value = '2026-09-15'; const unknown = form.update(null);
+  await assert.rejects(f.payments.quote(7, '2026-09-15'), (error) => {
+    assert.equal(error.code, 'PRICE_HISTORY_UNAVAILABLE'); form.requests[1].reject(error); return true;
+  });
+  await unknown;
+  assert.equal(form.controls['#pf-price'].value, '');
+  assert.match(form.controls['#pf-calc'].textContent, /отсутствует история индивидуальной цены/);
+  await assert.rejects(f.pay('6600', { paidOn: '2026-09-15' }), { code: 'PRICE_HISTORY_UNAVAILABLE' });
+  assert.equal(f.rows('payments').length, 1); assert.equal(f.balance(), 8);
 });

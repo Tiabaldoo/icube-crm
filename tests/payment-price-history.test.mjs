@@ -3,20 +3,34 @@ import assert from 'node:assert/strict';
 import { financeFixture } from './helpers/finance-sql-fixture.mjs';
 import { createMysqlCatalog } from '../backend/src/catalog.mjs';
 
-test('dated membership and versioned package price: 6600/825 = eight now and in the recorded past', async (t) => {
+test('string zero history flag accepts the known individual tariff: quote, creation and historical snapshots', async (t) => {
   const f = financeFixture(t, { price: '825.00', packageCount: 8, mode: 'attendance_share' });
-  f.db.exec(`INSERT INTO study_groups VALUES(10,'standard',4);
+  f.db.exec(`UPDATE child_enrollments SET individual_price='825.00' WHERE id=7;
+    INSERT INTO price_versions VALUES(4,'enrollment',7,NULL,NULL,NULL,'825.00','2026-09-01',NULL);
+    INSERT INTO study_groups VALUES(10,'standard',4);
     INSERT INTO group_memberships VALUES(2,7,10,'2026-11-01',NULL);
-    INSERT INTO price_versions VALUES(4,'group',NULL,10,NULL,NULL,'1100.00','2026-01-01',NULL);`);
+    INSERT INTO price_versions VALUES(5,'group',NULL,10,NULL,NULL,'1100.00','2026-01-01',NULL);`);
   for (const paidOn of ['2026-09-15','2026-10-19']) {
+    assert.deepEqual(await f.payments.quote(7, paidOn), { currentPrice: '825.00', subscriptionAmount: '6600.00' });
     const payment = await f.pay('6600', { paidOn });
     assert.equal(payment.priceSnapshot, '825.00'); assert.equal(payment.lessonsCredit, '8.00000000'); assert.equal(payment.groupId, '9');
+    assert.equal(f.rows('payments').at(-1).calculation_mode_snapshot, 'attendance_share');
+    assert.equal(f.rows('balance_lots').at(-1).unit_price, '825.00');
   }
   assert.equal(f.balance(), 16);
-  f.db.exec("UPDATE price_versions SET valid_to='2026-10-20 12:00:00' WHERE id=3; INSERT INTO price_versions VALUES(5,'group',NULL,9,NULL,NULL,'1100.00','2026-10-20 12:00:00',NULL)");
+  f.visits(1, { price: '825.00' });
+  const visits = f.rows('attendances'); const charges = f.rows('balance_entries').filter((e) => e.entry_type === 'attendance');
+  f.db.exec(`UPDATE price_versions SET valid_to='2026-10-20 12:00:00' WHERE id IN (3,4);
+    UPDATE child_enrollments SET individual_price='1100.00' WHERE id=7;
+    INSERT INTO price_versions VALUES(6,'group',NULL,9,NULL,NULL,'1100.00','2026-10-20 12:00:00',NULL),
+      (7,'enrollment',7,NULL,NULL,NULL,'1100.00','2026-10-20 12:00:00',NULL);`);
+  assert.equal((await f.payments.quote(7, '2026-10-19')).currentPrice, '825.00');
+  assert.equal((await f.payments.quote(7, '2026-10-21')).currentPrice, '1100.00');
   const old = await f.pay('6600', { paidOn: '2026-10-19' }); const updated = await f.pay('6600', { paidOn: '2026-10-21' });
   assert.equal(old.lessonsCredit, '8.00000000'); assert.equal(updated.lessonsCredit, '6.00000000');
   assert.equal((await f.payments.get('1')).priceSnapshot, '825.00');
+  assert.deepEqual(f.rows('attendances'), visits);
+  assert.deepEqual(f.rows('balance_entries').filter((e) => e.entry_type === 'attendance'), charges);
 });
 
 test('individual > group > direction precedence and removing individual price keeps historical snapshots', async (t) => {
@@ -54,6 +68,7 @@ test('missing recorded tariff refuses payment before any financial mutation', as
 
 test('unversioned legacy individual price cannot silently replace an unknown past tariff', async (t) => {
   const f = financeFixture(t); f.db.exec("UPDATE child_enrollments SET individual_price='825.00' WHERE id=7");
+  await assert.rejects(f.payments.quote(7, '2026-09-15'), { code: 'PRICE_HISTORY_UNAVAILABLE' });
   await assert.rejects(f.pay('6600', { paidOn: '2026-09-15' }), { code: 'PRICE_HISTORY_UNAVAILABLE' });
   assert.equal(f.balance(), 0); assert.deepEqual(f.rows('payments'), []);
 });

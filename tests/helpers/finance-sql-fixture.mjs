@@ -54,7 +54,11 @@ export function financeFixture(t, { price = '1125.00', packageCount = 4, mode = 
     const bindings = Object.fromEntries(Object.entries(params).filter(([key]) => adapted.includes(`:${key}`))
       .map(([key, value]) => [key, typeof value === 'boolean' ? Number(value) : value ?? null]));
     const statement = db.prepare(adapted);
-    if (/^SELECT/i.test(adapted)) return [statement.all(bindings)];
+    if (/^SELECT/i.test(adapted)) return [statement.all(bindings).map((row) => {
+      // mysql2 with supportBigNumbers/bigNumberStrings returns this integer predicate as '0'/'1'.
+      if ('price_history_missing' in row) row.price_history_missing = String(row.price_history_missing);
+      return row;
+    })];
     const result = statement.run(bindings); return [{ insertId: Number(result.lastInsertRowid), affectedRows: result.changes }];
   }
   const connection = { query, async beginTransaction() { db.exec('BEGIN'); }, async commit() { db.exec('COMMIT'); }, async rollback() { db.exec('ROLLBACK'); }, release() {} };

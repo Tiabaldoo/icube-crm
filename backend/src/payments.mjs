@@ -139,7 +139,7 @@ export function createMysqlPayments(pool, { notificationEvents = null } = {}) {
       LEFT JOIN group_memberships gm ON gm.id=(SELECT gm2.id FROM group_memberships gm2 WHERE gm2.enrollment_id=e.id AND gm2.started_on<=:priceDate AND (gm2.ended_on IS NULL OR gm2.ended_on>=:priceDate) ORDER BY gm2.started_on DESC,gm2.id DESC LIMIT 1)
       LEFT JOIN study_groups g ON g.id=gm.group_id WHERE e.id=:id FOR UPDATE`, { id: identifier(enrollmentId, 'enrollmentId'), priceDate, today: businessDate() });
     if (!rows.length) throw new ApiProblem(404, 'ENROLLMENT_NOT_FOUND', 'Направление ребёнка не найдено');
-    if (requirePrice && rows[0].price_history_missing) throw new ApiProblem(409, 'PRICE_HISTORY_UNAVAILABLE', 'Для прошлой даты отсутствует история индивидуальной цены. Требуется проверка тарифа администратором проекта');
+    if (requirePrice && Number(rows[0].price_history_missing) === 1) throw new ApiProblem(409, 'PRICE_HISTORY_UNAVAILABLE', 'Для прошлой даты отсутствует история индивидуальной цены. Требуется проверка тарифа администратором проекта');
     if (requirePrice && rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для направления не настроена цена занятия');
     return rows[0];
   }
