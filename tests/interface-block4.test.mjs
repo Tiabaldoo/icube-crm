@@ -101,7 +101,7 @@ test('final main/extra lesson rows put balance before attendance to the right of
  for(const extra of [false,true]){
   if(extra)lesson.extras=[{childId:8,enrollmentId:81,present:false,trial:true}];
   const html=context.studentCheck(child,lesson,extra);
-  assert.match(html,/lesson-student-card direction-code/);assert.match(html,/title="Программирование">2,44/);
+  assert.match(html,/name-capsule direction-code/);assert.match(html,/title="Программирование">2,44/);
   assert.ok(html.indexOf('lesson-student-name-cell')<html.indexOf('lesson-student-balance-slot'));
   assert.ok(html.indexOf('lesson-student-balance-slot')<html.indexOf('lesson-student-attendance-slot'));
   assert.match(html,/icubeOpenLessonChild\(8\)/);
@@ -109,18 +109,18 @@ test('final main/extra lesson rows put balance before attendance to the right of
  }
  lesson.extras=[];assert.equal(JSON.stringify({child,lesson}),before);
  lesson.enrollmentByChild[8]=80;lesson.attendanceDetailsByChild[8].enrollmentId=80;
- assert.match(context.studentCheck(child,lesson,false),/lesson-student-card direction-robot/);
+ assert.match(context.studentCheck(child,lesson,false),/name-capsule direction-robot/);
  assert.match(context.studentCheck(child,lesson,false),/title="Робототехника">3/);
  delete lesson.enrollmentByChild;delete lesson.attendanceDetailsByChild;
- const unknown=context.studentCheck(child,lesson,false);assert.doesNotMatch(unknown,/lesson-student-card direction-/);assert.match(unknown,/badge gray group-balance-badge/);
+ const unknown=context.studentCheck(child,lesson,false);assert.doesNotMatch(unknown,/name-capsule direction-/);assert.match(unknown,/badge gray group-balance-badge/);
  state.role='teacher';assert.doesNotMatch(context.studentCheck(child,lesson,false),/icubeOpenLessonChild/);
  context.icubeTemporaryTeacherParentRole=()=> 'director';assert.match(context.studentCheck(child,lesson,false),/icubeOpenLessonChild/);
 });
 test('director lesson, teacher prestart and group roster share independent right-hand balance and status columns',async()=>{
  const {context,state}=await fixture();let html=context.lesson();
- assert.match(html,/lesson-summary-row direction-code/);assert.match(html,/roster-balance[\s\S]*title="Программирование">2,44[\s\S]*roster-status/);
+ assert.match(html,/lesson-summary-row[\s\S]*name-capsule direction-code/);assert.match(html,/roster-balance[\s\S]*title="Программирование">2,44[\s\S]*roster-status/);
  state.lessons[0].started=false;state.lessons[0].done=false;
- html=context.teacherLesson();assert.match(html,/teacher-prestart-child lesson-summary-row direction-code/);assert.match(html,/title="Программирование">2,44/);
+ html=context.teacherLesson();assert.match(html,/teacher-prestart-child lesson-summary-row[\s\S]*name-capsule direction-code/);assert.match(html,/title="Программирование">2,44/);
  html=context.group();assert.match(html,/group-roster-row/);assert.match(html,/roster-balance[\s\S]*roster-status/);
  const css=await readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8');
  const final=css.slice(css.indexOf('/* Shared roster columns:'));
@@ -171,8 +171,69 @@ test('frozen roster cannot invent a balance or direction through its temporary m
  delete lesson.enrollmentByChild;delete lesson.attendanceDetailsByChild;
  child.enrollments.forEach(e=>{e.groupId=99;e.effectiveGroupId=99;});const before=JSON.stringify(child);
  const output=context.teacherLesson();assert.match(output,/Оченьдлиннаяфамилия/);
- assert.match(output,/badge gray group-balance-badge/);assert.doesNotMatch(output,/lesson-student-card direction-/);
+ assert.match(output,/badge gray group-balance-badge/);assert.doesNotMatch(output,/name-capsule direction-/);
  assert.equal(JSON.stringify(child),before);
  child.enrollments=[];assert.match(context.teacherLesson(),/badge gray group-balance-badge/);
  assert.deepEqual(child.enrollments,[]);
+});
+
+test('palette reuses existing orange programming and calendar teal tokens without recoloring project badges',async()=>{
+ const [css,ui]=await Promise.all([readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8'),readFile(new URL('../src/frontend/crm-ui.js',import.meta.url),'utf8')]);
+ assert.match(css,/--direction-robot:#3b82f6/);assert.match(css,/--direction-code:#f97316/);
+ assert.match(css,/\.badge\.blue\{background:var\(--accent2\);color:var\(--direction-robot-text\)/);
+ assert.match(css,/\.badge\.purple\{background:var\(--purplebg\);color:var\(--purple\)/);
+ assert.match(css,/\.name-capsule\.direction-code,\.badge\.direction-code\{background:var\(--direction-code-bg\);color:var\(--direction-code-text\)/);
+ assert.match(css,/\.badge\.mixed\{color:var\(--mixed-color\);background:var\(--mixed-tint\)/);
+ assert.match(css,/\.event\.crm-direction-mixed[^\{]*\{[^}]*var\(--mixed-color\)[^}]*var\(--mixed-tint\)/);
+ assert.match(css,/\.group-card\.crm-direction-mixed\{[^}]*var\(--mixed-color\)[^}]*var\(--mixed-tint\)/);
+ assert.doesNotMatch(css,/\.direction-(?:code|robot)\{border-left:/);
+ const runtime=ui.slice(ui.indexOf('/* Unified direction palette:'),ui.indexOf('  installStyles();',ui.indexOf('/* Unified direction palette:')));
+ assert.doesNotMatch(runtime,/badge\.purple:first-child/);
+ assert.match(runtime,/\.event\.partner:not\(\.crm-direction-mixed\):not\(\.event-cancelled\)/);
+ assert.match(runtime,/\.group-card\.crm-direction-program \.badge\.direction-code/);
+ assert.doesNotMatch(runtime,/#f97316|#fff7ed|#ffedd5|#c2410c/,'runtime styles consume the existing palette through shared variables');
+ const {context,state}=await fixture();state.groups[0].isMixed=false;state.groups[0].direction='Программирование';state.groups[0].project='Зебра';
+ assert.match(context.groups(),/badge direction-code">Программирование<\/span>[\s\S]*badge purple">Зебра<\/span>/);
+ state.groups[0].direction='Робототехника';state.groups[0].project='iCubeRobots';
+ assert.match(context.groups(),/badge blue">Робототехника<\/span>[\s\S]*badge blue">iCubeRobots<\/span>/);
+ state.groups[0].isMixed=true;state.groups[0].direction='Смешанная';assert.match(context.groups(),/badge mixed">Смешанная/);
+});
+
+test('mixed lesson name capsules use the pinned visit, including another-group extra, without coloring the row or moving controls',async()=>{
+ const {context,state}=await fixture();const child=state.children[0],lesson=state.lessons[0];child.enrollments[0].groupId=99;
+ for(const [id,accent] of [[80,'direction-robot'],[81,'direction-code']]){
+  lesson.enrollmentByChild={8:id};lesson.attendanceDetailsByChild={8:{enrollmentId:id}};
+  lesson.extras=[{childId:8,enrollmentId:id,present:true}];const before=JSON.stringify({child,lesson});
+  for(const extra of [false,true]){
+   const html=context.studentCheck(child,lesson,extra);
+   assert.match(html,new RegExp(`class="lesson-child-link name-capsule ${accent}" onclick="icubeOpenLessonChild\\(8\\)"`));
+   assert.match(html,/<div class="student-check lesson-student-card">/);assert.doesNotMatch(html,/<div class="[^"]*(?:lesson-student-card|lesson-summary-row) direction-/);
+   assert.match(html,/lesson-student-balance-slot/);assert.match(html,/lesson-student-attendance-slot/);
+  }
+  assert.equal(JSON.stringify({child,lesson}),before);
+ }
+ lesson.isMixed=false;assert.doesNotMatch(context.studentCheck(child,lesson,false),/name-capsule/);
+ lesson.isMixed=true;lesson.attendanceDetailsByChild={8:{enrollmentId:999}};assert.doesNotMatch(context.studentCheck(child,lesson,false),/name-capsule/);
+});
+
+test('mixed group capsules follow actual membership per direction, deduplicate history, and leave ordinary groups plain',async()=>{
+ const {context,state}=await fixture();const child=state.children[0];
+ child.enrollments[0].groupId=99;child.enrollmentHistory=[{...child.enrollments[1],id:70,groupHistory:[{groupId:4},{groupId:4}]}];
+ let html=context.group();assert.match(html,/name-capsule direction-code/);assert.doesNotMatch(html,/name-capsule direction-robot/);
+ assert.equal((html.match(/name-capsule direction-code/g)||[]).length,1);
+ child.enrollments[0].groupId=4;html=context.group();
+ assert.equal((html.match(/name-capsule direction-code/g)||[]).length,1);assert.equal((html.match(/name-capsule direction-robot/g)||[]).length,1);
+ assert.equal((html.match(/group-roster-row/g)||[]).length,1,'two directions remain in the existing single child row');
+ assert.match(html,/roster-balance[\s\S]*roster-status/);assert.match(html,/onclick="openChild\(8\)"/);
+ state.groups[0].isMixed=false;state.groups[0].direction='Робототехника';assert.doesNotMatch(context.group(),/name-capsule/);
+});
+
+test('name capsule is shared by group and lesson and wraps within its name column without changing photo/action layout',async()=>{
+ const css=await readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8');
+ const capsule=css.match(/\.name-capsule\{([^}]+)\}/)?.[1];assert.ok(capsule);
+ for(const rule of ['display:inline-block','width:fit-content','max-width:100%','border-radius:999px','white-space:normal','overflow-wrap:break-word','word-break:normal'])assert.ok(capsule.includes(rule),rule);
+ assert.doesNotMatch(capsule,/(?:^|;)width:100%|border-left/);
+ const {context,state}=await fixture();state.children[0].name='Оченьдлиннаяфамилия Имя Отчество';const html=context.studentCheck(state.children[0],state.lessons[0],false);
+ assert.match(html,/name-capsule direction-code[^>]*>Оченьдлиннаяфамилия Имя Отчество<\/button>/);
+ for(const slot of ['lesson-photo-control-slot','lesson-student-more-slot','lesson-student-trial-slot'])assert.ok(html.includes(slot));
 });

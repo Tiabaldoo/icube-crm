@@ -224,14 +224,24 @@ function lessonChildView(c,l){
  const enrollment=views?.lessonEnrollment(c,l,group);
  return {badge:views?.balanceBadge(enrollment)||'',accent:(l.isMixed??group?.isMixed)?views?.directionClass(enrollment?.direction)||'':''};
 }
-function lessonChildName(c){
+function lessonChildName(c,accent=''){
  const parentRole=window.icubeTemporaryTeacherParentRole?.();
  const accessible=Number(c.id)>0&&(['director','partner'].includes(state.role)||['director','partner'].includes(parentRole));
- return accessible?'<button type="button" class="lesson-child-link" onclick="icubeOpenLessonChild('+Number(c.id)+')">'+escapeHtml(c.name)+'</button>':'<b>'+escapeHtml(c.name)+'</b>';
+ const capsule=accent?' name-capsule '+accent:'';
+ return accessible?'<button type="button" class="lesson-child-link'+capsule+'" onclick="icubeOpenLessonChild('+Number(c.id)+')">'+escapeHtml(c.name)+'</button>':'<b'+(capsule?' class="'+capsule.trim()+'"':'')+'>'+escapeHtml(c.name)+'</b>';
+}
+function groupChildName(c,g){
+ const views=window.icubeEnrollmentViews;
+ if(!g.isMixed||!views) return '<b>'+escapeHtml(c.name)+'</b>';
+ const directions=[...new Set(views.groupEnrollments(c,g.id).map(e=>e.direction))];
+ return directions.map(direction=>{
+   const accent=views.directionClass(direction);
+   return '<b'+(accent?' class="name-capsule '+accent+'"':'')+' title="'+escapeAttr(direction)+'">'+escapeHtml(c.name)+'</b>';
+ }).join(' ')||'<b>'+escapeHtml(c.name)+'</b>';
 }
 function lessonSummaryRow(c,l,present,subtitle){
  const view=lessonChildView(c,l);
- return '<div class="kpi-line lesson-summary-row '+view.accent+'"><div class="roster-name">'+lessonChildName(c)+(subtitle||'')+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+lessonAttendanceBadge(l,c.id,present)+'</div></div>';
+ return '<div class="kpi-line lesson-summary-row"><div class="roster-name">'+lessonChildName(c,view.accent)+(subtitle||'')+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+lessonAttendanceBadge(l,c.id,present)+'</div></div>';
 }
 function lessonAttendanceBadge(l,childId,present){
  const hasNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(childId);});
@@ -720,7 +730,7 @@ render();
     } else {
       kidsHtml = kids.map(function(c){
         const statuses=window.icubeEnrollmentViews ? [...new Set(window.icubeEnrollmentViews.groupEnrollments(c,g.id).map(e=>window.icubeEnrollmentViews.directionStatus(c,e)))] : [c.status];
-        return '<div class="kpi-line clickable group-roster-row" onclick="openChild(' + c.id + ')"><div class="roster-name"><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.parent) + '</div></div><div class="roster-balance">' + (window.icubeGroupBalanceBadges?.(c,g.id)||'') + '</div><div class="roster-status">' + statuses.map(s=>'<span class="badge '+statusBadge(s)+'">'+escapeHtml(s)+'</span>').join('') + '</div></div>';
+        return '<div class="kpi-line clickable group-roster-row" onclick="openChild(' + c.id + ')"><div class="roster-name">' + groupChildName(c,g) + '<div class="muted mini">' + escapeHtml(c.parent) + '</div></div><div class="roster-balance">' + (window.icubeGroupBalanceBadges?.(c,g.id)||'') + '</div><div class="roster-status">' + statuses.map(s=>'<span class="badge '+statusBadge(s)+'">'+escapeHtml(s)+'</span>').join('') + '</div></div>';
       }).join('');
     }
 
@@ -3855,7 +3865,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids=groupChildren(g.id);
       const site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
-      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
+      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'direction-code':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
@@ -4769,7 +4779,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids=groupChildren(g.id);
       const site=byId(state.sites,g.siteId), teacher=byId(state.teachers,g.teacherId);
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
-      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
+      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'direction-code':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
@@ -6702,47 +6712,47 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       /* Unified direction palette: robotics blue, programming orange. */
       .group-card.crm-direction-robot,
       .dashboard-direction-card.crm-direction-robot{
-        border-top:4px solid #3b82f6!important;
-        background:linear-gradient(180deg,#eff6ff 0,#fff 38%)!important;
+        border-top:4px solid var(--direction-robot)!important;
+        background:linear-gradient(180deg,var(--accent2) 0,#fff 38%)!important;
       }
       .group-card.crm-direction-program,
       .dashboard-direction-card.crm-direction-program{
-        border-top:4px solid #f97316!important;
-        background:linear-gradient(180deg,#fff7ed 0,#fff 38%)!important;
+        border-top:4px solid var(--direction-code)!important;
+        background:linear-gradient(180deg,var(--direction-code-tint) 0,#fff 38%)!important;
       }
       .group-card.crm-direction-robot:hover{border-color:#93c5fd!important}
-      .group-card.crm-direction-program:hover{border-color:#fdba74!important}
+      .group-card.crm-direction-program:hover{border-color:var(--direction-code-hover)!important}
 
       /* Only the direction badge becomes orange. Partner/project badges keep their own color. */
-      .group-card.crm-direction-program .badge.purple:first-child{
-        background:#ffedd5!important;
-        color:#c2410c!important;
+      .group-card.crm-direction-program .badge.direction-code{
+        background:var(--direction-code-bg)!important;
+        color:var(--direction-code-text)!important;
       }
 
       /* Own iCube lessons: both background and left stripe show direction. */
       .event.crm-direction-robot:not(.partner):not(.event-cancelled),
       [onclick*="openUnifiedCalendarEvent"].crm-direction-robot:not(.partner):not(.event-cancelled){
-        background:#eff6ff!important;
-        border-left-color:#2563eb!important;
+        background:var(--accent2)!important;
+        border-left-color:var(--accent)!important;
       }
       .event.crm-direction-program:not(.partner):not(.event-cancelled),
       [onclick*="openUnifiedCalendarEvent"].crm-direction-program:not(.partner):not(.event-cancelled){
-        background:#fff7ed!important;
-        border-left-color:#f97316!important;
+        background:var(--direction-code-tint)!important;
+        border-left-color:var(--direction-code)!important;
       }
 
       /* Partner lessons stay purple, but the stripe shows the actual direction. */
-      .event.partner:not(.event-cancelled),
-      [onclick*="openUnifiedCalendarEvent"].partner:not(.event-cancelled){
-        background:#f4f3ff!important;
+      .event.partner:not(.crm-direction-mixed):not(.event-cancelled),
+      [onclick*="openUnifiedCalendarEvent"].partner:not(.crm-direction-mixed):not(.event-cancelled){
+        background:var(--purplebg)!important;
       }
       .event.partner.crm-direction-robot:not(.event-cancelled),
       [onclick*="openUnifiedCalendarEvent"].partner.crm-direction-robot:not(.event-cancelled){
-        border-left-color:#2563eb!important;
+        border-left-color:var(--accent)!important;
       }
       .event.partner.crm-direction-program:not(.event-cancelled),
       [onclick*="openUnifiedCalendarEvent"].partner.crm-direction-program:not(.event-cancelled){
-        border-left-color:#f97316!important;
+        border-left-color:var(--direction-code)!important;
       }
 
       .event.crm-direction-robot:hover{box-shadow:0 5px 14px rgba(37,99,235,.14)!important}
@@ -6889,7 +6899,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const kids=groupChildren(g.id);
       const site=byId(state.sites,g.siteId);
       const teacher=byId(state.teachers,g.teacherId);
-      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
+      const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'direction-code':'blue';
       const projectBadge=g.project==='Зебра'?'purple':'blue';
       return '<div class="card pad clickable group-card" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">'+
@@ -7953,7 +7963,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const isNew=!hasPreviousVisitInDirection(c.id,lesson,group.direction);
         const absence=(lesson.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(c.id);});
         const view=lessonChildView(c,lesson);
-        html+='<div class="kpi-line teacher-prestart-child lesson-summary-row '+view.accent+'"><div class="roster-name">'+lessonChildName(c)+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
+        html+='<div class="kpi-line teacher-prestart-child lesson-summary-row"><div class="roster-name">'+lessonChildName(c,view.accent)+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
       });
       html+='</div>';
     }
@@ -8582,8 +8592,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const flags=(absenceNotice?'<span class="lesson-student-flag absence">Не будет</span>':'')+
       (birthday?'<span class="lesson-student-flag birthday">🎂 День рождения</span>':'');
     const view=lessonChildView(c,l);
-    return '<div class="student-check lesson-student-card '+view.accent+'">'+
-      '<div class="lesson-student-name-cell"><div class="lesson-student-name" title="'+escapeAttr(c.name)+'">'+lessonChildName(c)+'</div>'+subtitle+(flags?'<div class="lesson-student-flags">'+flags+'</div>':'')+'</div>'+
+    return '<div class="student-check lesson-student-card">'+
+      '<div class="lesson-student-name-cell"><div class="lesson-student-name" title="'+escapeAttr(c.name)+'">'+lessonChildName(c,view.accent)+'</div>'+subtitle+(flags?'<div class="lesson-student-flags">'+flags+'</div>':'')+'</div>'+
       '<div class="lesson-student-balance-slot">'+view.badge+'</div>'+
       '<div class="lesson-student-attendance-slot">'+attendanceControl+'</div>'+
       '<div class="lesson-photo-control-slot"><button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button></div>'+

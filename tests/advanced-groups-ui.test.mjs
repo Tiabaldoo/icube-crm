@@ -36,7 +36,7 @@ test('ordinary group card keeps its existing title and stored name', () => {
 test('individual badge uses existing style beside project and direction; quick status still works for both roles', () => {
   for (const role of ['director', 'partner']) {
     const ui = groupUi({ isIndividual: true }, role);
-    assert.match(ui.groups(), /badge purple">Программирование<\/span>[\s\S]*badge purple">Зебра<\/span>[\s\S]*badge purple">Индивидуальная<\/span>/);
+    assert.match(ui.groups(), /badge direction-code">Программирование<\/span>[\s\S]*badge purple">Зебра<\/span>[\s\S]*badge purple">Индивидуальная<\/span>/);
     assert.match(ui.group(), /quick-status-badge[^>]*onclick="icubeQuickGroupStatus\(10,this\)"/);
   }
 });
