@@ -190,3 +190,39 @@ test('lead alert uses existing director inbox, stable deduplication, child navig
   assert.equal((await inbox.list({roles:['teacher'],teacherId:'2',userId:'2'})).length,0);
   await assert.rejects(inbox.list({roles:['parent'],userId:'3'}),{status:403});
 });
+function atomicStatusFixture(t){
+ const f=fixture(t);f.db.exec(`ALTER TABLE children ADD COLUMN birth_date TEXT;
+ ALTER TABLE children ADD COLUMN school TEXT;ALTER TABLE children ADD COLUMN grade TEXT;
+ ALTER TABLE children ADD COLUMN note TEXT;ALTER TABLE children ADD COLUMN needs_director_review INTEGER DEFAULT 0;`);
+ return f;
+}
+for(const status of ['lead','active','paused','finished']) test(`single direction full child form ${status} is atomic and uses the shared status history without touching finances`,async(t)=>{
+ const f=atomicStatusFixture(t);f.db.exec("UPDATE child_enrollments SET superseded_at='2026-01-01' WHERE id=8; UPDATE child_enrollments SET status='finished' WHERE id=7;");
+ const before=f.financial();await f.catalog.saveChildWithEnrollment(8,{child:{name:'Исправленное имя'},enrollmentId:7,enrollment:{groupId:null,status}},director);
+ assert.equal(f.childStatus(),status);assert.equal(f.statuses()[0],status);assert.equal(f.financial(),before);
+ assert.equal(f.rows('children')[0].full_name,'Исправленное имя');
+ assert.equal(f.rows('enrollment_status_history').length,status==='finished'?0:1);
+ assert.equal(f.rows('group_memberships')[0].ended_on,'2026-08-31');
+});
+test('single direction full form reactivation keeps capacity checks and rolls back child fields/status/history',async(t)=>{
+ const f=atomicStatusFixture(t);f.db.exec(`ALTER TABLE study_groups ADD COLUMN is_individual INTEGER DEFAULT 1;
+ UPDATE child_enrollments SET status='finished' WHERE id=7;UPDATE group_memberships SET ended_on=NULL;
+ INSERT INTO child_enrollments(id,child_id,direction_id,project_id,status) VALUES(10,99,1,2,'active');
+ INSERT INTO group_memberships VALUES(2,10,9,'2026-09-01',NULL);`);
+ const before=JSON.stringify([f.rows('children'),f.rows('child_enrollments')]),financial=f.financial();
+ await assert.rejects(f.catalog.saveChildWithEnrollment(8,{child:{name:'Не сохранять'},enrollmentId:7,enrollment:{groupId:9,status:'active'}},director),{code:'INDIVIDUAL_GROUP_FULL'});
+ assert.equal(JSON.stringify([f.rows('children'),f.rows('child_enrollments')]),before);assert.equal(f.financial(),financial);assert.equal(f.rows('enrollment_status_history').length,0);
+ await assert.rejects(f.catalog.saveChildWithEnrollment(8,{child:{name:'Другой проект'},enrollmentId:7,enrollment:{status:'active'}},{roles:['partner'],projectIds:['3'],userId:'2'}),{code:'FORBIDDEN'});
+ assert.equal(JSON.stringify([f.rows('children'),f.rows('child_enrollments')]),before);
+});
+test('failure after a full-form status update rolls back metadata, aggregate and enrollment history',async(t)=>{
+ const f=atomicStatusFixture(t);const before=JSON.stringify([f.rows('children'),f.rows('child_enrollments')]);
+ f.failAt('INSERT INTO child_status_history');
+ await assert.rejects(f.catalog.saveChildWithEnrollment(8,{child:{name:'Не сохранять'},enrollmentId:7,enrollment:{status:'paused'}},director),/injected/);
+ assert.equal(JSON.stringify([f.rows('children'),f.rows('child_enrollments')]),before);assert.equal(f.rows('enrollment_status_history').length,0);
+});
+test('full form preserves explicitly supplied historical completion date and records one status change',async(t)=>{
+ const f=atomicStatusFixture(t);f.db.exec("UPDATE child_enrollments SET status='active' WHERE id=7");const before=f.financial();
+ await f.catalog.saveChildWithEnrollment(8,{child:{},enrollmentId:7,enrollment:{status:'finished',endedOn:'2026-10-01'}},director);
+ assert.equal(f.rows('child_enrollments').find(e=>e.id===7).ended_on,'2026-10-01');assert.equal(f.rows('enrollment_status_history').length,1);assert.equal(f.financial(),before);
+});

@@ -53,8 +53,9 @@
 
 
 /* Group direction accents */
-.group-direction-robot{border-top:4px solid #3b82f6;background:linear-gradient(180deg,#f8fbff 0,#fff 34%)}
-.group-direction-program{border-top:4px solid #8b5cf6;background:linear-gradient(180deg,#faf8ff 0,#fff 34%)}
+:root{--direction-robot:#3b82f6;--direction-code:#8b5cf6}
+.group-direction-robot{border-top:4px solid var(--direction-robot);background:linear-gradient(180deg,#f8fbff 0,#fff 34%)}
+.group-direction-program{border-top:4px solid var(--direction-code);background:linear-gradient(180deg,#faf8ff 0,#fff 34%)}
 .group-direction-robot:hover{border-color:#93c5fd}
 .group-direction-program:hover{border-color:#c4b5fd}
 .group-empty-create{width:100%;min-height:42px}
@@ -1509,3 +1510,39 @@ body.context-help-open{overflow:hidden}
 .group-schedule-card{margin-top:16px}
 .extra-search-result{width:100%;margin-top:6px;justify-content:flex-start;flex-wrap:wrap;text-align:left;white-space:normal;min-width:0}
 @media(max-width:760px){.advanced-schedule-slot{grid-template-columns:minmax(0,1fr) minmax(0,1fr) 40px}.advanced-schedule-slot .select{grid-column:1/-1}}
+/* Shared roster columns: name, balance, status; photos keep their existing slots. */
+#childRows .row[hidden]{display:none!important}
+.page-children .toolbar .search{min-width:0;flex:1 1 260px;font-size:16px}
+.group-roster-row,.lesson-summary-row{display:grid;grid-template-columns:minmax(0,1fr) 64px 112px;gap:10px;align-items:center}
+.roster-name{min-width:0;overflow-wrap:break-word;word-break:normal}
+.roster-balance,.roster-status{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:5px;min-width:0}
+.group-balance-badge{box-sizing:border-box;min-width:32px;min-height:30px;justify-content:center;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lesson-child-link{appearance:none;border:0;background:transparent;color:inherit;font:inherit;font-weight:700;padding:0;text-align:left;cursor:pointer;max-width:100%;white-space:normal;overflow-wrap:break-word}
+.lesson-child-link:hover{text-decoration:underline;color:var(--accent)}
+.lesson-child-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
+.direction-robot{border-left:3px solid var(--direction-robot)!important}
+.direction-code{border-left:3px solid var(--direction-code)!important}
+.student-check.lesson-student-card,.teacher-content .student-check.lesson-student-card{grid-template-columns:minmax(0,1fr) 64px 32px 52px!important;grid-template-rows:minmax(52px,auto) auto!important}
+.student-check.lesson-student-card>.lesson-student-name-cell,.teacher-content .student-check.lesson-student-card>.lesson-student-name-cell{grid-column:1!important;grid-row:1!important}
+.student-check.lesson-student-card .lesson-student-name{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:break-word!important}
+.student-check.lesson-student-card>.lesson-student-balance-slot,.teacher-content .student-check.lesson-student-card>.lesson-student-balance-slot{grid-column:2!important;grid-row:1!important;display:flex!important;align-items:center!important;justify-content:flex-end!important;width:auto!important;min-width:0!important}
+.student-check.lesson-student-card>.lesson-student-attendance-slot,.teacher-content .student-check.lesson-student-card>.lesson-student-attendance-slot{grid-column:3!important;grid-row:1!important}
+.student-check.lesson-student-card>.lesson-photo-summary-slot,.teacher-content .student-check.lesson-student-card>.lesson-photo-summary-slot{grid-column:4!important;grid-row:1!important}
+.student-check.lesson-student-card>.lesson-student-trial-slot,.teacher-content .student-check.lesson-student-card>.lesson-student-trial-slot{grid-column:1/3!important;grid-row:2!important;transform:none!important;min-height:34px!important;height:auto!important}
+.student-check.lesson-student-card>.lesson-student-more-slot,.teacher-content .student-check.lesson-student-card>.lesson-student-more-slot{grid-column:3!important;grid-row:2!important}
+.student-check.lesson-student-card>.lesson-photo-add-slot,.teacher-content .student-check.lesson-student-card>.lesson-photo-add-slot{grid-column:4!important;grid-row:2!important}
+.student-check.lesson-student-card .lesson-student-trial{white-space:normal!important}
+.hidden-debt-row{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr) 112px 80px;gap:12px;align-items:center;width:100%;text-align:left;white-space:normal;padding:12px 0;border:0;border-top:1px solid var(--line);border-radius:0}
+.hidden-debt-row>*{min-width:0;overflow-wrap:break-word;word-break:normal}
+.hidden-debt-row>:last-child{text-align:right;font-variant-numeric:tabular-nums}
+.hidden-debt-header{font-size:12px;color:var(--muted);border-top:0}
+@media(max-width:760px){
+ .group-roster-row,.lesson-summary-row{grid-template-columns:minmax(0,1fr) 52px 94px;gap:8px}
+ .student-check.lesson-student-card,.teacher-content .student-check.lesson-student-card{grid-template-columns:minmax(0,1fr) 52px 30px 46px!important;column-gap:6px!important}
+ .hidden-debt-header{display:none}
+ .hidden-debt-row{grid-template-columns:minmax(0,1fr) 100px;gap:8px}
+ .hidden-debt-row>:first-child{grid-column:1;grid-row:1}
+ .hidden-debt-row>:nth-child(2){grid-column:1;grid-row:2;color:var(--muted)}
+ .hidden-debt-row>:nth-child(3){grid-column:2;grid-row:1;justify-self:end}
+ .hidden-debt-row>:last-child{grid-column:2;grid-row:2;justify-self:end}
+}

@@ -50,9 +50,14 @@ test('child search matches card fields instantly with normalized tokens and exac
   context.probe.state.childSearch = 'иванов школа1';
   const html = context.probe.children();
   assert.match(html, /data-child-id="1"(?! style="display:none")/);
-  assert.match(html, /data-child-id="2" style="display:none"/);
+  assert.match(html, /data-child-id="2" hidden style="display:none"/);
   context.probe.filterRows('дк ново');
   assert.deepEqual(rows.map((row) => row.style.display), ['none', 'grid', 'none']);
+  assert.deepEqual(rows.map(row=>row.hidden),[true,false,true]);
+  assert.match(context.probe.children(), /value="дк ново"/);
+  assert.match(html,/ФИО, родитель, телефон, школа, класс/);
+  const css=await readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8');
+  assert.match(css,/#childRows \.row\[hidden\]\{display:none!important\}/);
   context.probe.state.childSearch = '';
   context.probe.state.childStatusFilter = 'Лид';
   assert.match(context.probe.children(), /Пётр Кодеров/);

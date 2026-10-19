@@ -650,15 +650,7 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
         if (String(membership[0]?.group_id ?? '') !== String(targetGroupId ?? '')) {
           await validateEnrollmentGroup(connection, String(current.direction_id), targetGroupId, current.project_id, current.child_id);
         }
-        await connection.query(`UPDATE child_enrollments SET status=:status,individual_price=:price,ended_on=:endedOn WHERE id=:id`, {
-          id: resolvedEnrollmentId, status, price, endedOn: status === current.status ? current.ended_on : status === 'finished' ? (enrollmentInput.endedOn ?? businessDate()) : null,
-        });
-        if (status !== current.status) await connection.query(`INSERT INTO enrollment_status_history
-          (enrollment_id,old_status,new_status,direction_id_snapshot,group_id_snapshot,project_id_snapshot,changed_by_user_id)
-          VALUES (:id,:old,:next,:directionId,:groupId,:projectId,:actorId)`, {
-          id:resolvedEnrollmentId,old:current.status,next:status,directionId:current.direction_id,
-          groupId:targetGroupId,projectId:current.project_id,actorId:context.userId??null,
-        });
+        await connection.query('UPDATE child_enrollments SET individual_price=:price WHERE id=:id', {id:resolvedEnrollmentId,price});
         if ((current.individual_price == null ? null : Number(current.individual_price)) !== (price == null ? null : Number(price))) {
           await connection.query(`UPDATE price_versions SET valid_to=NOW(6) WHERE scope_type='enrollment' AND enrollment_id=:id AND valid_to IS NULL`, { id: resolvedEnrollmentId });
           if (price != null) await connection.query(`INSERT INTO price_versions (scope_type,enrollment_id,price,valid_from)
@@ -667,6 +659,10 @@ export function createMysqlCatalog(pool, { siteRent = createSiteRentService(pool
         if (String(membership[0]?.group_id ?? '') !== String(targetGroupId ?? '')) {
           await changeGroupMembership(connection, { enrollmentId: resolvedEnrollmentId, targetGroupId,
             childId: resolvedChildId, actorUserId: context.userId, notificationEvents });
+        }
+        await setEnrollmentStatus(connection, current, status, context.userId);
+        if (status !== current.status && status === 'finished' && enrollmentInput.endedOn != null) {
+          await connection.query('UPDATE child_enrollments SET ended_on=:endedOn WHERE id=:id', {id:resolvedEnrollmentId,endedOn:enrollmentInput.endedOn});
         }
         if (childInput.status !== undefined) await applyChildStatus(connection, resolvedChildId, {status: childInput.status, enrollmentIds: body.enrollmentIds}, context);
         else if (enrollmentInput.status !== undefined) await refreshChildStatus(connection, resolvedChildId, context.userId);

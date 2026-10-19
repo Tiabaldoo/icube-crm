@@ -1018,7 +1018,7 @@ test('mixed UI renders real children, two package prices, mixed calendar label a
   const listing = context.groups(); assert.match(listing, /Смешанная/); assert.match(listing, /badge mixed/);
   const detail = context.group(); assert.match(detail, /Смешанная/); assert.match(detail, /Робототехник/); assert.match(detail, /Программист/);
   assert.match(detail, /badge green group-balance-badge[^>]*>4<\/span>/);
-  assert.match(detail, /badge amber group-balance-badge[^>]*>1.23333333<\/span>/);
+  assert.match(detail, /badge green group-balance-badge[^>]*>1,23<\/span>/);
   assert.doesNotMatch(detail, />99<\/span>/);
   assert.match(detail, /icubeQuickGroupStatus\(10,this\)/);
   assert.match(detail, /icubeGoBack\(\).*← Назад/);

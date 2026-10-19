@@ -1,5 +1,27 @@
 const FIELDS = ['page', 'selectedChild', 'selectedGroup', 'selectedLesson', 'childTab', 'calendarCursor', 'calendarMode', 'role'];
 const screen = (state) => Object.fromEntries(FIELDS.map((key) => [key, state[key] ?? null]));
+
+export function preserveLessonTopic(previous, loaded, ownerId) {
+  const sameOwner = ownerId === undefined || String(previous?.topicOwnerId) === String(ownerId);
+  const result = sameOwner && previous?.syncedTopic !== undefined && previous.topic !== previous.syncedTopic && previous.topic !== loaded.topic
+    ? {...loaded, topic:previous.topic} : loaded;
+  return ownerId === undefined ? result : {...result, topicOwnerId:ownerId};
+}
+
+export function installLessonChildNavigation(legacy, host = globalThis.window, canNavigate = () => true) {
+  host.icubeOpenLessonChild = (id) => {
+    const state = legacy.state;
+    const parentRole = host.icubeTemporaryTeacherParentRole?.();
+    const role = state.role === 'teacher' ? parentRole : state.role;
+    if (!['director','partner'].includes(role) || !(Number(id) > 0) || !state.children.some(c => Number(c.id) === Number(id))) return false;
+    if (!canNavigate()) { host.alert?.('Дождитесь завершения текущего действия занятия.'); return false; }
+    // Lesson inputs live in state; commands and photographs use the existing queues.
+    // A modal can contain fields outside that state, so leaving it needs an explicit choice.
+    if (state.modal && !host.confirm?.('Закрыть незавершённую форму и открыть карточку ребёнка?')) return false;
+    state.modal = null; state.selectedChild = Number(id); state.childTab = 'overview';
+    state.role = role; state.page = 'child'; legacy.render(); return true;
+  };
+}
 const key = (value) => `${value.page}:${value.page === 'child' ? value.selectedChild : value.page === 'group' ? value.selectedGroup : ['lesson', 'teacherLesson'].includes(value.page) ? value.selectedLesson : ''}:${value.role}`;
 
 export function installScreenHistory(legacy, host = globalThis.window) {

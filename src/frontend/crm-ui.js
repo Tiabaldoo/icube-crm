@@ -138,16 +138,16 @@ function children(){
    return (projectFilter==='all'&&directionFilter==='all')||directions(c).enrollments.length>0;
  });
  const rows=filteredChildren.map(c=>{
-   const hidden=!childMatchesSearch(c,state.childSearch)?' style="display:none"':'';
+   const hidden=!childMatchesSearch(c,state.childSearch)?' hidden style="display:none"':'';
    const {enrollments:live,showStatuses:showBadges}=directions(c), status=views?.childListStatus(c)||c.status;
    const statusHtml=['director','partner'].includes(state.role)?`<button class="badge ${statusBadge(status)} quick-status-badge" onclick="event.stopPropagation();icubeQuickChildStatus(${c.id},this)">${escapeHtml(status)}</button>`:`<span class="badge ${statusBadge(status)}">${escapeHtml(status)}</span>`;
    const groupName=e=>groupTitle(byId(state.groups,Object.hasOwn(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId)||{name:e.groupName});
-   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(live.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div>${statusHtml}</div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}${showBadges?` <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span>`:''}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance??'—'}</span>`).join(' / ')}</div><div>›</div></div>`;
+   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(live.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div>${statusHtml}</div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}${showBadges?` <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span>`:''}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${escapeHtml(compactBalance(e.balance))}</span>`).join(' / ')}</div><div>›</div></div>`;
  }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
  const statusSelect=`<select class="select" style="max-width:180px" onchange="setChildStatusFilter(this.value)"><option value="all" ${statusFilter==='all'?'selected':''}>Все статусы</option>${['Активный','Лид','Пауза','Закончил'].map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join('')}</select>`;
  const directionSelect=`<select class="select" style="max-width:200px" onchange="setChildDirectionFilter(this.value)"><option value="all" ${directionFilter==='all'?'selected':''}>Все направления</option>${['Робототехника','Программирование'].map(d=>`<option value="${d}" ${directionFilter===d?'selected':''}>${d}</option>`).join('')}</select>`;
- return pageHead('Дети','Один ребёнок — одна карточка, направления и балансы хранятся отдельно','<button class="btn primary" onclick="childForm()">+ Добавить ребёнка</button>')+`<div class="toolbar"><input class="input search" placeholder="Поиск по имени или родителю" value="${escapeAttr(state.childSearch||'')}" oninput="filterRows(this.value)">${projectSelect}${statusSelect}${directionSelect}</div><div class="card list" id="childRows"><div class="row header"><div>Ребёнок</div><div>Статус</div><div>Направления</div><div>Группа</div><div>Баланс</div><div></div></div>${rows}</div>`;
+ return pageHead('Дети','Один ребёнок — одна карточка, направления и балансы хранятся отдельно','<button class="btn primary" onclick="childForm()">+ Добавить ребёнка</button>')+`<div class="toolbar"><input class="input search" type="search" enterkeyhint="search" autocomplete="off" placeholder="ФИО, родитель, телефон, школа, класс" onsearch="filterRows(this.value)" value="${escapeAttr(state.childSearch||'')}" oninput="filterRows(this.value)">${projectSelect}${statusSelect}${directionSelect}</div><div class="card list" id="childRows"><div class="row header"><div>Ребёнок</div><div>Статус</div><div>Направления</div><div>Группа</div><div>Баланс</div><div></div></div>${rows}</div>`;
 }
 function setChildProjectFilter(value){state.childProjectFilter=value;render()}
 function setChildStatusFilter(value){state.childStatusFilter=value;render()}
@@ -156,7 +156,9 @@ function filterRows(q){
  state.childSearch=q;
  document.querySelectorAll('#childRows .row.clickable').forEach(el=>{
    const child=byId(state.children,el.dataset.childId);
-   el.style.display=child&&childMatchesSearch(child,q)?'grid':'none';
+   const visible=!!child&&childMatchesSearch(child,q);
+   el.hidden=!visible;
+   el.style.display=visible?'grid':'none';
  });
 }
 function childForm(id=null){
@@ -216,6 +218,21 @@ function simpleAdd(type){modal(`<h3>${type==='site'?'Новая площадка
 function calendar(){
  const days=['07.09','08.09','09.09','10.09','11.09','12.09','13.09'];return pageHead('Календарь','Конкретные занятия создаются из регулярного расписания, но могут меняться отдельно','<button class="btn">Сегодня</button>')+`<div class="toolbar"><button class="btn soft">Неделя</button><button class="btn">Месяц</button><select class="select" style="max-width:220px"><option>Все проекты</option><option>iCubeRobots</option><option>Зебра</option></select></div><div class="calendar">${days.map(d=>`<div class="day"><div class="date">${d}${d==='09.09'?' · сегодня':''}</div>${state.lessons.filter(l=>l.date.startsWith(d)).map(l=>{let g=byId(state.groups,l.groupId);return `<div class="event ${g.project==='Зебра'?'partner':''} ${l.done?'done':''}" onclick="openLesson(${l.id})"><b>${l.time.split('–')[0]}</b> ${g.direction}<div>${groupTitle(g)}</div></div>`}).join('')}</div>`).join('')}</div>`;
 }
+function compactBalance(value){return window.icubeEnrollmentViews?.formatBalance(value)??String(value??'—');}
+function lessonChildView(c,l){
+ const group=byId(state.groups,l.groupId), views=window.icubeEnrollmentViews;
+ const enrollment=views?.lessonEnrollment(c,l,group);
+ return {badge:views?.balanceBadge(enrollment)||'',accent:(l.isMixed??group?.isMixed)?views?.directionClass(enrollment?.direction)||'':''};
+}
+function lessonChildName(c){
+ const parentRole=window.icubeTemporaryTeacherParentRole?.();
+ const accessible=Number(c.id)>0&&(['director','partner'].includes(state.role)||['director','partner'].includes(parentRole));
+ return accessible?'<button type="button" class="lesson-child-link" onclick="icubeOpenLessonChild('+Number(c.id)+')">'+escapeHtml(c.name)+'</button>':'<b>'+escapeHtml(c.name)+'</b>';
+}
+function lessonSummaryRow(c,l,present,subtitle){
+ const view=lessonChildView(c,l);
+ return '<div class="kpi-line lesson-summary-row '+view.accent+'"><div class="roster-name">'+lessonChildName(c)+(subtitle||'')+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+lessonAttendanceBadge(l,c.id,present)+'</div></div>';
+}
 function lessonAttendanceBadge(l,childId,present){
  const hasNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(childId);});
  if(l.done&&!l.cancelled){
@@ -229,7 +246,7 @@ function lessonAttendanceBadge(l,childId,present){
 window.lessonAttendanceBadge=lessonAttendanceBadge;
 function lesson(){
  const l=byId(state.lessons,state.selectedLesson),g=byId(state.groups,l.groupId),t=byId(state.teachers,l.teacherId),kids=groupChildren(g.id);
- return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'gray'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${groupTitle(g)}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b>${lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])}</div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div>${lessonAttendanceBadge(l,e.childId,e.present!==false)}</div>`).join('')}</div></div>`;
+ return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+pageHead(`${l.date} · ${g.direction}`,`${l.time} · ${byId(state.sites,g.siteId).name}`,'<button class="btn">Изменить занятие</button>')+`<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status"><span class="badge ${l.done?'green':'blue'}">${l.done?'Проведено':'Запланировано'}</span><span class="badge ${g.project==='Зебра'?'purple':'blue'}">${g.project}</span></div></div><div class="info-line"><span>Группа</span><b>${groupTitle(g)}</b></div><div class="info-line"><span>Фактический преподаватель</span><b>${t.name}</b></div><div class="info-line"><span>Тема</span><b>${l.topic||'Не указана'}</b></div><div class="info-line"><span>Присутствовало</span><b>${Object.values(l.attendance).filter(Boolean).length+l.extras.length}</b></div><div class="notice" style="margin-top:14px">Директор может задним числом изменить финансовый статус занятия, не меняя посещения и фотографии.</div><div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" ${l.intro?'checked':''} onchange="lToggle('intro',this.checked)"><span><b>Ознакомительное занятие всей группы</b><div class="muted mini">Фиксированная ставка ЗП; преподаватель эту настройку не видит.</div></span></label><label class="student-check"><input type="checkbox" ${l.emptyTrip?'checked':''} onchange="lToggle('emptyTrip',this.checked)"><span><b>Пустой выезд</b><div class="muted mini">Не ставится автоматически при нулевой посещаемости.</div></span></label></div></div><div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role='teacher';openLesson(${l.id},true)">Открыть как преподаватель</button></div>${kids.map(c=>`<div class="kpi-line"><b>${c.name}</b>${lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])}</div>`).join('')}${l.extras.map(e=>`<div class="kpi-line"><div><b>${byId(state.children,e.childId).name}</b><div class="muted mini">Из другой группы</div></div>${lessonAttendanceBadge(l,e.childId,e.present!==false)}</div>`).join('')}</div></div>`;
 }
 function lToggle(k,v){byId(state.lessons,state.selectedLesson)[k]=v;render()}
 function teacherShell(content){return `<div class="teacher-shell"><div class="teacher-top"><div class="teacher-top-inner"><div><div class="mini" style="color:#98a2b3">АйКуб · Преподаватель</div><b>Иванов Сергей</b></div><div><select class="role-switch" onchange="state.role=this.value;state.page=this.value==='director'?'dashboard':'teacherToday';render()"><option value="teacher">Преподаватель</option><option value="director">Директор</option></select><div class="mini" style="color:#98a2b3">Режим прототипа</div></div></div></div><div class="teacher-content">${content}</div></div>`}
@@ -703,7 +720,7 @@ render();
     } else {
       kidsHtml = kids.map(function(c){
         const statuses=window.icubeEnrollmentViews ? [...new Set(window.icubeEnrollmentViews.groupEnrollments(c,g.id).map(e=>window.icubeEnrollmentViews.directionStatus(c,e)))] : [c.status];
-        return '<div class="kpi-line clickable" onclick="openChild(' + c.id + ')"><div><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.parent) + '</div></div><div class="group-child-badges">' + (window.icubeGroupBalanceBadges?.(c,g.id)||'') + statuses.map(s=>'<span class="badge '+statusBadge(s)+'">'+escapeHtml(s)+'</span>').join('') + '</div></div>';
+        return '<div class="kpi-line clickable group-roster-row" onclick="openChild(' + c.id + ')"><div class="roster-name"><b>' + escapeHtml(c.name) + '</b><div class="muted mini">' + escapeHtml(c.parent) + '</div></div><div class="roster-balance">' + (window.icubeGroupBalanceBadges?.(c,g.id)||'') + '</div><div class="roster-status">' + statuses.map(s=>'<span class="badge '+statusBadge(s)+'">'+escapeHtml(s)+'</span>').join('') + '</div></div>';
       }).join('');
     }
 
@@ -1727,13 +1744,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     return '<button class="btn" style="margin-bottom:14px" onclick="icubeGoBack()">← Назад</button>'+
       pageHead(l.date+' · '+(l.direction||g.direction),l.time+' · '+(l.siteName||byId(state.sites,g.siteId)?.name||''),
         '<div style="display:flex;gap:8px"><button class="btn" onclick="editLessonForm('+l.id+',\'director\')">Изменить занятие</button><button class="btn danger" onclick="deleteLessonPrompt('+l.id+')">Удалить занятие</button></div>')+
-      '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div></div>'+
+      '<div class="split"><div class="card pad"><div class="section-title"><h2>Занятие</h2><div class="lesson-status">'+stateBadges+'<span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div></div>'+
       (l.moved?'<div class="notice" style="margin-bottom:12px">Перенесено с '+escapeHtml(l.scheduledDate)+' · '+escapeHtml(l.scheduledTime)+'</div>':'')+
       (l.cancelled?'<div class="notice" style="margin-bottom:12px;background:var(--redbg);border-color:#fecdca;color:var(--red)">Занятие отменено. Оно остаётся в календарях с отметкой «Отменено».</div>':'')+
       '<div class="info-line"><span>Группа</span><b>'+escapeHtml(groupTitle(g))+'</b></div><div class="info-line"><span>Фактический преподаватель</span><b>'+escapeHtml(t.name)+'</b></div><div class="info-line"><span>Тема</span><b>'+escapeHtml(l.topic||'Не указана')+'</b></div><div class="info-line"><span>Присутствовало</span><b>'+presentCount+'</b></div>'+
       '<div style="display:grid;gap:9px;margin-top:14px"><label class="student-check"><input type="checkbox" '+(l.intro?'checked':'')+' onchange="lToggle(\'intro\',this.checked)"><span><b>Ознакомительное занятие всей группы</b></span></label><label class="student-check"><input type="checkbox" '+(l.emptyTrip?'checked':'')+' onchange="lToggle(\'emptyTrip\',this.checked)"><span><b>Пустой выезд</b></span></label></div></div>'+
       '<div class="card pad"><div class="section-title"><h2>Посещаемость</h2><button class="btn soft" onclick="state.role=\'teacher\';openLesson('+l.id+',true)">Открыть как преподаватель</button></div>'+
-      kids.map(function(c){return '<div class="kpi-line"><b>'+escapeHtml(c.name)+'</b>'+lessonAttendanceBadge(l,c.id,!!l.attendance[c.id])+'</div>';}).join('')+((l.extras||[]).length?'<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div class="muted mini" style="font-weight:700;margin-bottom:6px">Добавлены на занятие</div>'+(l.extras||[]).map(function(e){const c=byId(state.children,e.childId);return '<div class="kpi-line"><div><b>'+escapeHtml(c.name)+'</b><div style="display:flex;gap:6px;margin-top:4px"><span class="badge blue">Добавлен</span>'+(e.trial?'<span class="badge amber">Ознакомительное</span>':'')+'</div></div>'+lessonAttendanceBadge(l,e.childId,e.present!==false)+'</div>';}).join('')+'</div>':'')+'</div></div>';
+      kids.map(function(c){return lessonSummaryRow(c,l,!!l.attendance[c.id]);}).join('')+((l.extras||[]).length?'<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)"><div class="muted mini" style="font-weight:700;margin-bottom:6px">Добавлены на занятие</div>'+(l.extras||[]).map(function(e){const c=byId(state.children,e.childId);return lessonSummaryRow(c,l,e.present!==false,'<div class="muted mini">Добавлен</div>');}).join('')+'</div>':'')+'</div></div>';
   };
 
   function teacherEventCard(e){
@@ -2056,7 +2073,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       '<div>'+x.e.direction+'</div>'+
       '<div>'+groupName+'</div>'+
       '<div>'+money(effectivePrice(x.e))+'</div>'+
-      '<div class="money '+(x.e.balance<0?'negative':x.e.balance>0?'positive':'')+'">'+Number(x.e.balance.toFixed(4))+'</div>'+
+      '<div class="money '+(x.e.balance<0?'negative':x.e.balance>0?'positive':'')+'">'+escapeHtml(compactBalance(x.e.balance))+'</div>'+
     '</div>';
   }
 
@@ -2102,7 +2119,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+=block('Осталось 1',one);
     html+='</div>';
     if(hidden.length) html+='<div class="card pad" style="margin-top:16px"><button class="btn" aria-expanded="'+Boolean(state.hiddenDebtsExpanded)+'" aria-controls="hidden-debts" onclick="toggleHiddenDebts()">Скрытые долги · '+hidden.length+'</button>'+
-      (state.hiddenDebtsExpanded?'<div id="hidden-debts" class="info-list" style="margin-top:12px">'+hidden.map(x=>'<button type="button" class="btn" style="width:100%;white-space:normal;text-align:left" onclick="openChild('+Number(x.c.id)+')"><span><b>'+escapeHtml(x.c.name)+'</b> — '+escapeHtml(x.e.direction)+' — '+escapeHtml(x.status||x.e.status)+' — <span class="money negative">'+Number(Number(x.e.balance).toFixed(4))+'</span> занятия</span></button>').join('')+'</div>':'')+'</div>';
+      (state.hiddenDebtsExpanded?'<div id="hidden-debts" class="info-list" style="margin-top:12px"><div class="hidden-debt-row hidden-debt-header"><span>Ребёнок</span><span>Направление</span><span>Статус</span><span>Баланс</span></div>'+hidden.map(x=>'<button type="button" class="btn hidden-debt-row" onclick="openChild('+Number(x.c.id)+')"><b>'+escapeHtml(x.c.name)+'</b><span>'+escapeHtml(x.e.direction)+'</span><span class="badge '+statusBadge(x.status||x.e.status)+'">'+escapeHtml(x.status||x.e.status)+'</span><span class="money negative">'+escapeHtml(compactBalance(x.e.balance))+'</span></button>').join('')+'</div>':'')+'</div>';
     return html;
   };
 
@@ -3345,7 +3362,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const g=byId(state.groups,e.groupId);
       const projectBadge=(activeProjects.size>1||e.editable===false)&&e.project?'<span class="badge '+(e.editable===false?'gray':e.project==='Зебра'?'purple':'blue')+'" style="margin-left:7px">'+escapeHtml(e.project)+'</span>':'';
       const schedule=e.groupId==null?'Без группы':escapeHtml(groupTitle(g||{name:e.groupName,direction:e.direction,weekday:e.weekday,startTime:e.startTime}));
-      const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+fmt(e.balance,4)+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
+      const finance=e.balance==null?'<div class="muted mini">Другой проект</div>':'<div style="text-align:right"><div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+escapeHtml(compactBalance(e.balance))+' занятий</div><div class="muted mini">'+money(effectivePrice(e))+' / занятие</div></div>';
       const actions=e.editable===false?'':'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"><button class="btn soft" onclick="paymentForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">+ Оплата</button><button class="btn" onclick="manageDirectionForm('+c.id+',\''+escapeInlineJs(e.direction)+'\')">Настройки направления</button></div>';
       return '<div style="border-top:1px solid var(--line);padding:14px 0">'+
         '<div style="display:flex;justify-content:space-between;gap:12px">'+
@@ -3840,7 +3857,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
       const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]||'')+'</b></div>'+
@@ -4754,7 +4771,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const dirClass=g.direction==='Программирование'?'group-direction-program':'group-direction-robot';
       const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
       return '<div class="card pad clickable group-card '+dirClass+'" onclick="openGroup('+g.id+')">'+
-        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'gray')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
+        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><div style="display:flex;gap:7px;flex-wrap:wrap"><span class="badge '+dirBadge+'">'+escapeHtml(g.direction)+'</span><span class="badge '+(g.project==='Зебра'?'purple':'blue')+'">'+escapeHtml(g.project)+'</span></div><span class="badge '+(g.active?'green':'gray')+'">'+(g.active?'Активна':'Неактивна')+'</span></div>'+
         '<h3 style="margin:14px 0 5px">'+escapeHtml(groupTitle(g))+'</h3>'+
         '<div class="info-list" style="margin-top:12px">'+
           '<div class="info-line"><span>Время</span><b>'+(g.startTime||String(g.time||'').split('–')[0])+'–'+(g.endTime||String(g.time||'').split('–')[1]||'')+'</b></div>'+
@@ -6873,7 +6890,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       const site=byId(state.sites,g.siteId);
       const teacher=byId(state.teachers,g.teacherId);
       const dirBadge=g.isMixed?'mixed':g.direction==='Программирование'?'purple':'blue';
-      const projectBadge=g.project==='Зебра'?'purple':'gray';
+      const projectBadge=g.project==='Зебра'?'purple':'blue';
       return '<div class="card pad clickable group-card" onclick="openGroup('+g.id+')">'+
         '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;flex-wrap:wrap">'+
           '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
@@ -7596,11 +7613,13 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       let html=childBefore();
       const child=byId(state.children,state.selectedChild);
       if(!child) return html;
-      const showDirectionStatuses=(child.enrollments||[]).length>1;
-      (child.enrollments||[]).forEach(function(e){
+      const enrollments=window.icubeEnrollmentViews?.logicalEnrollments(child)||child.enrollments||[];
+      const showDirectionStatuses=enrollments.length>1;
+      enrollments.forEach(function(e){
         const button='<button class="btn" onclick="manageDirectionForm('+child.id+',\''+escapeInlineJs(e.direction)+'\')">Настройки направления</button>';
         if(!html.includes(button) || !showDirectionStatuses) return;
-        const badge='<span class="badge '+badgeClass(enrollmentStatus(e))+'" style="margin-right:8px">'+enrollmentStatus(e)+'</span>';
+        const editable=['director','partner'].includes(state.role)&&child.editable!==false&&e.editable!==false&&e.id!=null;
+        const badge=editable?'<button type="button" class="badge '+badgeClass(enrollmentStatus(e))+' quick-status-badge" onclick="icubeQuickEnrollmentStatus('+Number(e.id)+',this)" aria-label="Изменить статус направления '+escapeAttr(e.direction)+'">'+enrollmentStatus(e)+'</button>':'<span class="badge '+badgeClass(enrollmentStatus(e))+'">'+enrollmentStatus(e)+'</span>';
         html=html.replace(button,badge+button);
       });
       return html;
@@ -7880,7 +7899,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const info=topUpInfo(e);
         if(!info) return;
 
-        const balanceText=fmt(e.balance,4)+' занятий';
+        const balanceText=escapeHtml(compactBalance(e.balance))+' занятий';
         const priceText=money(effectivePrice(e))+' / занятие';
         const marker='<div class="money '+(e.balance<0?'negative':e.balance>0?'positive':'')+'">'+balanceText+'</div><div class="muted mini">'+priceText+'</div>';
         if(!html.includes(marker)) return;
@@ -7933,7 +7952,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       kids.forEach(function(c){
         const isNew=!hasPreviousVisitInDirection(c.id,lesson,group.direction);
         const absence=(lesson.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(c.id);});
-        html+='<div class="kpi-line teacher-prestart-child"><b>'+escapeHtml(c.name)+'</b><div style="display:flex;gap:6px;flex-wrap:wrap">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
+        const view=lessonChildView(c,lesson);
+        html+='<div class="kpi-line teacher-prestart-child lesson-summary-row '+view.accent+'"><div class="roster-name">'+lessonChildName(c)+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
       });
       html+='</div>';
     }
@@ -8252,6 +8272,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
           const oldGroupId=enrollment.groupId, oldEnrollStatus=enrollment.status;
           const hadEffectiveGroupId=Object.prototype.hasOwnProperty.call(enrollment,'effectiveGroupId');
           const oldEffectiveGroupId=enrollment.effectiveGroupId;
+          const hadBalanceGroupId=Object.prototype.hasOwnProperty.call(enrollment,'__v146BalanceGroupId');
+          const oldBalanceGroupId=enrollment.__v146BalanceGroupId;
+          enrollment.__v146BalanceGroupId=hadEffectiveGroupId?oldEffectiveGroupId:oldGroupId;
           enrollment.groupId=group.id;
           enrollment.effectiveGroupId=group.id;
           if(enrollment.status && enrollment.status!=='Активный') enrollment.status='Активный';
@@ -8260,6 +8283,8 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
             enrollment.status=oldEnrollStatus;
             if(hadEffectiveGroupId) enrollment.effectiveGroupId=oldEffectiveGroupId;
             else delete enrollment.effectiveGroupId;
+            if(hadBalanceGroupId) enrollment.__v146BalanceGroupId=oldBalanceGroupId;
+            else delete enrollment.__v146BalanceGroupId;
           });
         }else{
           const temp={direction:group.direction,groupId:group.id,effectiveGroupId:group.id,individualPrice:null,balance:0,status:'Активный',__v146Temp:true};
@@ -8556,9 +8581,11 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
 
     const flags=(absenceNotice?'<span class="lesson-student-flag absence">Не будет</span>':'')+
       (birthday?'<span class="lesson-student-flag birthday">🎂 День рождения</span>':'');
-    return '<div class="student-check lesson-student-card">'+
+    const view=lessonChildView(c,l);
+    return '<div class="student-check lesson-student-card '+view.accent+'">'+
+      '<div class="lesson-student-name-cell"><div class="lesson-student-name" title="'+escapeAttr(c.name)+'">'+lessonChildName(c)+'</div>'+subtitle+(flags?'<div class="lesson-student-flags">'+flags+'</div>':'')+'</div>'+
+      '<div class="lesson-student-balance-slot">'+view.badge+'</div>'+
       '<div class="lesson-student-attendance-slot">'+attendanceControl+'</div>'+
-      '<div class="lesson-student-name-cell"><b class="lesson-student-name" title="'+escapeAttr(c.name)+'">'+escapeHtml(c.name)+'</b>'+subtitle+(flags?'<div class="lesson-student-flags">'+flags+'</div>':'')+'</div>'+
       '<div class="lesson-photo-control-slot"><button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button></div>'+
       '<div class="lesson-student-more-slot">'+secondaryAction+'</div>'+
       '<div class="lesson-student-trial-slot">'+trialControl+'</div>'+

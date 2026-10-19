@@ -16,6 +16,49 @@ export function currentEnrollments(child) {
 export function unfinishedEnrollments(child) {
   return currentEnrollments(child).filter((e) => directionStatus(child, e) !== 'Закончил');
 }
+export function logicalEnrollments(child) {
+  const seen = new Set();
+  return currentEnrollments(child).filter(e => {
+    const key = String(e.directionId ?? e.direction);
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+}
+export function formatBalance(value) {
+  if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value), rounded = Number(Math.abs(n).toFixed(2));
+  if (n !== 0 && rounded === 0) return n < 0 ? '−<0,01' : '<0,01';
+  return (n < 0 ? '−' : '') + rounded.toLocaleString('ru-RU', {maximumFractionDigits:2, useGrouping:false});
+}
+export function balanceBadge(enrollment) {
+  const raw = enrollment?.balanceText ?? enrollment?.balance;
+  const known = raw != null && raw !== '' && Number.isFinite(Number(raw));
+  return `<span class="badge ${known ? Number(raw) > 0 ? 'green' : 'red' : 'gray'} group-balance-badge" title="${esc(enrollment?.direction ?? 'Направление не определено')}">${esc(formatBalance(raw))}</span>`;
+}
+export function lessonEnrollment(child, lesson, group) {
+  const detail = lesson?.attendanceDetailsByChild?.[child.id];
+  const extra = lesson?.extras?.find(e => Number(e.childId) === Number(child.id));
+  const id = detail?.enrollmentId ?? lesson?.enrollmentByChild?.[child.id] ?? extra?.enrollmentId;
+  const current = currentEnrollments(child).filter(e => !e.__v146Temp);
+  if (id != null) {
+    const pinned = [...current, ...(child.enrollmentHistory ?? [])].find(e => String(e.id) === String(id));
+    // Historical enrollment identifies the direction; the badge displays its current balance.
+    if (!pinned) return null;
+    const matches = current.filter(e => String(e.id) === String(id)
+      || (pinned.directionId != null ? String(e.directionId) === String(pinned.directionId) : e.direction === pinned.direction));
+    return matches.length === 1 ? matches[0] : null;
+  }
+  const direction = detail?.directionName;
+  const mixed = lesson?.isMixed ?? group?.isMixed;
+  const matches = current.filter(e => String(e.projectId) === String(lesson?.projectId ?? group?.projectId)
+    && (direction ? e.direction === direction : extra ? !mixed && e.direction === group?.direction
+      : Number(Object.hasOwn(e,'__v146BalanceGroupId') ? e.__v146BalanceGroupId : Object.hasOwn(e,'effectiveGroupId') ? e.effectiveGroupId : e.groupId) === Number(lesson?.groupId)
+        && (mixed || e.direction === group?.direction)));
+  return matches.length === 1 ? matches[0] : null;
+}
+export function directionClass(direction) {
+  return direction === 'Программирование' ? 'direction-code' : direction === 'Робототехника' ? 'direction-robot' : '';
+}
 export function childListStatus(child) {
   return statusNames[child.status] ?? child.status;
 }
@@ -54,16 +97,10 @@ export function visibleBalanceRows(children, project = 'all', projects = []) {
   }));
 }
 export function groupBalanceBadges(child, groupId) {
-  return groupEnrollments(child, groupId).map((item) => {
-    const raw = String(item.balanceText ?? item.balance ?? '');
-    const display = /^-?\d+(\.\d+)?$/.test(raw) ? raw.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') : '—';
-    const balance = Number(raw);
-    const tone = raw === '' ? 'gray' : balance >= 2 ? 'green' : balance > 0 ? 'amber' : 'red';
-    return `<span class="badge ${tone} group-balance-badge" title="${esc(item.direction)}">${esc(display)}</span>`;
-  }).join('');
+  return groupEnrollments(child, groupId).map(balanceBadge).join('');
 }
 export function installQuickStatusUi(legacy, host = globalThis.window, document = globalThis.document) {
-  host.icubeEnrollmentViews = { currentEnrollments, unfinishedEnrollments, childListStatus, childListDirections, directionStatus, groupEnrollments, visibleBalanceRows };
+  host.icubeEnrollmentViews = { currentEnrollments, logicalEnrollments, unfinishedEnrollments, childListStatus, childListDirections, directionStatus, groupEnrollments, visibleBalanceRows, formatBalance, balanceBadge, lessonEnrollment, directionClass };
   const allowed = () => ['director', 'partner'].includes(legacy.state.role);
   let popover = null; let pending = null; let saving = false;
   const byId = (items, id) => items?.find((item) => Number(item.id) === Number(id));
@@ -113,15 +150,18 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
   function open(type, id, anchor) {
     close();
     if (!allowed() || !anchor) return;
-    const item = byId(type === 'child' ? legacy.state.children : legacy.state.groups, id);
+    const child = type === 'enrollment' ? legacy.state.children.find(c => currentEnrollments(c).some(e => Number(e.id) === Number(id))) : null;
+    const item = child ? byId(currentEnrollments(child), id) : byId(type === 'child' ? legacy.state.children : legacy.state.groups, id);
     if (!item) return;
-    pending = { type, id, initial: type === 'child' ? item.status : String(item.active !== false) };
+    if (type === 'enrollment' && (!child || child.editable === false || item.editable === false)) return;
+    const statusType = type !== 'group';
+    pending = { type, id, initial: statusType ? statusNames[item.status] ?? item.status : String(item.active !== false) };
     popover = document.createElement('div'); popover.className = 'quick-status-popover';
     popover.setAttribute('role', 'group'); popover.setAttribute('aria-label', 'Выберите статус');
-    const options = type === 'child' ? ['Лид', 'Активный', 'Пауза', 'Закончил'] : ['true', 'false'];
+    const options = statusType ? ['Лид', 'Активный', 'Пауза', 'Закончил'] : ['true', 'false'];
     popover.innerHTML = options.map((value) => {
-      const label = type === 'child' ? value : value === 'true' ? 'Активна' : 'Неактивна';
-      const tone = type === 'child' ? legacy.statusBadge(value) : value === 'true' ? 'green' : 'gray';
+      const label = statusType ? value : value === 'true' ? 'Активна' : 'Неактивна';
+      const tone = statusType ? legacy.statusBadge(value) : value === 'true' ? 'green' : 'gray';
       return `<button type="button" class="badge ${tone}" data-quick-status="${esc(value)}" aria-pressed="${value === pending.initial}">${esc(label)}</button>`;
     }).join('');
     popover.addEventListener('click', (event) => {
@@ -154,7 +194,8 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
     const root = popover; saving = true;
     root.querySelectorAll('button').forEach((button) => { button.disabled = true; });
     try {
-      const saved = type === 'child' ? await host.icubeApi.saveChild(id, { status: value }) : await host.icubeApi.saveGroup(id, { active: true });
+      const saved = type === 'child' ? await host.icubeApi.saveChild(id, { status: value })
+        : type === 'enrollment' ? await host.icubeApi.saveEnrollmentStatus(id, value) : await host.icubeApi.saveGroup(id, { active: true });
       if (saved && popover === root) close();
     } finally {
       saving = false;
@@ -167,6 +208,7 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
   document.addEventListener?.('keydown', (event) => { if (event.key === 'Escape') close(); });
   host.addEventListener?.('resize', close);
   host.icubeQuickChildStatus = (id, anchor) => open('child', id, anchor);
+  host.icubeQuickEnrollmentStatus = (id, anchor) => open('enrollment', id, anchor);
   host.icubeQuickGroupStatus = (id, anchor) => open('group', id, anchor);
   host.icubeGroupBalanceBadges = groupBalanceBadges;
   for (const [name, items, action] of [['child', 'children', 'icubeQuickChildStatus'], ['group', 'groups', 'icubeQuickGroupStatus']]) {

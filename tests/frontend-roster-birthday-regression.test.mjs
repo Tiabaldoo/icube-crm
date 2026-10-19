@@ -124,7 +124,7 @@ test('finished and historical rows use the same deduplicated directions for name
   assert.doesNotMatch(output,/Нет текущих направлений|Старое имя|Старая группа|>99<|>77</);
   assert.equal((output.match(/class="child-enrollment-direction"/g)||[]).length,1);
   assert.equal((output.match(/Историческая группа/g)||[]).length,2,'same selected group in desktop and mobile markup');
-  assert.match(output,/>-2<\/span>/);assert.equal(JSON.stringify(state.children),before);
+  assert.match(output,/>−2<\/span>/);assert.equal(JSON.stringify(state.children),before);
 });
 
 test('actual direction settings retain all four statuses through a full render, including lead and finished to pause',async()=>{
@@ -243,8 +243,8 @@ test('block3 hidden debts collapse, count directions, filter projects and reuse 
   assert.match(output,/aria-expanded="true"/);
   const debts=output.slice(output.indexOf('id="hidden-debts"'));
   assert.equal((debts.match(/onclick="openChild\(8\)"/g)||[]).length,2);
-  assert.match(debts,/Робототехника — Пауза — .*?>-2</);
-  assert.match(debts,/Программирование — Закончил — .*?>-1</);
+  assert.match(debts,/Робототехника<\/span>[\s\S]*?>Пауза<\/span>[\s\S]*?>−2</);
+  assert.match(debts,/Программирование<\/span>[\s\S]*?>Закончил<\/span>[\s\S]*?>−1</);
   context.toggleHiddenDebts(); assert.doesNotMatch(context.balances(),/id="hidden-debts"/);
   context.setBalanceProject('Зебра');
   assert.match(context.balances(),/Скрытые долги · 1/); assert.equal(state.hiddenDebtsExpanded,false);

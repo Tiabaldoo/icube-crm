@@ -60,3 +60,40 @@ test('old deleted screen and other user/role history cannot restore', () => {
   const old = fixture(); old.entries[0].icubeScreen.screen.role = 'parent';
   assert.equal(fixture(old).state.role, 'director');
 });
+import { installLessonChildNavigation, preserveLessonTopic } from '../src/frontend/screen-history.mjs';
+
+test('lesson name navigation keeps drafts, pending photos and originating teacher context through Back',()=>{
+ const f=fixture();f.state.authUser.roles.push('teacher');
+ f.go('teacherLesson',{role:'teacher',selectedLesson:60,selectedGroup:10,calendarCursor:'2026-10-16',calendarMode:'week'});
+ Object.assign(f.state.lessons[0],{topic:'Черновик',syncedTopic:'',attendance:{8:true},enrollmentByChild:{8:40},extras:[{childId:9,present:false}],photos:{8:[{localId:'queued-photo'}]}});
+ const before=JSON.stringify(f.state.lessons);f.host.icubeTemporaryTeacherParentRole=()=> 'director';
+ installLessonChildNavigation(f.legacy,f.host);
+ assert.equal(f.host.icubeOpenLessonChild(8),true);assert.equal(f.state.page,'child');assert.equal(f.state.role,'director');assert.equal(f.state.selectedChild,8);
+ assert.equal(JSON.stringify(f.state.lessons),before);f.host.icubeGoBack();
+ assert.equal(f.state.page,'teacherLesson');assert.equal(f.state.role,'teacher');assert.equal(f.state.selectedLesson,60);assert.equal(f.state.selectedGroup,10);
+ assert.equal(f.state.calendarCursor,'2026-10-16');assert.equal(JSON.stringify(f.state.lessons),before);
+});
+test('lesson navigation denies unavailable cards, cancels unsafe form loss and waits only for an in-flight action',()=>{
+ const f=fixture();f.go('lesson',{selectedLesson:60});installLessonChildNavigation(f.legacy,f.host);
+ f.state.role='teacher';assert.equal(f.host.icubeOpenLessonChild(8),false);assert.equal(f.state.page,'lesson');
+ f.state.role='director';assert.equal(f.host.icubeOpenLessonChild(999),false);
+ f.state.modal='unsaved form';let confirms=0;f.host.confirm=()=>{confirms++;return false;};
+ assert.equal(f.host.icubeOpenLessonChild(8),false);assert.equal(f.state.modal,'unsaved form');assert.equal(confirms,1);
+ f.host.confirm=()=>true;assert.equal(f.host.icubeOpenLessonChild(8),true);assert.equal(f.state.modal,null);
+ f.go('lesson');let busy=true;const alerts=[];f.host.alert=m=>alerts.push(m);
+ installLessonChildNavigation(f.legacy,f.host,()=>!busy);assert.equal(f.host.icubeOpenLessonChild(8),false);assert.equal(alerts.length,1);
+ busy=false;assert.equal(f.host.icubeOpenLessonChild(8),true);
+});
+test('server refresh preserves a topic draft in existing lesson state and recognizes a saved topic',()=>{
+ const previous={id:60,topic:'Черновик',syncedTopic:'Сохранено'};
+ const loaded={id:60,topic:'Сохранено',syncedTopic:'Сохранено',attendance:{8:true}};
+ assert.deepEqual(preserveLessonTopic(previous,loaded),{...loaded,topic:'Черновик'});
+ assert.equal(preserveLessonTopic({...previous,topic:'Сохранено'},loaded),loaded);
+ const saved={...loaded,topic:'Черновик',syncedTopic:'Черновик'};
+ assert.equal(preserveLessonTopic(previous,saved),saved);assert.equal(previous.syncedTopic,'Сохранено');
+});
+test('lesson topic drafts survive same-user reload but never pass to another account',()=>{
+ const previous={id:60,topic:'Черновик',syncedTopic:'Сохранено',topicOwnerId:'1'},loaded={id:60,topic:'Сохранено',syncedTopic:'Сохранено'};
+ assert.equal(preserveLessonTopic(previous,loaded,'1').topic,'Черновик');
+ assert.deepEqual(preserveLessonTopic(previous,loaded,'2'),{...loaded,topicOwnerId:'2'});
+});

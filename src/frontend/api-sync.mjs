@@ -1,6 +1,6 @@
 import { groupDisplayName, installAdvancedGroupUi } from './advanced-groups.mjs';
-import { installScreenHistory } from './screen-history.mjs';
-import { installQuickStatusUi } from './quick-status.mjs';
+import { installScreenHistory, installLessonChildNavigation, preserveLessonTopic } from './screen-history.mjs';
+import { installQuickStatusUi, logicalEnrollments, currentEnrollments } from './quick-status.mjs';
 import { openReleaseNote } from './release-notes.mjs';
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 import { createLessonActionQueue, createMemoryLessonActionStore } from '../data/lesson-action-queue.mjs';
@@ -496,8 +496,9 @@ async function reload({ render = true } = {}) {
     sourceEnrollmentId: Number(transfer.sourceEnrollmentId), targetEnrollmentId: Number(transfer.targetEnrollmentId) }));
   legacy.state.statistics = statistics;
   legacy.state.dailySummary = dailySummary;
+  const previousLessons = new Map((legacy.state.lessons ?? []).map(lesson => [Number(lesson.id), lesson]));
   const localPhotos = new Map((legacy.state.lessons ?? []).map((lesson) => [Number(lesson.id), lesson.photos ?? {}]));
-  legacy.state.lessons = lessons.map(mapLesson).map((lesson) => ({ ...lesson, photos: localPhotos.get(lesson.id) ?? {} }));
+  legacy.state.lessons = lessons.map(mapLesson).map(lesson => preserveLessonTopic(previousLessons.get(lesson.id), {...lesson, photos:localPhotos.get(lesson.id) ?? {}}, authProfile?.id));
   await reapplyQueuedLessonState();
   legacy.state.deletedOccurrences = lessonDeletions.map((item) => calendarOccurrenceKey(item.groupId, isoToRu(item.scheduledDate), item.startTime));
   legacy.state.notifications = notifications;
@@ -638,6 +639,8 @@ async function saveChild(resourceId, { status } = {}) {
   if (childSavePending) return;
   const statusOnly = resourceId && status !== undefined;
   const existing = (legacy.state.children ?? []).find(item => item.id === Number(resourceId));
+  const logical = existing ? logicalEnrollments(existing) : [];
+  const single = logical.length === 1 ? logical[0] : null;
   const child = statusOnly ? {status: childStatusToApi[status] ?? status} : {
     name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null,
     school: value('#cf-school'), grade: value('#cf-grade'), status: childStatusToApi[value('#cf-status')] ?? 'lead',
@@ -649,16 +652,23 @@ async function saveChild(resourceId, { status } = {}) {
     ?? existing.enrollments.find(item => item.editable !== false && item.direction === value('#cf-direction')) : null;
   async function persist(enrollmentIds) {
     if (childSavePending) return;
-    if (resourceId && ['active','lead'].includes(child.status) && !enrollmentIds?.length) return;
+    if (resourceId && ['active','lead'].includes(child.status) && !single && !enrollmentIds?.length) return;
     childSavePending = true;
     try {
       let saved;
       if (statusOnly) {
-        saved = await api.request('/children/' + resourceId + '/status', {method:'PATCH', body:{status:child.status, ...(enrollmentIds ? {enrollmentIds} : {})}});
+        if (single) {
+          if (single.editable === false) throw new ApiError('Направление другого проекта недоступно для изменения');
+          await api.updateEnrollment(single.id, {status:child.status});
+          saved = {id:resourceId};
+        } else saved = await api.request('/children/' + resourceId + '/status', {method:'PATCH', body:{status:child.status, ...(enrollmentIds ? {enrollmentIds} : {})}});
       } else if (resourceId) {
         if (!enrollment) throw new ApiError('Не найдено редактируемое направление текущего проекта');
+        const childFields = {...child};
+        const enrollmentFields = {groupId:selectedGroupId};
+        if (single && child.status) { enrollmentFields.status = child.status; delete childFields.status; }
         saved = await api.request('/children/' + resourceId + '/with-enrollment', {method:'PATCH', body:{
-          child, enrollmentId:enrollment.id, enrollment:{groupId:selectedGroupId}, ...(enrollmentIds ? {enrollmentIds} : {}),
+          child:childFields, enrollmentId:enrollment.id, enrollment:enrollmentFields, ...(enrollmentIds ? {enrollmentIds} : {}),
         }});
       } else {
         const direction = byName(directories.directions, value('#cf-direction'));
@@ -680,11 +690,24 @@ async function saveChild(resourceId, { status } = {}) {
     }
     finally { childSavePending = false; }
   }
-  if (resourceId && ['active','lead'].includes(child.status)) {
+  if (resourceId && !single && ['active','lead'].includes(child.status)) {
     window.icubeChildStatusSelection(resourceId, childStatusFromApi[child.status], persist);
     return {selection:true};
   }
   return persist();
+}
+
+async function saveEnrollmentStatus(enrollmentId, status) {
+  if (childSavePending || !['director','partner'].includes(legacy.state.role)) return;
+  const child = legacy.state.children.find(c => currentEnrollments(c).some(e => Number(e.id) === Number(enrollmentId)));
+  const enrollment = child && currentEnrollments(child).find(e => Number(e.id) === Number(enrollmentId));
+  if (!enrollment || child.editable === false || enrollment.editable === false) return;
+  childSavePending = true;
+  try {
+    const saved = await api.updateEnrollment(enrollment.id, {status:childStatusToApi[status] ?? status});
+    await reload(); return saved;
+  } catch (error) { fail(error); }
+  finally { childSavePending = false; }
 }
 
 async function saveEnrollment(childId, oldDirection) {
@@ -1789,23 +1812,33 @@ function teacherNameForShell() {
   return legacy.state.teachers?.find((item) => item.id === Number(lesson?.teacherId))?.name ?? 'Интерфейс преподавателя';
 }
 
+function accountSettings() {
+  legacy.state.modal = '<h3>Настройки</h3><div class="info-list"><button class="btn" onclick="window.icubePush?.openSettings()">Уведомления и приложение</button><button class="btn danger" onclick="icubeAuthLogout()">Выйти</button></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Закрыть</button></div>';
+  legacy.render();
+}
+window.icubeAccountSettings = accountSettings;
+const originalAccountSettingsPage = window.settings;
+window.settings = function(...args) {
+  return originalAccountSettingsPage.apply(this,args) + '<div class="card pad" style="margin-top:16px"><h3>Учётная запись</h3><button class="btn danger" onclick="icubeAuthLogout()">Выйти</button></div>';
+};
+
 function installAuthenticatedShells() {
-  const pushBell = () => { const unread = window.icubePush?.unread?.() ?? 0; return `<span class="notification-header-actions"><button class="push-bell-button" type="button" data-push-bell onclick="window.icubePush?.togglePanel(this)" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button><button class="push-settings-button" type="button" onclick="window.icubePush?.openSettings()" aria-label="Уведомления и приложение" title="Уведомления и приложение">⚙</button></span>`; };
+  const pushBell = () => { const unread = window.icubePush?.unread?.() ?? 0; return `<span class="notification-header-actions"><button class="push-bell-button" type="button" data-push-bell onclick="window.icubePush?.togglePanel(this)" aria-label="Уведомления" title="Уведомления"><span data-push-bell-icon>${window.icubePush?.icon?.() ?? '🔔'}</span><i data-notification-badge${unread ? '' : ' hidden'}>${unread}</i></button><button class="push-settings-button" type="button" onclick="icubeAccountSettings()" aria-label="Настройки" title="Настройки">⚙</button></span>`; };
   const originalShell = window.shell;
   if (typeof originalShell === 'function') {
     window.shell = function (...args) {
       const result = originalShell.apply(this, args);
       if (!authProfile) return result;
       const roleLabel = authProfile.roles.includes('director') ? 'Директор' : 'Партнёр';
-      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div>${pushBell()}<button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`;
+      const account = `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><div><b>${html(authProfile.displayName)}</b><div class="muted mini">${roleLabel}</div></div>${pushBell()}</div>`;
       return result.replace(/<div><select class="role-switch"[\s\S]*?<\/select><div class="muted mini">Режим прототипа<\/div><\/div>/, account);
     };
   }
   window.teacherShell = function (content) {
     const parentRole = temporaryTeacherParentRole();
     const right = parentRole
-      ? `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button>${pushBell()}<button class="btn" onclick="icubeAuthLogout()">Выйти</button></div>`
-      : '<button class="btn" onclick="icubeAuthLogout()">Выйти</button>';
+      ? `<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeReturnToHome()">Вернуться на главную</button>${pushBell()}</div>`
+      : '';
     const teacherPushButton = parentRole ? '' : pushBell();
     const offline = legacy.state.offlineBootstrap || globalThis.navigator?.onLine === false;
     const offlineNotice = offline
@@ -1981,7 +2014,7 @@ async function reconnectTeacherOffline() {
   return syncLessonActionsWithSession();
 }
 
-window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
+window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollmentStatus, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   projectTransferForm, confirmProjectTransfer,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
@@ -2113,6 +2146,7 @@ installAuthenticatedShells();
 installTeacherAccessUi();
 installScreenHistory(legacy);
 installQuickStatusUi(legacy);
+installLessonChildNavigation(legacy, window, () => lessonActionPending === 0);
 installAdvancedGroupUi(legacy);
 if (element('#app')) {
   window.icubeAuthReady = new Promise((resolve) => { resolveAuthReady = resolve; });
