@@ -72,7 +72,11 @@ export async function applyChildStatus(connection, childId, body, context) {
     const ids = new Set(body.enrollmentIds.map(String));
     targets = owned.filter(e => ids.has(String(e.id)));
     if (targets.length !== ids.size) throw new ApiProblem(403, 'FORBIDDEN', 'Выбрано недоступное направление');
-  } else if (body.status === 'paused') targets = owned.filter(e => e.status !== 'finished');
+  } else if (body.status === 'paused') {
+    targets = owned.filter(e => e.status !== 'finished');
+    if (!targets.length) throw new ApiProblem(409, 'NO_UNFINISHED_ENROLLMENTS',
+      'Все доступные направления завершены. Чтобы возобновить направление на паузе, измените его статус в «Настройках направления».');
+  }
   for (const e of targets) await setEnrollmentStatus(connection, e, body.status, context.userId ?? null);
   return refreshChildStatus(connection, childId, context.userId ?? null);
 }

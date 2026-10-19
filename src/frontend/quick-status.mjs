@@ -19,6 +19,24 @@ export function unfinishedEnrollments(child) {
 export function childListStatus(child) {
   return statusNames[child.status] ?? child.status;
 }
+export function childListDirections(child, {project = 'all', direction = 'all'} = {}) {
+  const matches = e => (project === 'all' || String(e.projectId) === String(project))
+    && (direction === 'all' || e.direction === direction);
+  const current = currentEnrollments(child);
+  const open = current.filter(e => directionStatus(child, e) !== 'Закончил');
+  // Current rows take precedence; archived rows only fill missing directions.
+  const history = [...(child.enrollments ?? []), ...(child.enrollmentHistory ?? [])]
+    .sort((a,b) => String(b.startedOn ?? '').localeCompare(String(a.startedOn ?? '')) || Number(b.id ?? 0)-Number(a.id ?? 0));
+  const seen = new Set();
+  const enrollments = (open.length ? open : [...current, ...history]).filter(matches).filter(e => {
+    const key = String(e.direction || e.directionId);
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+  const showStatuses = open.length > 0 && enrollments.length === 2
+    && new Set(enrollments.map(e => directionStatus(child,e))).size === 2;
+  return {enrollments, showStatuses};
+}
 export function groupEnrollments(child, groupId) {
   return currentEnrollments(child).filter((e) => ['Активный', 'Лид'].includes(directionStatus(child, e))
     && Number(Object.hasOwn(e, 'effectiveGroupId') ? e.effectiveGroupId : e.groupId) === Number(groupId));
@@ -45,24 +63,31 @@ export function groupBalanceBadges(child, groupId) {
   }).join('');
 }
 export function installQuickStatusUi(legacy, host = globalThis.window, document = globalThis.document) {
-  host.icubeEnrollmentViews = { currentEnrollments, unfinishedEnrollments, childListStatus, directionStatus, groupEnrollments, visibleBalanceRows };
+  host.icubeEnrollmentViews = { currentEnrollments, unfinishedEnrollments, childListStatus, childListDirections, directionStatus, groupEnrollments, visibleBalanceRows };
   const allowed = () => ['director', 'partner'].includes(legacy.state.role);
   let popover = null; let pending = null; let saving = false;
   const byId = (items, id) => items?.find((item) => Number(item.id) === Number(id));
   let statusSelection = null;
+  function statusSelectionHtml(selection) {
+    const active = selection.status === 'Активный';
+    const label = active ? 'Сделать активными' : 'Перевести в лиды';
+    return `<h3>${active ? 'Какие направления сделать активными?' : 'Какие направления перевести в лиды?'}</h3><div class="muted mini">Выберите направления. Остальные сохранят свои статусы. Изменять можно направления своего проекта.</div><div class="info-list" style="margin-top:12px">${selection.enrollments.map(e => `<label class="info-line"><span><input type="checkbox" class="child-status-selection" value="${Number(e.id)}" ${e.editable === false ? 'disabled' : ''} ${selection.ids.includes(Number(e.id)) ? 'checked' : ''} onchange="icubeChildStatusSelectionChanged()"> ${esc(e.direction)}</span><span class="badge ${legacy.statusBadge(directionStatus(selection.child,e))}">${esc(directionStatus(selection.child,e))}</span></label>`).join('')}</div><div class="modal-actions"><button class="btn" onclick="icubeCancelChildStatusSelection()">Отмена</button><button class="btn primary" id="child-status-confirm" ${selection.saving || !selection.ids.length ? 'disabled' : ''} onclick="icubeConfirmChildStatusSelection()">${label}</button></div>`;
+  }
   host.icubeChildStatusSelection = (childId, status, confirm) => {
     if (!allowed()) return;
     const child = byId(legacy.state.children, childId); if (!child) return;
     const fields = [...(document.querySelectorAll?.('.modal input,.modal select,.modal textarea') ?? [])]
       .filter(el => el.id).map(el => ({ id: el.id, value: el.value, checked: el.checked }));
-    statusSelection = { confirm, modal: legacy.state.modal, fields, saving: false };
-    const label = status === 'Активный' ? 'Сделать активным' : 'Перевести в лиды';
-    legacy.state.modal = `<h3>${label}</h3><div class="muted mini">Выберите направления. Остальные сохранят свои статусы. Изменять можно направления своего проекта.</div><div class="info-list" style="margin-top:12px">${currentEnrollments(child).map(e => `<label class="info-line"><span><input type="checkbox" class="child-status-selection" value="${Number(e.id)}" ${e.editable === false ? 'disabled' : ''} onchange="icubeChildStatusSelectionChanged()"> ${esc(e.direction)}</span><span class="badge ${legacy.statusBadge(directionStatus(child,e))}">${esc(directionStatus(child,e))}</span></label>`).join('')}</div><div class="modal-actions"><button class="btn" onclick="icubeCancelChildStatusSelection()">Отмена</button><button class="btn primary" id="child-status-confirm" disabled onclick="icubeConfirmChildStatusSelection()">${label}</button></div>`;
+    statusSelection = { confirm, modal: legacy.state.modal, fields, saving: false, child, status, enrollments:currentEnrollments(child), ids:[] };
+    legacy.state.modal = statusSelectionHtml(statusSelection);
     legacy.render();
   };
   host.icubeChildStatusSelectionChanged = () => {
+    if (!statusSelection) return;
+    statusSelection.ids = [...document.querySelectorAll('.child-status-selection:checked:not(:disabled)')].map(el => Number(el.value));
+    legacy.state.modal = statusSelectionHtml(statusSelection);
     const button = document.querySelector('#child-status-confirm');
-    if (button) button.disabled = !document.querySelectorAll('.child-status-selection:checked:not(:disabled)').length;
+    if (button) button.disabled = statusSelection.saving || !statusSelection.ids.length;
   };
   host.icubeCancelChildStatusSelection = () => {
     if (!statusSelection || statusSelection.saving) return;
@@ -77,7 +102,9 @@ export function installQuickStatusUi(legacy, host = globalThis.window, document 
     const selection = statusSelection; if (!selection || selection.saving || !allowed()) return;
     const ids = [...document.querySelectorAll('.child-status-selection:checked:not(:disabled)')].map(el => Number(el.value));
     if (!ids.length) return;
+    selection.ids = ids;
     selection.saving = true;
+    legacy.state.modal = statusSelectionHtml(selection);
     const button = document.querySelector('#child-status-confirm'); if (button) button.disabled = true;
     try { if (await selection.confirm(ids)) statusSelection = null; }
     finally { selection.saving = false; host.icubeChildStatusSelectionChanged(); }

@@ -90,6 +90,7 @@ function lessonFixture(overrides = {}) {
 
 for (const [statuses, names, badges] of [
   [['Активный'],1,0], [['Закончил'],1,0], [['Активный','Активный'],2,0], [['Закончил','Закончил'],2,0],
+  [['Лид','Лид'],2,0], [['Пауза','Пауза'],2,0], [['Активный','Пауза'],2,2],
   [['Активный','Лид'],2,2], [['Пауза','Лид'],2,2], [['Активный','Закончил'],1,0],
   [['Лид','Закончил'],1,0], [['Пауза','Закончил'],1,0],
 ]) test(`final block3 child list ${statuses}: direction names and only necessary badges`,async()=>{
@@ -105,6 +106,101 @@ for (const [statuses, names, badges] of [
   assert.doesNotMatch(output,/Нет текущих направлений/);
   assert.match(output,/event.stopPropagation\(\);icubeQuickChildStatus\(8,this\)/);
   assert.equal((output.match(/data-child-id="8"/g)||[]).length,1);assert.equal(JSON.stringify(child),before);
+});
+
+test('finished and historical rows use the same deduplicated directions for names, mobile/desktop groups and balances',async()=>{
+  const {context,state}=await loadFrontend();seedAttendanceChild(state);
+  installQuickStatusUi(context.icubeLegacy,context,context.document);
+  state.children[0].enrollments=[{id:70,directionId:1,direction:'Робототехника',status:'Закончил',supersededAt:'2026-09-01',groupName:'Старое имя',balance:99}];
+  state.children[0].enrollmentHistory=[];state.page='children';
+  const legacyBefore=JSON.stringify(state.children);context.render();
+  const legacyOutput=context.document.getElementById('app').innerHTML;
+  assert.doesNotMatch(legacyOutput,/Нет текущих направлений/);assert.match(legacyOutput,/Робототехника/);
+  assert.equal(JSON.stringify(state.children),legacyBefore,'historical fallback also supports legacy enrollment shape');
+  state.children[0].enrollmentHistory=[{id:71,directionId:1,direction:'Робототехника',status:'Закончил',startedOn:'2026-09-01',groupName:'Историческая группа',balance:-2},
+    {id:69,direction:'Робототехника',status:'Закончил',startedOn:'2026-01-01',groupName:'Старая группа',balance:77}];
+  const before=JSON.stringify(state.children);state.page='children';context.render();
+  const output=context.document.getElementById('app').innerHTML;
+  assert.doesNotMatch(output,/Нет текущих направлений|Старое имя|Старая группа|>99<|>77</);
+  assert.equal((output.match(/class="child-enrollment-direction"/g)||[]).length,1);
+  assert.equal((output.match(/Историческая группа/g)||[]).length,2,'same selected group in desktop and mobile markup');
+  assert.match(output,/>-2<\/span>/);assert.equal(JSON.stringify(state.children),before);
+});
+
+test('actual direction settings retain all four statuses through a full render, including lead and finished to pause',async()=>{
+  const {context,state}=await loadFrontend();seedAttendanceChild(state);state.selectedChild=8;state.page='child';
+  for(const status of ['Лид','Активный','Пауза','Закончил']) {
+    state.children[0].enrollments[0].status=status;
+    const before=JSON.stringify(state.children);context.manageDirectionForm(8,'Робототехника');
+    const modal=state.modal;const selector=modal.match(/<select[^>]*id="md-enrollment-status"[^>]*>([\s\S]*?)<\/select>/)?.[1];
+    assert.ok(selector,'status selector must be stored in the modal, not appended only to DOM');
+    for(const expected of ['Лид','Активный','Пауза','Закончил']) assert.match(selector,new RegExp('>'+expected+'<'));
+    assert.match(selector,new RegExp('<option selected>'+status+'<'));
+    context.render();assert.match(context.document.getElementById('app').innerHTML,/id="md-enrollment-status"/);
+    assert.equal(state.modal,modal);assert.equal(JSON.stringify(state.children),before);
+  }
+});
+
+test('production save bindings open a real finished-direction picker, preserve selection across render and submit only chosen ids',async()=>{
+  const {context,state}=await loadFrontend();seedAttendanceChild(state);
+  const previous={window:globalThis.window,document:globalThis.document,fetch:globalThis.fetch};
+  const app=context.document.getElementById('app');let lastHtml;let controls=[];let confirmButton;const alerts=[];const writes=[];
+  const synchronize=()=>{
+    if(lastHtml===app.innerHTML) return;
+    lastHtml=app.innerHTML;
+    controls=[...lastHtml.matchAll(/<input[^>]*class="child-status-selection"[^>]*>/g)].map(([tag])=>({value:tag.match(/value="(\d+)"/)[1],checked:/\bchecked\b/.test(tag),disabled:/\bdisabled\b/.test(tag)}));
+    const tag=lastHtml.match(/<button[^>]*id="child-status-confirm"[^>]*>/)?.[0];
+    confirmButton=tag?{disabled:/\bdisabled\b/.test(tag)}:null;
+  };
+  const query=context.document.querySelector.bind(context.document);
+  context.document.querySelector=selector=>{synchronize();return selector==='#child-status-confirm'?confirmButton:query(selector);};
+  context.document.querySelectorAll=selector=>{synchronize();return selector==='.child-status-selection:checked:not(:disabled)'?controls.filter(c=>c.checked&&!c.disabled):[];};
+  context.alert=message=>alerts.push(message);
+  let serverChild;
+  globalThis.window=context;
+  globalThis.document={...context.document,querySelector:selector=>selector==='#app'?null:context.document.querySelector(selector)};
+  globalThis.fetch=async(url,options={})=>{
+    const path=String(url).replace('/api/v1','');const method=options.method??'GET';
+    if(method!=='GET') {
+      const body=JSON.parse(options.body);writes.push({path,method,body});
+      assert.equal(path,'/children/8/status');
+      if(body.status==='paused') return {ok:false,status:409,json:async()=>({error:{code:'NO_UNFINISHED_ENROLLMENTS',message:'Все направления завершены. Измените статус в настройках направления.'}})};
+      serverChild.enrollments.forEach(e=>{if(body.enrollmentIds.includes(Number(e.id))) e.status=body.status;});
+      serverChild.status=body.status;
+    }
+    return {ok:true,status:200,json:async()=>({data:path==='/children/8/status'?serverChild:path==='/children'?[serverChild]:[]})};
+  };
+  try {
+    await import(`../src/frontend/api-sync.mjs?block3-five-fixes=${Date.now()}`);
+    assert.equal(context.saveChild,context.icubeApi.saveChild,'legacy save must use the production selection coordinator');
+    for(const [target,label] of [['active','Активный'],['lead','Лид']]) for(const ids of [[80],[81],[80,81]]) {
+      writes.length=0;
+      serverChild={id:'8',name:'Иванов Иван',status:'finished',enrollments:[
+        {id:'80',directionId:'1',directionName:'Робототехника',projectId:'1',projectName:'iCubeRobots',status:'finished',balanceLessons:'-1.00000000',groupId:null},
+        {id:'81',directionId:'2',directionName:'Программирование',projectId:'1',projectName:'iCubeRobots',status:'finished',balanceLessons:'0.00000000',groupId:null},
+      ]};
+      state.children=[{id:8,name:'Иванов Иван',status:'Закончил',enrollments:serverChild.enrollments.map(e=>({id:Number(e.id),direction:e.directionName,status:'Закончил',balance:Number(e.balanceLessons),groupId:null}))}];
+      state.selectedChild=8;state.page='child';state.modal=null;
+      await context.saveChild(8,{status:label});synchronize();
+      assert.equal(writes.length,0);assert.equal(controls.length,2);assert.ok(controls.every(c=>!c.disabled));assert.equal(confirmButton.disabled,true);
+      await context.icubeConfirmChildStatusSelection();assert.equal(writes.length,0);
+      controls.forEach(c=>{c.checked=ids.includes(Number(c.value));});context.icubeChildStatusSelectionChanged();
+      context.render();synchronize();assert.deepEqual(controls.filter(c=>c.checked).map(c=>Number(c.value)),ids);assert.equal(confirmButton.disabled,false);
+      await context.icubeConfirmChildStatusSelection();
+      assert.deepEqual(writes,[{path:'/children/8/status',method:'PATCH',body:{status:target,enrollmentIds:ids}}]);
+      assert.deepEqual(state.children[0].enrollments.map(e=>e.status),[ids.includes(80)?label:'Закончил',ids.includes(81)?label:'Закончил']);
+      assert.ok(state.children[0].enrollments.every(e=>e.groupId===null));
+    }
+    writes.length=0;const before=JSON.stringify(state.children);
+    await context.saveChild(8,{status:'Активный'});context.icubeCancelChildStatusSelection();
+    assert.equal(writes.length,0);assert.equal(JSON.stringify(state.children),before);
+    state.children[0].status='Закончил';state.children[0].enrollments.forEach(e=>{e.status='Закончил';});
+    serverChild.status='finished';serverChild.enrollments.forEach(e=>{e.status='finished';});
+    const finishedBefore=JSON.stringify(state.children);
+    await context.saveChild(8,{status:'Пауза'});
+    assert.match(state.modal,/Нет незавершённых направлений/);assert.equal(alerts.length,0,'explanation is an application dialog, not alert');
+    assert.equal(JSON.stringify(state.children),finishedBefore);
+  } finally {Object.assign(globalThis,previous);}
 });
 
 test('block3 children list hides finished directions but preserves search, filters and child history', async () => {

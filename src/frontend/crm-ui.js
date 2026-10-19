@@ -125,26 +125,24 @@ function children(){
  const statusFilter=state.childStatusFilter||'all';
  const directionFilter=state.childDirectionFilter||'all';
  const views=window.icubeEnrollmentViews;
- const current=c=>views?.currentEnrollments(c)||c.enrollments||[];
- const unfinished=c=>views?.unfinishedEnrollments(c)||current(c).filter(e=>!['Закончил','finished'].includes(e.status));
- const listStatus=c=>views?.childListStatus(c)||(current(c).length&&current(c).every(e=>['Закончил','finished'].includes(e.status))?'Закончил':c.status);
- const matches=e=>(projectFilter==='all'||String(e.projectId)===String(projectFilter))&&(directionFilter==='all'||e.direction===directionFilter);
+ const directions=c=>{
+   if(views?.childListDirections) return views.childListDirections(c,{project:projectFilter,direction:directionFilter});
+   const matches=e=>(projectFilter==='all'||String(e.projectId)===String(projectFilter))&&(directionFilter==='all'||e.direction===directionFilter);
+   const current=c.enrollments||[], open=current.filter(e=>!['Закончил','finished'].includes(e.status));
+   const all=(open.length?open:[...current,...(c.enrollmentHistory||[])]).filter(matches);
+   const rows=all.filter((e,i)=>all.findIndex(other=>(other.directionId??other.direction)===(e.directionId??e.direction))===i);
+   return {enrollments:rows,showStatuses:open.length>0&&rows.length===2&&new Set(rows.map(e=>e.status)).size===2};
+ };
  const filteredChildren=state.children.filter(c=>{
-   if(statusFilter!=='all'&&listStatus(c)!==statusFilter) return false;
-   if(projectFilter==='all'&&directionFilter==='all') return true;
-   const live=unfinished(c);
-   return (live.length?live:current(c)).some(matches);
+   if(statusFilter!=='all'&&(views?.childListStatus(c)||c.status)!==statusFilter) return false;
+   return (projectFilter==='all'&&directionFilter==='all')||directions(c).enrollments.length>0;
  });
  const rows=filteredChildren.map(c=>{
    const hidden=!childMatchesSearch(c,state.childSearch)?' style="display:none"':'';
-   const open=unfinished(c);
-   const history=(c.enrollmentHistory||[]).filter((e,i,all)=>all.findIndex(other=>other.direction===e.direction)===i);
-   const live=(open.length?open:current(c).length?current(c):history).filter(matches), status=listStatus(c);
-   const statuses=live.map(e=>views?.directionStatus(c,e)||e.status||c.status);
-   const showBadges=live.length===2&&statuses.every(s=>!['Закончил','finished'].includes(s))&&new Set(statuses).size>1;
+   const {enrollments:live,showStatuses:showBadges}=directions(c), status=views?.childListStatus(c)||c.status;
    const statusHtml=['director','partner'].includes(state.role)?`<button class="badge ${statusBadge(status)} quick-status-badge" onclick="event.stopPropagation();icubeQuickChildStatus(${c.id},this)">${escapeHtml(status)}</button>`:`<span class="badge ${statusBadge(status)}">${escapeHtml(status)}</span>`;
    const groupName=e=>groupTitle(byId(state.groups,Object.hasOwn(e,'effectiveGroupId')?e.effectiveGroupId:e.groupId)||{name:e.groupName});
-   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map((live.length?live:current(c).filter(matches)).map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div>${statusHtml}</div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}${showBadges?` <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span>`:''}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance}</span>`).join(' / ')}</div><div>›</div></div>`;
+   return `<div class="row clickable" data-child-id="${c.id}"${hidden} onclick="openChild(${c.id})"><div><b>${escapeHtml(c.name)}</b><div class="muted mini">${escapeHtml(c.school)} · ${escapeHtml(c.grade)}</div><div>${[...new Map(live.map(e=>[e.projectId,e.project])).values()].map(p=>`<span class="badge ${p==='Зебра'?'purple':'blue'}">${escapeHtml(p)}</span>`).join(' ')}</div></div><div>${statusHtml}</div><div class="child-directions">${live.map(e=>`<div class="child-enrollment-direction"><div class="mini">${escapeHtml(e.direction)}${showBadges?` <span class="badge ${statusBadge(views?.directionStatus(c,e)||e.status||c.status)}">${escapeHtml(views?.directionStatus(c,e)||e.status||c.status)}</span>`:''}</div><div class="muted mini child-group-mobile">${escapeHtml(groupName(e))}</div></div>`).join('')||'<span class="muted mini">Нет текущих направлений</span>'}</div><div class="child-groups-desktop">${live.map(e=>`<div class="mini">${escapeHtml(groupName(e))}</div>`).join('')}</div><div>${live.map(e=>`<span class="money ${e.balance<0?'negative':e.balance===0?'':'positive'}">${e.balance??'—'}</span>`).join(' / ')}</div><div>›</div></div>`;
  }).join('');
  const projectSelect=state.role==='partner'?'':`<select class="select" style="max-width:200px" onchange="setChildProjectFilter(this.value)"><option value="all">Все проекты</option>${(state.projects||[]).map(p=>`<option value="${p.id}" ${String(p.id)===String(projectFilter)?'selected':''}>${escapeHtml(p.name)}</option>`).join('')}</select>`;
  const statusSelect=`<select class="select" style="max-width:180px" onchange="setChildStatusFilter(this.value)"><option value="all" ${statusFilter==='all'?'selected':''}>Все статусы</option>${['Активный','Лид','Пауза','Закончил'].map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join('')}</select>`;
@@ -2797,6 +2795,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+='<div class="field"><label>Направление</label><select class="select" id="md-dir" onchange="refreshManageDirectionGroups()">';
     directions.forEach(function(d){html+='<option'+(d===oldDirection?' selected':'')+'>'+d+'</option>';});
     html+='</select></div>';
+    html+='<div class="field span-2"><label>Статус направления</label><select class="select" id="md-enrollment-status">'+['Лид','Активный','Пауза','Закончил'].map(function(status){return '<option'+(status===(enrollment.status||'Активный')?' selected':'')+'>'+status+'</option>';}).join('')+'</select><div class="muted mini" style="margin-top:5px">Меняется только это направление. Общий статус ребёнка пересчитается после сохранения.</div></div>';
     html+='<div class="field"><label>Основная группа</label><select class="select" id="md-group" onchange="refreshManageDirectionGroupDate(true);refreshManageDirectionPreview()">'+directionGroupsHtml(oldDirection,currentGroupId,enrollment.projectId)+'</select></div>';
     html+='<div class="field" id="md-group-started-wrap" style="display:'+(currentGroupId?'block':'none')+'"><label>Дата начала занятий в группе</label><input class="input" id="md-group-started-on" type="date" value="'+escapeAttr(enrollment.groupStartedOn||businessTodayIso())+'"'+(currentGroupId?'':' disabled')+'></div>';
     html+='<div class="field span-2"><label>Цена</label><select class="select" id="md-price-mode" onchange="toggleManageIndividualPrice()"><option value="standard"'+(enrollment.individualPrice==null?' selected':'')+'>Обычная цена направления / группы</option><option value="individual"'+(enrollment.individualPrice!=null?' selected':'')+'>Индивидуальная цена</option></select><div class="muted mini" style="margin-top:5px">Сейчас: '+money(currentPrice)+' / занятие.</div></div>';
@@ -7547,22 +7546,6 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         }
       });
       return result;
-    };
-  }
-
-  // Add status selector to the existing unified direction/price editor.
-  const manageFormBefore=window.manageDirectionForm;
-  if(typeof manageFormBefore==='function'){
-    window.manageDirectionForm=function(childId,oldDirection){
-      manageFormBefore(childId,oldDirection);
-      const child=byId(state.children,Number(childId));
-      const e=(child?.enrollments||[]).find(function(x){return x.direction===oldDirection;});
-      const grid=document.querySelector('.modal .form-grid');
-      if(!grid||!e||document.querySelector('#md-enrollment-status')) return;
-      const field=document.createElement('div');
-      field.className='field span-2';
-      field.innerHTML='<label>Статус направления</label><select class="select" id="md-enrollment-status">'+DIR_STATUSES.map(function(s){return '<option'+(s===enrollmentStatus(e)?' selected':'')+'>'+s+'</option>';}).join('')+'</select><div class="muted mini" style="margin-top:5px">Меняется только это направление. Общий статус ребёнка пересчитается после сохранения.</div>';
-      grid.appendChild(field);
     };
   }
 

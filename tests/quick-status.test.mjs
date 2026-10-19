@@ -166,10 +166,11 @@ test('status picker requires a choice, submits multiple directions and cancels w
   f.fields.set('#child-status-confirm',{disabled:true});
   f.state.modal='original form';
   f.host.icubeChildStatusSelection(8,'Активный',async ids=>{calls.push(ids);return {id:8};});
-  assert.match(f.state.modal,/Сделать активным/);assert.match(f.state.modal,/Программирование/);assert.match(f.state.modal,/Закончил/);
+  assert.match(f.state.modal,/Сделать активными/);assert.match(f.state.modal,/Программирование/);assert.match(f.state.modal,/Закончил/);
   await f.host.icubeConfirmChildStatusSelection();assert.equal(calls.length,0);
   f.fields.set(selected,[{value:'40'},{value:'41'}]);f.host.icubeChildStatusSelectionChanged();
   assert.equal(f.fields.get('#child-status-confirm').disabled,false);
+  assert.equal((f.state.modal.match(/ checked /g)||[]).length,2,'selected directions survive re-rendering the saved modal');
   await f.host.icubeConfirmChildStatusSelection();assert.deepEqual(calls,[[40,41]]);
   f.state.modal='original form';f.host.icubeChildStatusSelection(8,'Лид',()=>{throw new Error('cancel must not save');});
   assert.match(f.state.modal,/Перевести в лиды/);f.host.icubeCancelChildStatusSelection();assert.equal(f.state.modal,'original form');

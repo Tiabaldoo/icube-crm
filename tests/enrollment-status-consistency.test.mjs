@@ -61,8 +61,10 @@ for(const [status,ids,initial,expected,overall] of [
   ['paused',null,['active','finished'],['paused','finished'],'paused'],
   ['paused',null,['lead','paused'],['paused','paused'],'paused'],
   ['active',[7],['paused','finished'],['active','finished'],'active'],
+  ['active',[8],['finished','finished'],['finished','active'],'active'],
   ['active',[7,8],['paused','finished'],['active','active'],'active'],
   ['lead',[7],['paused','active'],['lead','active'],'active'],
+  ['lead',[8],['finished','finished'],['finished','lead'],'lead'],
   ['lead',[7,8],['active','finished'],['lead','lead'],'lead'],
 ]) test(`child ${status}, selection ${ids}: atomic direction changes and preserved history`,async(t)=>{
   const f=fixture(t);initial.forEach((s,i)=>f.db.prepare('UPDATE child_enrollments SET status=? WHERE id=?').run(s,7+i));
@@ -102,6 +104,28 @@ test('legacy mismatch stays unchanged on reads; manual finish moves real debt in
   assert.equal(visibleBalanceRows(view(first))[0].hidden,false);
   const before=f.financial();const saved=await f.catalog.changeChildStatus(8,{status:'finished'},director);
   assert.equal(visibleBalanceRows(view(saved))[0].hidden,true);assert.equal(f.financial(),before);
+});
+
+test('all individual status transitions preserve finances, recalculate child and move debt using actual direction status',async(t)=>{
+  const f=fixture(t);f.db.exec("UPDATE child_enrollments SET status='finished' WHERE id=8");
+  const before=f.financial();
+  for(const from of ['lead','active','paused','finished']) for(const to of ['lead','active','paused','finished']) {
+    f.db.prepare('UPDATE child_enrollments SET status=? WHERE id=7').run(from);
+    await f.catalog.updateEnrollment('7',{status:to},director);
+    assert.deepEqual(f.statuses(),[to,'finished']);assert.equal(f.childStatus(),to);
+    const rows=visibleBalanceRows([{id:8,status:'finished',enrollments:[{id:7,status:to,balance:f.balance(7),hasAttendance:true}]}]);
+    assert.equal(rows[0].hidden,['paused','finished'].includes(to));assert.equal(f.balance(7),-1);
+    assert.equal(f.financial(),before,`${from} -> ${to} must preserve financial and membership history`);
+  }
+});
+
+test('global pause with only finished directions explains required individual action before writing any data',async(t)=>{
+  const f=fixture(t);f.db.exec("UPDATE child_enrollments SET status='finished' WHERE id IN (7,8)");
+  const before=JSON.stringify([f.rows('children'),f.rows('child_enrollments'),f.rows('child_status_history'),f.rows('enrollment_status_history')]);
+  const financial=f.financial();
+  await assert.rejects(f.catalog.changeChildStatus(8,{status:'paused'},director),error=>error.code==='NO_UNFINISHED_ENROLLMENTS'&&/Настройках направления/.test(error.message));
+  assert.equal(JSON.stringify([f.rows('children'),f.rows('child_enrollments'),f.rows('child_status_history'),f.rows('enrollment_status_history')]),before);
+  assert.equal(f.financial(),financial);
 });
 
 test('new direction accepts lead by default and refreshes the child without changing its other direction',async(t)=>{

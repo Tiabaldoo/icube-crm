@@ -638,7 +638,7 @@ async function saveChild(resourceId, { status } = {}) {
   if (childSavePending) return;
   const statusOnly = resourceId && status !== undefined;
   const existing = (legacy.state.children ?? []).find(item => item.id === Number(resourceId));
-  const child = statusOnly ? {status: childStatusToApi[status]} : {
+  const child = statusOnly ? {status: childStatusToApi[status] ?? status} : {
     name: value('#cf-name').trim() || 'Новый ребёнок', birthDate: value('#cf-birth') || null,
     school: value('#cf-school'), grade: value('#cf-grade'), status: childStatusToApi[value('#cf-status')] ?? 'lead',
     note: value('#cf-note'), guardian: {name: value('#cf-parent'), phone: value('#cf-phone')},
@@ -649,6 +649,7 @@ async function saveChild(resourceId, { status } = {}) {
     ?? existing.enrollments.find(item => item.editable !== false && item.direction === value('#cf-direction')) : null;
   async function persist(enrollmentIds) {
     if (childSavePending) return;
+    if (resourceId && ['active','lead'].includes(child.status) && !enrollmentIds?.length) return;
     childSavePending = true;
     try {
       let saved;
@@ -670,7 +671,13 @@ async function saveChild(resourceId, { status } = {}) {
       }
       legacy.state.selectedChild = Number(saved.id); legacy.state.modal = null; legacy.state.page = 'child'; await reload();
       return saved;
-    } catch (error) { fail(error); }
+    } catch (error) {
+      if (error.code === 'NO_UNFINISHED_ENROLLMENTS') {
+        legacy.state.modal = `<h3>Нет незавершённых направлений</h3><div class="notice">${html(error.message)}</div><div class="modal-actions"><button class="btn" onclick="closeModal()">Понятно</button></div>`;
+        legacy.render();
+        return {explanation:true};
+      } else fail(error);
+    }
     finally { childSavePending = false; }
   }
   if (resourceId && ['active','lead'].includes(child.status)) {
@@ -1996,6 +2003,7 @@ window.saveSite = window.icubeApi.saveSite;
 window.saveTeacher = window.icubeApi.saveTeacher;
 window.saveGroupV111 = window.icubeApi.saveGroup;
 window.saveChildV111 = window.icubeApi.saveChild;
+window.saveChild = window.icubeApi.saveChild;
 window.saveManagedDirection = window.icubeApi.saveEnrollment;
 window.saveAddedDirectionV132 = window.icubeApi.addEnrollment;
 window.deleteChildPrompt = window.icubeApi.deleteChildPrompt;
