@@ -3,12 +3,14 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 import {
   calculateDashboardMetrics,
+  attentionCounts,
   countActiveChildrenForProject,
   countActiveChildrenTotal,
   countActiveGroups,
   monthlyPaymentAmount,
   installDashboardUi,
 } from '../src/frontend/dashboard-ui.mjs';
+import { visibleBalanceRows } from '../src/frontend/quick-status.mjs';
 import { createNotifications } from '../backend/src/notifications.mjs';
 import { createDailyDashboard } from '../backend/src/daily-dashboard.mjs';
 
@@ -226,4 +228,25 @@ test('notification read route is implemented and daily summary route remains pre
   assert.match(routes, /router\.post\('\/notifications\/read-all',[\s\S]*notifications\.markAllRead/);
   assert.match(routes, /router\.post\('\/parent\/notifications\/read-all',[\s\S]*markAllNotificationsRead/);
   assert.doesNotMatch(routes, /router\.post\('\/notifications\/:id\/read',[^\n]*notImplemented/);
+});
+
+test('dashboard attention reuses balance eligibility, counts directions and excludes hidden debts and unvisited zero/lead rows',()=>{
+ const e=(id,projectId,status,balance,hasAttendance)=>({id,directionId:id,projectId,status,balance,hasAttendance});
+ const children=[{id:1,enrollments:[e(1,1,'Активный',-1,true),e(2,2,'Активный',-2,false)]},{id:2,enrollments:[e(3,1,'Активный',0,false),e(4,2,'Активный',0,true)]},
+ {id:3,enrollments:[e(5,1,'Лид',1,false),e(6,2,'Лид',1,true)]},{id:4,enrollments:[e(7,1,'Пауза',-3,true),e(8,2,'Закончил',-4,true)]},
+ {id:5,enrollments:[{...e(9,1,'Активный',0,true),current:false},e(10,1,'Активный',null,true)]}];
+ const before=JSON.stringify(children);assert.deepEqual(attentionCounts(children),{low:1,zero:1,debt:2});
+ for(const scope of [null,[1],[2]]){
+  const rows=visibleBalanceRows(children).filter(r=>!r.hidden&&(!scope||scope.includes(r.e.projectId)));
+  assert.deepEqual(attentionCounts(children,scope),{low:rows.filter(r=>r.e.balance===1).length,zero:rows.filter(r=>r.e.balance===0).length,debt:rows.filter(r=>r.e.balance<0).length});
+ }
+ assert.equal(JSON.stringify(children),before);
+});
+test('director attention spans all projects independently of balance filter; partner attention follows the existing available project scope',()=>{
+ const state={role:'director',projects:[{id:1,name:'iCubeRobots',active:true},{id:2,name:'Зебра',active:true}],children:[{id:8,enrollments:[{id:1,projectId:1,status:'Активный',balance:-1,hasAttendance:true},{id:2,projectId:2,status:'Активный',balance:-2,hasAttendance:true}]}],groups:[],payments:[],lessons:[],notifications:[],balanceProject:'Зебра'};
+ const host={icubeLegacy:{state,pageHead:()=>'',render(){}}};installDashboardUi({windowObject:host,api:{}});
+ const debt=()=>Number(host.dashboard().match(/<span>Должники<\/span><b>(\d+)<\/b>/)?.[1]);
+ assert.equal(debt(),2);state.balanceProject='iCubeRobots';assert.equal(debt(),2);state.balanceProject='all';assert.equal(debt(),2);
+ state.role='partner';state.projects=[state.projects[1]];assert.equal(debt(),1);state.balanceProject='iCubeRobots';assert.equal(debt(),1);
+ assert.doesNotMatch(host.dashboard(),/setBalanceProject|id=".*project-filter/);
 });

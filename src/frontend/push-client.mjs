@@ -18,9 +18,18 @@ let pushSettingsModal = null;
 function bellIcon() {
   return '🔔';
 }
+function inboxNotifications() {
+  return !parentInbox() && Array.isArray(window.icubeLegacy?.state?.notifications)
+    ? window.icubeLegacy.state.notifications : state.notifications;
+}
+function syncInbox() { syncBellIcons(); renderPushPanel(); }
+function renderInboxDashboard() {
+  const legacy = window.icubeLegacy;
+  if (!parentInbox() && legacy?.state.page === 'dashboard' && !legacy.state.modal) legacy.render?.();
+}
 function syncBellIcons() {
   document.querySelectorAll('[data-push-bell-icon]').forEach((element) => { element.textContent = bellIcon(); });
-  const unread = state.notifications.filter((item) => !item.readAt).length;
+  const unread = inboxNotifications().filter((item) => !item.readAt).length;
   document.querySelectorAll('[data-notification-badge]').forEach((element) => {
     element.textContent = unread > 99 ? '99+' : String(unread);
     element.hidden = unread === 0;
@@ -469,8 +478,8 @@ function notificationItemMarkup(item) {
 }
 
 function pushPanelMarkup() {
-  const unread = state.notifications.filter((item) => !item.readAt);
-  const rows = state.inboxLoading ? [] : state.history ? state.notifications.filter((item) => item.readAt) : unread;
+  const unread = inboxNotifications().filter((item) => !item.readAt);
+  const rows = state.inboxLoading ? [] : state.history ? inboxNotifications().filter((item) => item.readAt) : unread;
   const title = state.history ? 'История уведомлений' : 'Уведомления';
   const empty = state.inboxLoading ? 'Загрузка…' : state.history ? 'Прочитанных уведомлений пока нет' : 'Новых уведомлений нет';
   return `<div class="push-popover-head"><b>${title}</b><button type="button" class="push-popover-close" onclick="icubePush.closePanel()" aria-label="Закрыть">×</button></div>
@@ -512,8 +521,9 @@ async function markAllRead() {
   try {
     await api.request(`${inboxBase()}/read-all`, { method: 'POST', body: {} });
     const now = new Date().toISOString();
-    state.notifications = state.notifications.map((item) => item.readAt ? item : { ...item, readAt: now });
-    syncBellIcons(); renderPushPanel();
+    for (const item of inboxNotifications()) item.readAt ??= now;
+    renderInboxDashboard();
+    syncInbox();
   } catch (error) { window.alert(error?.message ?? 'Не удалось отметить уведомления прочитанными.'); }
 }
 
@@ -527,15 +537,17 @@ async function showHistory() {
 }
 
 async function openNotification(notificationId) {
-  const item = state.notifications.find((row) => String(row.id) === String(notificationId));
+  const item = inboxNotifications().find((row) => String(row.id) === String(notificationId));
   if (!item) return;
   try {
     if (!item.readAt) await api.request(`${inboxBase()}/${encodeURIComponent(item.id)}/read`, { method: 'POST', body: {} });
     item.readAt = item.readAt ?? new Date().toISOString();
+    const current = inboxNotifications().find((row) => String(row.id) === String(item.id));
+    if (current) current.readAt = current.readAt ?? item.readAt;
     syncBellIcons(); closePushPanel();
     const link = { notificationId: item.id, destination: item.destination, entityType: item.entityType, entityId: item.entityId };
     if (parentInbox()) await window.icubeParentPortal?.openPushDestination?.(link);
-    else await window.icubeOpenNotification?.(link);
+    else { await window.icubeOpenNotification?.(link); renderInboxDashboard(); }
   } catch (error) { window.alert(error?.message ?? 'Не удалось открыть уведомление.'); }
 }
 
@@ -591,8 +603,8 @@ window.icubePush = {
   refresh: refreshPushState, mount: mountPushControls, rebind: rebindPush, unbind: unbindPush,
   enable: () => runAction(enablePush, false), disable: () => runAction(disablePush),
   test: () => runAction(async () => { await testPush(); window.alert('Тестовое уведомление отправлено через Web Push.'); }),
-  icon: bellIcon, unread: () => state.notifications.filter((item) => !item.readAt).length,
-  syncBellIcons, togglePanel: togglePushPanel, closePanel: closePushPanel,
+  icon: bellIcon, unread: () => inboxNotifications().filter((item) => !item.readAt).length,
+  syncBellIcons, syncInbox, togglePanel: togglePushPanel, closePanel: closePushPanel,
   refreshInbox, openNotification, markAllRead,
   showHistory,
   showUnread: () => { state.history = false; renderPushPanel(); },

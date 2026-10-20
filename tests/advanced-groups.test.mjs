@@ -348,7 +348,7 @@ function catalogFixture(membershipSql = null) {
     }
     if (sql.startsWith('DELETE FROM group_schedule_slots')) { slots = []; return [{ affectedRows: 1 }]; }
     if (sql.startsWith('INSERT INTO group_schedule_slots')) { slots.push({ weekday: p.weekday, startTime: p.startTime, endTime: p.endTime }); return [{ insertId: slots.length }]; }
-    if (sql.startsWith('SELECT id,price FROM price_versions')) return [[]];
+    if (sql.startsWith('SELECT id,price FROM price_versions')) return [group.price == null ? [] : [{id:1,price:group.price}]];
     if (sql.startsWith('UPDATE price_versions')) return [{ affectedRows: 1 }];
     if (sql.startsWith('INSERT INTO price_versions')) { group.price = p.price; writes.push({ sql, p }); return [{ insertId: 1 }]; }
     throw new Error(sql);
@@ -437,4 +437,13 @@ test('parent payment package label keeps four for ordinary and displays eight fo
     const html = context.paymentsHtml({ homes: [{ child: { name: 'Ребёнок' }, enrollments: [{ direction: 'Робототехника', packageLessonCount: count, subscriptionPrice: price }] }] });
     assert.ok(html.includes(label)); assert.ok(html.includes(price));
   }
+});
+
+test('ordinary group tariff save retains unchanged price and versions only a new package without touching historical operations',async()=>{
+ const f=catalogFixture();f.group.price=1125;
+ await f.catalog.update('groups',10,{price:1125});assert.equal(f.writes.filter(w=>/price_versions/.test(w.sql)).length,0);
+ await f.catalog.update('groups',10,{price:1025,packageLessonCount:4,packagePrice:'4100'});
+ assert.equal(f.group.price,1025);assert.equal(f.group.is_individual,false);assert.equal(f.group.package_lesson_count,4);
+ assert.equal(f.writes.filter(w=>w.sql.startsWith('INSERT INTO price_versions')).length,1);
+ assert.ok(!f.writes.some(w=>/payments|refunds|attendances|balance_entries|balance_lots|salary_accruals/.test(w.sql)));
 });

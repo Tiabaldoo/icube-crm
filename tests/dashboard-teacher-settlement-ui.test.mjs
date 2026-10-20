@@ -73,7 +73,7 @@ test('dashboard lesson cards use effective site once and reuse group direction c
   assert.match(css, /\.dashboard-upcoming-row\{[\s\S]*border:1px solid var\(--line\)/);
 });
 
-test('temporary teacher view returns director or partner home without replacing logout', async () => {
+test('temporary teacher view returns director or partner home and keeps logout in existing settings', async () => {
   const source = await read('../src/frontend/api-sync.mjs');
   assert.match(source, /function temporaryTeacherParentRole\(\)[\s\S]*roles\?\.includes\('director'\)[\s\S]*roles\?\.includes\('partner'\)/);
   assert.match(source, /function returnFromTemporaryTeacherView\(\)[\s\S]*legacy\.state\.role = parentRole;[\s\S]*legacy\.state\.page = 'dashboard'/);
@@ -81,7 +81,10 @@ test('temporary teacher view returns director or partner home without replacing 
   assert.match(source, /window\.icubeReturnToHome = returnFromTemporaryTeacherView/);
   assert.match(source, /window\.icubeAuthLogout = logout/);
   assert.doesNotMatch(source, /Вернуться в режим директора|Вернуться в режим партнёра/);
-  assert.match(source, /const right = parentRole[\s\S]*icubeReturnToHome\(\)[\s\S]*icubeAuthLogout\(\)[\s\S]*: '<button class="btn" onclick="icubeAuthLogout\(\)">Выйти<\/button>'/);
+  const shell=source.slice(source.indexOf('function installAuthenticatedShells('),source.indexOf('function accessBlock('));
+  assert.match(shell,/icubeReturnToHome\(\)/);assert.match(shell,/icubeAccountSettings\(\)/);
+  assert.doesNotMatch(shell,/icubeAuthLogout\(\)/);
+  assert.match(source,/function accountSettings\(\)[\s\S]*onclick="icubeAuthLogout\(\)"/);
 });
 
 test('partner has a dedicated read-only settlements page without project selector', async () => {

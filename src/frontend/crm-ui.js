@@ -222,7 +222,8 @@ function compactBalance(value){return window.icubeEnrollmentViews?.formatBalance
 function lessonChildView(c,l){
  const group=byId(state.groups,l.groupId), views=window.icubeEnrollmentViews;
  const enrollment=views?.lessonEnrollment(c,l,group);
- return {badge:views?.balanceBadge(enrollment)||'',accent:(l.isMixed??group?.isMixed)?views?.directionClass(enrollment?.direction)||'':''};
+ const showBalance=state.role!=='teacher';
+ return {showBalance,badge:showBalance?views?.balanceBadge(enrollment)||'':'',accent:(l.isMixed??group?.isMixed)?views?.directionClass(enrollment?.direction)||'':''};
 }
 function lessonChildName(c,accent=''){
  const parentRole=window.icubeTemporaryTeacherParentRole?.();
@@ -241,7 +242,7 @@ function groupChildName(c,g){
 }
 function lessonSummaryRow(c,l,present,subtitle){
  const view=lessonChildView(c,l);
- return '<div class="kpi-line lesson-summary-row"><div class="roster-name">'+lessonChildName(c,view.accent)+(subtitle||'')+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+lessonAttendanceBadge(l,c.id,present)+'</div></div>';
+ return '<div class="kpi-line lesson-summary-row'+(view.showBalance?'':' lesson-without-balance')+'"><div class="roster-name">'+lessonChildName(c,view.accent)+(subtitle||'')+'</div>'+(view.showBalance?'<div class="roster-balance">'+view.badge+'</div>':'')+'<div class="roster-status">'+lessonAttendanceBadge(l,c.id,present)+'</div></div>';
 }
 function lessonAttendanceBadge(l,childId,present){
  const hasNotice=(l.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(childId);});
@@ -7963,7 +7964,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
         const isNew=!hasPreviousVisitInDirection(c.id,lesson,group.direction);
         const absence=(lesson.absenceNoticeChildIds||[]).some(function(id){return Number(id)===Number(c.id);});
         const view=lessonChildView(c,lesson);
-        html+='<div class="kpi-line teacher-prestart-child lesson-summary-row"><div class="roster-name">'+lessonChildName(c,view.accent)+'</div><div class="roster-balance">'+view.badge+'</div><div class="roster-status">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
+        html+='<div class="kpi-line teacher-prestart-child lesson-summary-row'+(view.showBalance?'':' lesson-without-balance')+'"><div class="roster-name">'+lessonChildName(c,view.accent)+'</div>'+(view.showBalance?'<div class="roster-balance">'+view.badge+'</div>':'')+'<div class="roster-status">'+(absence?'<span class="lesson-student-flag absence">Не будет</span>':'')+(isNew?'<span class="badge amber">Новый</span>':'')+'</div></div>';
       });
       html+='</div>';
     }
@@ -8592,9 +8593,9 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     const flags=(absenceNotice?'<span class="lesson-student-flag absence">Не будет</span>':'')+
       (birthday?'<span class="lesson-student-flag birthday">🎂 День рождения</span>':'');
     const view=lessonChildView(c,l);
-    return '<div class="student-check lesson-student-card">'+
+    return '<div class="student-check lesson-student-card'+(view.showBalance?'':' lesson-without-balance')+'">'+
       '<div class="lesson-student-name-cell"><div class="lesson-student-name" title="'+escapeAttr(c.name)+'">'+lessonChildName(c,view.accent)+'</div>'+subtitle+(flags?'<div class="lesson-student-flags">'+flags+'</div>':'')+'</div>'+
-      '<div class="lesson-student-balance-slot">'+view.badge+'</div>'+
+      (view.showBalance?'<div class="lesson-student-balance-slot">'+view.badge+'</div>':'')+
       '<div class="lesson-student-attendance-slot">'+attendanceControl+'</div>'+
       '<div class="lesson-photo-control-slot"><button class="photo lesson-photo-placeholder '+(photo?'done':'')+'" onclick="togglePhoto('+c.id+')" aria-label="Добавить фото" title="Добавить фото">📷+</button></div>'+
       '<div class="lesson-student-more-slot">'+secondaryAction+'</div>'+

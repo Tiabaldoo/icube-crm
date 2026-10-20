@@ -237,3 +237,20 @@ test('name capsule is shared by group and lesson and wraps within its name colum
  assert.match(html,/name-capsule direction-code[^>]*>Оченьдлиннаяфамилия Имя Отчество<\/button>/);
  for(const slot of ['lesson-photo-control-slot','lesson-student-more-slot','lesson-student-trial-slot'])assert.ok(html.includes(slot));
 });
+
+test('teacher lesson lists omit the financial element and column while keeping attendance, photo controls and mixed name capsules',async()=>{
+ const {context,state}=await fixture();const child=state.children[0],lesson=state.lessons[0];
+ for(const mixed of [true,false])for(const extra of [true,false]){
+  lesson.isMixed=mixed;lesson.extras=extra?[{childId:8,enrollmentId:81,present:true}]:[];
+  state.role='director';assert.match(context.studentCheck(child,lesson,extra),/lesson-student-balance-slot/);
+  state.role='teacher';const html=context.studentCheck(child,lesson,extra);
+  assert.match(html,/lesson-student-card lesson-without-balance/);assert.doesNotMatch(html,/lesson-student-balance-slot|group-balance-badge|roster-balance/);
+  assert.match(html,/lesson-student-attendance-slot/);assert.match(html,/lesson-photo-control-slot/);assert.match(html,/Оченьдлиннаяфамилия/);
+  if(mixed)assert.match(html,/name-capsule direction-code/);else assert.doesNotMatch(html,/name-capsule/);
+ }
+ lesson.started=false;lesson.done=false;assert.doesNotMatch(context.teacherLesson(),/roster-balance|group-balance-badge/);
+ const css=await readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8');const teacher=css.slice(css.indexOf('/* Teacher lesson rows'));
+ assert.match(teacher,/lesson-without-balance\{grid-template-columns:minmax\(0,1fr\) 112px/);
+ assert.match(teacher,/lesson-without-balance\{grid-template-columns:minmax\(0,1fr\) 32px 52px!important/);
+ assert.match(teacher,/lesson-without-balance\{grid-template-columns:minmax\(0,1fr\) 30px 46px!important/);
+});

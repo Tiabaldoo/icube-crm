@@ -1,7 +1,7 @@
 import { groupDisplayName } from './advanced-groups.mjs';
 import { ApiClient } from '../data/api-client.mjs';
 import { addCalendarDays, businessDate, BUSINESS_TIME_ZONE } from '../shared/business-time.mjs';
-import { currentEnrollments, directionStatus } from './quick-status.mjs';
+import { currentEnrollments, directionStatus, visibleBalanceRows } from './quick-status.mjs';
 
 const activeEnrollment = (child, enrollment) => directionStatus(child, enrollment) === 'Активный';
 const projectMatches = (projectId, allowedProjectIds) => !allowedProjectIds || allowedProjectIds.has(String(projectId));
@@ -57,11 +57,11 @@ export function calculateDashboardMetrics({ children = [], groups = [], payments
 
 export function attentionCounts(children, projectIds = null) {
   const allowed = projectIds == null ? null : new Set(projectIds.map(String));
-  const relevant = (child) => (child.enrollments ?? []).filter((enrollment) => projectMatches(enrollment.projectId, allowed));
+  const rows = visibleBalanceRows(children).filter(({e,hidden}) => !hidden && projectMatches(e.projectId, allowed));
   return {
-    low: (children ?? []).filter((child) => relevant(child).some((enrollment) => Number(enrollment.balance) === 1)).length,
-    zero: (children ?? []).filter((child) => relevant(child).some((enrollment) => Number(enrollment.balance) === 0)).length,
-    debt: (children ?? []).filter((child) => relevant(child).some((enrollment) => Number(enrollment.balance) < 0)).length,
+    low: rows.filter(({e}) => Number(e.balance) === 1).length,
+    zero: rows.filter(({e}) => Number(e.balance) === 0).length,
+    debt: rows.filter(({e}) => Number(e.balance) < 0).length,
   };
 }
 
@@ -208,6 +208,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
       const notification = (state.notifications ?? []).find((item) => String(item.id) === String(id));
       if (notification) notification.readAt = new Date().toISOString();
       legacy.render();
+      windowObject.icubePush?.syncInbox?.();
     } catch (error) {
       windowObject.alert(error?.message ?? 'Не удалось отметить уведомление прочитанным');
     }

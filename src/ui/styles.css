@@ -1548,3 +1548,15 @@ body.context-help-open{overflow:hidden}
  .hidden-debt-row>:nth-child(3){grid-column:2;grid-row:1;justify-self:end}
  .hidden-debt-row>:last-child{grid-column:2;grid-row:2;justify-self:end}
 }
+/* Teacher lesson rows have no financial column; keep attendance and photo slots. */
+.lesson-summary-row.lesson-without-balance{grid-template-columns:minmax(0,1fr) 112px}
+.student-check.lesson-student-card.lesson-without-balance,.teacher-content .student-check.lesson-student-card.lesson-without-balance{grid-template-columns:minmax(0,1fr) 32px 52px!important}
+.student-check.lesson-student-card.lesson-without-balance>.lesson-student-attendance-slot,.teacher-content .student-check.lesson-student-card.lesson-without-balance>.lesson-student-attendance-slot{grid-column:2!important}
+.student-check.lesson-student-card.lesson-without-balance>.lesson-photo-summary-slot,.teacher-content .student-check.lesson-student-card.lesson-without-balance>.lesson-photo-summary-slot{grid-column:3!important}
+.student-check.lesson-student-card.lesson-without-balance>.lesson-student-trial-slot,.teacher-content .student-check.lesson-student-card.lesson-without-balance>.lesson-student-trial-slot{grid-column:1!important}
+.student-check.lesson-student-card.lesson-without-balance>.lesson-student-more-slot,.teacher-content .student-check.lesson-student-card.lesson-without-balance>.lesson-student-more-slot{grid-column:2!important}
+.student-check.lesson-student-card.lesson-without-balance>.lesson-photo-add-slot,.teacher-content .student-check.lesson-student-card.lesson-without-balance>.lesson-photo-add-slot{grid-column:3!important}
+@media(max-width:760px){
+ .lesson-summary-row.lesson-without-balance{grid-template-columns:minmax(0,1fr) 94px}
+ .student-check.lesson-student-card.lesson-without-balance,.teacher-content .student-check.lesson-student-card.lesson-without-balance{grid-template-columns:minmax(0,1fr) 30px 46px!important}
+}

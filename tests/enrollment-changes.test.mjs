@@ -194,9 +194,9 @@ test('изменение индивидуальной цены закрывае�
 
 test('frontend отправляет смену направления и цены одним атомарным запросом', async () => {
   const source = await readFile(new URL('../src/frontend/api-sync.mjs', import.meta.url), 'utf8');
-  const save = source.slice(source.indexOf('async function saveEnrollment'), source.indexOf('async function addEnrollment'));
+  const save = source.slice(source.indexOf('async function saveEnrollment('), source.indexOf('async function addEnrollment'));
   assert.match(save, /individual \? packagePrice \/ 4 : null/);
-  assert.match(save, /groupStartedOn: value\('#md-group-started-on'\) \|\| businessDate\(\)/);
+  assert.match(save, /groupStartedOn: value\('#md-group-started-on'\) \|\| enrollment\.groupStartedOn \|\| businessDate\(\)/);
   assert.match(save, /\/enrollments\/\$\{enrollment\.id\}\/change-direction/);
   assert.doesNotMatch(save, /api\.createEnrollment/); assert.doesNotMatch(save, /existingTarget/);
   assert.ok(save.indexOf('legacy.state.modal = null') > save.indexOf('await api.request'));

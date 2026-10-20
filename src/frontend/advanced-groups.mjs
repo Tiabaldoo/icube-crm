@@ -28,11 +28,12 @@ export function groupRegularScheduleLabel(group) {
 export function advancedGroupFields(group = {}, director = false) {
   const count = group.packageLessonCount ?? 4;
   const expanded = group.isIndividual || count !== 4 || group.calculationMode === 'attendance_share' || group.scheduleSlots?.length;
-  return `<details class="advanced-group-settings span-2"${expanded ? ' open' : ''}><summary>Расширенные настройки</summary><div class="form-grid">
+  const priceField = `<div class="field" data-group-package-price><label>${group.isIndividual ? 'Цена пакета, ₽' : 'Стоимость абонемента за 4 занятия, ₽'}</label><input class="input" id="gf-package-price" type="number" min="0.01" step="0.01" value="${group.price == null || group.price === '' ? '' : (Number(group.price) * (group.isIndividual ? count : 4)).toFixed(2)}" placeholder="Пусто = цена направления" oninput="icubeAdvancedGroups.refresh(true)"><div class="muted mini" id="gf-unit-hint"></div></div>`;
+  return `${group.isIndividual ? '' : priceField}<details class="advanced-group-settings span-2"${expanded ? ' open' : ''}><summary>Расширенные настройки</summary><div class="form-grid">
     <div class="field span-2"><label>Дополнительные дни</label><div id="gf-extra-slots"></div><button type="button" class="btn soft" onclick="icubeAdvancedGroups.addSlot()">+ Добавить день</button></div>
     <div class="field span-2"><label><input id="gf-individual" type="checkbox"${group.isIndividual ? ' checked' : ''} onchange="icubeAdvancedGroups.refresh()"> Индивидуальная группа</label><div class="muted mini">Одно направление, максимум один текущий ребёнок.</div></div>
     <div class="field"><label>Занятий в пакете</label><input class="input" id="gf-package-count" type="number" min="1" max="1000" step="1" value="${count}" oninput="icubeAdvancedGroups.refresh(true)"></div>
-    <div class="field"><label>Цена пакета, ₽</label><input class="input" id="gf-package-price" type="number" min="0.01" step="0.01" value="${group.price == null ? '' : (Number(group.price) * count).toFixed(2)}" placeholder="Пусто = цена направления" oninput="icubeAdvancedGroups.refresh(true)"><div class="muted mini" id="gf-unit-hint"></div></div>
+    ${group.isIndividual ? priceField : ''}
     <div class="field span-2"><label>Расчёт</label><select class="select" id="gf-calculation-mode" onchange="icubeAdvancedGroups.refresh()"><option value="standard">Стандартный</option><option value="attendance_share"${group.calculationMode === 'attendance_share' ? ' selected' : ''}>Долевой от посещённого занятия</option></select></div>
     <div class="field" data-group-share><label>Доля преподавателя, %</label><input class="input" id="gf-teacher-share" type="number" min="0" max="100" step="0.0001" value="${html(group.teacherSharePercent ?? '0')}" oninput="icubeAdvancedGroups.refresh()"></div>
     <div class="field" data-group-share><label>Доля партнёра, %</label><input class="input" id="gf-partner-share" type="number" min="0" max="100" step="0.0001" value="${html(group.partnerSharePercent ?? '0')}" oninput="icubeAdvancedGroups.refresh()"></div>
@@ -45,6 +46,7 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
   const field = (selector) => document.querySelector(selector);
   const value = (selector) => field(selector)?.value ?? '';
   let slots = []; let packageEdited = false;
+  let lastIndividual = false;
   function slotHtml(slot, index) {
     return `<div class="advanced-schedule-slot"><select class="select" aria-label="День дополнительного занятия" onchange="icubeAdvancedGroups.setSlot(${index},'weekday',this.value)">${days.map((day, i) => `<option value="${i + 1}"${Number(slot.weekday) === i + 1 ? ' selected' : ''}>${day}</option>`).join('')}</select><input class="input" type="time" aria-label="Начало дополнительного занятия" value="${html(slot.startTime)}" onchange="icubeAdvancedGroups.setSlot(${index},'startTime',this.value)"><input class="input" type="time" aria-label="Окончание дополнительного занятия" value="${html(slot.endTime)}" onchange="icubeAdvancedGroups.setSlot(${index},'endTime',this.value)"><button type="button" class="btn" aria-label="Удалить дополнительный день" onclick="icubeAdvancedGroups.removeSlot(${index})">×</button></div>`;
   }
@@ -59,22 +61,36 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
     document.querySelectorAll('[data-group-share]').forEach((node) => { node.hidden = mode?.value !== 'attendance_share'; });
     const packageField = field('#gf-package-price');
     if (packageField) packageField.disabled = mixed;
+    const priceCount = individual?.checked ? Number(value('#gf-package-count')) : 4;
+    if (lastIndividual !== Boolean(individual?.checked) && packageField && field('#gf-price')) {
+      packageField.value = value('#gf-price') ? (Number(value('#gf-price')) * priceCount).toFixed(2) : '';
+      lastIndividual = Boolean(individual?.checked);
+    }
+    const priceWrapper = field('[data-group-package-price]');
+    if (priceWrapper) priceWrapper.hidden = mixed;
+    const priceLabel = priceWrapper?.querySelector?.('label');
+    if (priceLabel) priceLabel.textContent = individual?.checked ? 'Цена пакета, ₽' : 'Стоимость абонемента за 4 занятия, ₽';
+    const unitWrapper = field('#gf-price')?.closest?.('.field');
+    if (unitWrapper) unitWrapper.hidden = mixed || !individual?.checked;
     const hint = field('#gf-unit-hint');
     const price = Number(value('#gf-package-price')), count = Number(value('#gf-package-count'));
-    if (hint) hint.textContent = price > 0 && count > 0 ? `${(price / count).toFixed(2)} ₽ / занятие` : 'Используется обычный приоритет цен CRM';
-    if (edited && !mixed && field('#gf-price')) field('#gf-price').value = price > 0 && count > 0 ? (price / count).toFixed(2) : '';
+    if (hint) hint.textContent = price > 0 && priceCount > 0 ? `${(price / priceCount).toFixed(2)} ₽ / занятие` : 'Используется обычный приоритет цен CRM';
+    if (edited && !mixed && field('#gf-price')) field('#gf-price').value = price > 0 && priceCount > 0 ? (price / priceCount).toFixed(2) : '';
     document.querySelectorAll('[data-mixed-price] label').forEach((label) => { label.textContent = label.textContent.replace(/₽ за \d+ занят(?:ия|ий)/, `₽ за ${count || 4} ${count === 4 ? 'занятия' : 'занятий'}`); });
     const shareHint = field('#gf-icube-share');
     if (shareHint) shareHint.textContent = `Доля iCube: ${(100 - Number(value('#gf-teacher-share')) - Number(value('#gf-partner-share'))).toFixed(4).replace(/\.?0+$/, '')}% (налог вычитается из этой доли)`;
   }
   function payload() {
     if (!field('#gf-package-count')) return {};
-    return { isIndividual: Boolean(field('#gf-individual')?.checked), packageLessonCount: Number(value('#gf-package-count')),
+    const individual = Boolean(field('#gf-individual')?.checked), count = Number(value('#gf-package-count'));
+    const packagePrice = !value('#gf-package-price') ? null : individual || count === 4
+      ? value('#gf-package-price') : (Number(value('#gf-price')) * count).toFixed(2);
+    return { isIndividual: individual, packageLessonCount: count,
       calculationMode: value('#gf-calculation-mode') || 'standard', teacherSharePercent: value('#gf-teacher-share') || '0',
       partnerSharePercent: value('#gf-partner-share') || '0', customTaxEnabled: Boolean(field('#gf-custom-tax')?.checked),
       ...(field('#gf-partner-calendar-visible') ? { partnerCalendarVisible: Boolean(field('#gf-partner-calendar-visible').checked) } : {}),
       scheduleSlots: slots.map((slot) => ({ ...slot })),
-      ...(packageEdited && value('#gf-dir') !== 'Смешанная' ? { packagePrice: value('#gf-package-price') || null } : {}) };
+      ...(packageEdited && value('#gf-dir') !== 'Смешанная' ? { packagePrice } : {}) };
   }
   host.groupTitle = groupDisplayName;
   host.groupRegularSchedule = groupRegularScheduleLabel;
@@ -86,6 +102,7 @@ export function installAdvancedGroupUi(legacy, host = window, document = globalT
     if (!legacy.state.modal) return result;
     const group = { ...legacy.state.groups.find((item) => String(item.id) === String(id)), ...suppliedDraft };
     slots = (group.scheduleSlots ?? []).map((slot) => ({ ...slot })); packageEdited = false;
+    lastIndividual = Boolean(group.isIndividual);
     const fieldsHtml = advancedGroupFields(group, legacy.state.role === 'director');
     legacy.state.modal = legacy.state.modal.replace('<div class="modal-actions">', `${fieldsHtml}<div class="modal-actions">`);
     field('.modal-actions')?.insertAdjacentHTML('beforebegin', fieldsHtml);
