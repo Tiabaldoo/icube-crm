@@ -128,6 +128,8 @@ for (const [name, overrides, code] of [
 test('PATCH enrollment не переписывает направление существующей финансовой истории', async () => {
   let mutated = false;
   const query = async (sql) => {
+    if (sql.startsWith('SELECT child_id FROM child_enrollments')) return [[{ child_id: 8 }]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 8, status: 'active' }]];
     if (sql.startsWith('SELECT * FROM child_enrollments')) return [[{ id: 9, child_id: 8, direction_id: 1, status: 'active', individual_price: null }]];
     if (sql.startsWith('UPDATE child_enrollments')) { mutated = true; return [{ affectedRows: 1 }]; }
     throw new Error(`Неожиданный SQL: ${sql}`);

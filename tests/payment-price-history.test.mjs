@@ -95,6 +95,7 @@ test('current child tariff uses the effective membership rather than a future pl
     ALTER TABLE study_groups ADD COLUMN site_id INTEGER;
     CREATE TABLE projects(id INTEGER,name TEXT); INSERT INTO projects VALUES(2,'Проект');
     CREATE TABLE sites(id INTEGER,name TEXT);
+    CREATE TABLE lessons(id INTEGER PRIMARY KEY,deleted_at TEXT,is_mixed_snapshot INTEGER,direction_id_snapshot INTEGER,project_id_snapshot INTEGER);
     CREATE TABLE teacher_projects(teacher_id INTEGER,project_id INTEGER,active INTEGER);
     CREATE TABLE teacher_project_directions(teacher_id INTEGER,project_id INTEGER,direction_id INTEGER);
     INSERT INTO study_groups(id,calculation_mode,package_lesson_count) VALUES(10,'standard',4);
@@ -102,7 +103,7 @@ test('current child tariff uses the effective membership rather than a future pl
     INSERT INTO price_versions VALUES(4,'group',NULL,10,NULL,NULL,'1100.00','2026-01-01',NULL);`);
   const catalog = createMysqlCatalog({ async query(sql, p) {
     if (sql.startsWith('SELECT c.id, c.full_name')) return [[{ id: 8, full_name: 'Ребёнок' }]];
-    return f.query(sql, p);
+    return f.query(sql.replaceAll('JSON_ARRAYAGG(', 'json_group_array('), p);
   } });
   const [child] = await catalog.list('children');
   assert.equal(child.enrollments[0].currentPrice, '1125.00');

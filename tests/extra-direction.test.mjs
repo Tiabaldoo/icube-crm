@@ -12,6 +12,8 @@ function fixture({ completed = false, existingTarget = false, targetStatus = 'ac
     roster: completed ? 'extra' : null, created: 0, reversals: 0, salaryChecks: 0, calls: [] };
   const query = async (sql, p = {}) => {
     state.calls.push({ sql, p });
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 51, status: 'active' }]];
+    if (sql.startsWith('SELECT id,status FROM child_enrollments')) return [state.enrollments.map((row) => ({ id: row.id, status: row.status }))];
     if (sql === 'SELECT * FROM lessons WHERE id=:id FOR UPDATE') return [[lesson]];
     if (sql.startsWith('SELECT tp.teacher_id FROM teacher_projects')) return [[{ teacher_id: 4 }]];
     if (sql.includes('FROM lessons l JOIN study_groups')) return [[{ ...lesson, group_name: 'Группа', direction_name: 'Робототехника', project_name: 'iCubeRobots',

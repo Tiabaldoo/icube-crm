@@ -64,6 +64,8 @@ test('пустой период возвращает корректные нул
 test('первое назначение группы заполняет только пустые snapshots payment и refund', async () => {
   const snapshotSql = [];
   const query = async (sql, params = {}) => {
+    if (sql.startsWith('SELECT child_id FROM child_enrollments')) return [[{ child_id: 8 }]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 8, status: 'active' }]];
     if (sql === 'SELECT id,is_individual FROM study_groups WHERE id=:groupId FOR UPDATE') return [[{ id: params.groupId, is_individual: 0 }]];
     if (sql.includes('FROM attendances a JOIN lessons l') && sql.includes("calculation_mode_snapshot='attendance_share'")) return [[]];
     if (sql.includes(') custom_cash')) return [[{ custom_cash: '0.00' }]];

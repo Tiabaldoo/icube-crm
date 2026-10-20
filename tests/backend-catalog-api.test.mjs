@@ -171,6 +171,7 @@ test('подтверждение созданного преподавателе
   let needsDirectorReview = true;
   let savedReview;
   const query = async (sql, params = {}) => {
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 8, status: 'lead' }]];
     if (sql.includes('FROM children c LEFT JOIN child_guardians')) return [[{
       id: 8, full_name: 'Новый Ребёнок', birth_date: null, school: null, grade: null, status: 'lead', note: null,
       needs_director_review: needsDirectorReview, guardian_name: null, guardian_phone: null,

@@ -196,6 +196,10 @@ test('полностью очищенный enrollment удаляется вме
   const calls = [];
   const handler = async (sql, params = {}) => {
     calls.push({ sql, params });
+    if (sql.startsWith('SELECT child_id FROM child_enrollments')) return [[{ child_id: 8 }]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 8, status: 'active' }]];
+    if (sql.startsWith('SELECT id,status FROM child_enrollments')) return [[{ id: 10, status: 'active' }]];
+    if (sql.startsWith('SELECT id FROM audit_log')) return [[]];
     if (sql.startsWith('SELECT id,child_id,balance_lessons')) return [[{ id: 9, child_id: 8, balance_lessons: '0.00000000' }]];
     if (sql.startsWith('SELECT id FROM child_enrollments WHERE child_id')) return [[{ id: 9 }, { id: 10 }]];
     if (sql.includes('FROM payments WHERE enrollment_id')) return [[{ payments: 0, refunds: 0, attendances: 0, memberships: 0, balanceTransfers: 0, balanceEffects: 0 }]];
@@ -209,6 +213,8 @@ test('полностью очищенный enrollment удаляется вме
 
 test('absent attendance остаётся активной историей и блокирует удаление enrollment', async () => {
   const handler = async (sql) => {
+    if (sql.startsWith('SELECT child_id FROM child_enrollments')) return [[{ child_id: 8 }]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 8, status: 'active' }]];
     if (sql.startsWith('SELECT id,child_id,balance_lessons')) return [[{ id: 9, child_id: 8, balance_lessons: '0.00000000' }]];
     if (sql.startsWith('SELECT id FROM child_enrollments WHERE child_id')) return [[{ id: 9 }, { id: 10 }]];
     if (sql.includes('FROM payments WHERE enrollment_id')) {

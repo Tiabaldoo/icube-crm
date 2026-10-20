@@ -325,7 +325,7 @@ function attendanceLessonDto({ id = '166287', date = '2026-10-16', trial = false
 }
 
 function visitTableRow(html, lessonId) {
-  return html.split('<div class="row"').find((row) => row.includes(`deleteVisitPrompt(8,${lessonId})`));
+  return html.split('<div class="row"').find((row) => row.includes(`icubeApi.editVisit(8,${lessonId})`));
 }
 
 test('visit type stays with its attendance after sorting and deleting the neighbouring visit', async () => {
@@ -407,9 +407,9 @@ for (const extra of [false, true]) test(`child visit history omits cleared ${ext
     groupRosterFrozenV146: true, groupChildIdsV146: extra ? [] : [child.id],
     attendance: extra ? {} : { [child.id]: true }, extras: extra ? [{ childId: child.id, present: true, trial: false }] : [] });
   state.lessons = [lesson]; state.selectedLesson = lesson.id; state.selectedChild = child.id; state.childTab = 'visits';
-  assert.match(context.child(), /deleteVisitPrompt\(/);
+  assert.match(context.child(), /icubeApi\.editVisit\(/);
   if (extra) lesson.extras[0].present = false; else lesson.attendance[child.id] = false;
-  assert.doesNotMatch(context.child(), /deleteVisitPrompt\(/);
+  assert.doesNotMatch(context.child(), /icubeApi\.editVisit\(/);
   assert.match(context.lesson(), new RegExp(child.name));
   assert.equal(extra ? lesson.extras.length : lesson.groupChildIdsV146.length, 1);
 });

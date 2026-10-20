@@ -70,7 +70,7 @@ async function fixture(options = {}) {
   const storageDir = await mkdtemp(path.join(tmpdir(), 'icube-photos-'));
   const pool = memoryPool(options);
   const service = createLessonPhotoService(pool, { storageDir, maxUploadBytes: 1024, retentionDays: 30,
-    now: () => new Date('2026-09-19T12:00:00Z'), parentNotifications: options.parentNotifications ?? null });
+    now: options.now ?? (() => new Date('2026-09-19T12:00:00Z')), parentNotifications: options.parentNotifications ?? null });
   return { storageDir, pool, service, async close() { await rm(storageDir, { recursive: true, force: true }); } };
 }
 
@@ -92,6 +92,20 @@ test('invalid mime and oversized files are rejected before storage', async (t) =
   const f = await fixture(); t.after(f.close);
   await assert.rejects(f.service.upload(10, uploadInput({ buffer: Buffer.from('<html>'), mimeType: 'text/html' }), director), { status: 415, code: 'PHOTO_TYPE_INVALID' });
   await assert.rejects(f.service.upload(10, uploadInput({ buffer: Buffer.alloc(1025) }), director), { status: 413, code: 'PHOTO_TOO_LARGE' });
+});
+
+test('photo metadata and file access share the injected clock at the exact expiry boundary', async (t) => {
+  let currentTime = new Date('2026-10-18T23:59:59.999Z');
+  const f = await fixture({ photos: [{}], now: () => currentTime }); t.after(f.close);
+  const [available] = await f.service.list(10, teacher);
+  assert.equal(available.expired, false); assert.equal(available.canReplace, true);
+  assert.match(available.fileUrl, /\/photos\/1\/file$/);
+  currentTime = new Date('2026-10-19T00:00:00Z');
+  const [expired] = await f.service.list(10, teacher);
+  assert.equal(expired.expired, true); assert.equal(expired.canReplace, false); assert.equal(expired.fileUrl, null);
+  await assert.rejects(f.service.file(10, 1, teacher), { code: 'PHOTO_EXPIRED' });
+  await assert.rejects(f.service.upload(10, uploadInput({ replacePhotoId: 1 }), teacher), { code: 'FORBIDDEN' });
+  assert.equal(f.pool.state.photos.length, 1); assert.equal(f.pool.state.photos[0].deleted_at, null);
 });
 
 test('teacher and partner cannot access a foreign lesson', async (t) => {

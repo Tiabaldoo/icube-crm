@@ -109,6 +109,8 @@ test('group assignment requires both site ownership and teacher project availabi
 
 test('partner sees own and foreign enrollments of an accessible mixed-project child', async () => {
   const db = pool(async (sql, params = {}) => {
+    if (sql.startsWith('SELECT child_id FROM child_enrollments')) return [[{ child_id: 5 }]];
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: 5, status: 'active' }]];
     if (sql.includes('FROM children c LEFT JOIN child_guardians')) return [[{ id: 5, full_name: 'Ребёнок', status: 'active', needs_director_review: 0 }]];
     if (sql.includes('FROM child_enrollments e JOIN directions')) return [[
       { id: 7, child_id: 5, direction_id: 1, direction_name: 'Робототехника', project_id: 1, project_name: 'iCubeRobots', status: 'active', balance_lessons: '3.00000000', current_price: '1025.00', group_id: 10, group_name: 'Техническое имя', site_name: 'Школа №1', weekday: 3, start_time: '15:30:00' },

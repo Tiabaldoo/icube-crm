@@ -335,6 +335,7 @@ function catalogFixture(membershipSql = null) {
     is_individual: false, package_lesson_count: 4, calculation_mode: 'standard', price: null };
   let slots = []; let memberCount = 0; const writes = [];
   const query = async (sql, p = {}) => {
+    if (sql.startsWith('SELECT id,status FROM children')) return [[{ id: p.childId, status: 'active' }]];
     if (sql.includes('FROM study_groups g JOIN directions')) return [[{ ...group, schedule_slots: structuredClone(slots) }]];
     if (sql.startsWith('SELECT id,is_individual')) return [[{ id: 10, is_individual: group.is_individual }]];
     if (sql.startsWith('SELECT COUNT(DISTINCT e.child_id)')) return membershipSql ? membershipSql.query(sql, p) : [[{ member_count: memberCount }]];

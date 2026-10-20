@@ -73,8 +73,9 @@ test('first and read-history notification clicks both open the standard release 
     authProfile: { roles: ['teacher'] }, inboxBase: () => '/notifications', parentInbox: () => false,
     syncBellIcons() {}, closePushPanel() {}, openReleaseNote, window: { alert(message) { throw new Error(message); } } });
   const destination = sync.slice(sync.indexOf('async function openNotificationDestination('), sync.indexOf('async function handlePushDeepLink('));
+  const inbox = push.slice(push.indexOf('function inboxNotifications('), push.indexOf('function syncBellIcons('));
   const click = push.slice(push.indexOf('async function openNotification('), push.indexOf('async function runAction('));
-  vm.runInContext(`${destination}\n${click}\nwindow.icubeOpenNotification=openNotificationDestination;`, context);
+  vm.runInContext(`${inbox}\n${destination}\n${click}\nwindow.icubeOpenNotification=openNotificationDestination;`, context);
   await context.openNotification('1'); assert.ok(notification.readAt);
   assert.match(legacy.state.modal, /Что нового в версии 1.1/); assert.match(legacy.state.modal, /closeModal\(\)/);
   assert.doesNotMatch(legacy.state.modal, /Смешанные группы/);

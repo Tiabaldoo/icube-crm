@@ -815,7 +815,7 @@ test('автоматический перенос скрывает отмену,
   const state = {
     role: 'director', page: 'child', childTab: 'overview', selectedChild: 8,
     projects: [], sites: [], teachers: [], groups: [], payments: [], refunds: [], lessons: [], notifications: [],
-    children: [{ id: 8 }],
+    children: [{ id: 8, enrollments: [] }],
     balanceTransfers: [
       { id: 70, childId: 8, sourceDirectionName: 'Робототехника', targetDirectionName: 'Программирование',
         transferredAt: '2026-09-23T12:00:00.000Z', transferredAmount: '3075.00', targetLessonsCredit: '2.73333333', automaticChangeDirection: true },

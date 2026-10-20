@@ -31,6 +31,15 @@ function globals(profileResponse) {
   return { app, state, calls, resources, restore() { Object.assign(globalThis, original); } };
 }
 
+function assertLogoutInSettings(setup) {
+  assert.match(setup.app.innerHTML, /icubeAccountSettings\(\)/);
+  assert.doesNotMatch(setup.app.innerHTML, /icubeAuthLogout\(\)|Выйти/);
+  globalThis.window.icubeAccountSettings();
+  assert.match(setup.state.modal, /icubeAuthLogout\(\)/);
+  assert.match(setup.state.modal, /Выйти/);
+  setup.state.modal = null;
+}
+
 test('неавторизованный frontend показывает вход и не запрашивает CRM до /auth/me', async () => {
   const setup = globals({ ok: false, status: 401, async json() { return { error: { code: 'UNAUTHENTICATED', message: 'Требуется вход' } }; } });
   try {
@@ -49,9 +58,9 @@ test('teacher получает ограниченную навигацию и fr
     await import(`../src/frontend/api-sync.mjs?auth-teacher=${Date.now()}`);
     await globalThis.window.icubeAuthReady;
     assert.equal(setup.state.role, 'teacher'); assert.equal(setup.state.prototypeTeacherId, 7);
-    assert.match(setup.app.innerHTML, /Сегодня/); assert.match(setup.app.innerHTML, /Календарь/); assert.match(setup.app.innerHTML, /Выйти/);
+    assert.match(setup.app.innerHTML, /Сегодня/); assert.match(setup.app.innerHTML, /Календарь/); assertLogoutInSettings(setup);
     assert.doesNotMatch(setup.app.innerHTML, /Вернуться на главную/);
-    assert.doesNotMatch(setup.app.innerHTML, /role-switch|Платежи|Статистика|Настройки|Выберите преподавателя/);
+    assert.doesNotMatch(setup.app.innerHTML, /role-switch|Платежи|Статистика|Выберите преподавателя/);
     assert.deepEqual(new Set(setup.calls.slice(1)), new Set(['/groups', '/children', '/lessons', '/lesson-deletions', '/notifications']));
   } finally { setup.restore(); }
 });
@@ -62,12 +71,12 @@ test('director сохраняет полный CRM и teacher-mode остаёт�
   try {
     await import(`../src/frontend/api-sync.mjs?auth-director=${Date.now()}`);
     await globalThis.window.icubeAuthReady;
-    assert.equal(setup.state.role, 'director'); assert.match(setup.app.innerHTML, /Ирина Директор/); assert.match(setup.app.innerHTML, /Выйти/);
+    assert.equal(setup.state.role, 'director'); assert.match(setup.app.innerHTML, /Ирина Директор/); assertLogoutInSettings(setup);
     assert.doesNotMatch(setup.app.innerHTML, /role-switch|Режим прототипа/);
     assert.ok(setup.calls.some((path) => path === '/payments')); assert.ok(setup.calls.some((path) => path.startsWith('/statistics?')));
     setup.state.lessons = [{ id: 10, teacherId: 7 }]; setup.state.teachers = [{ id: 7, name: 'Учитель А' }]; setup.state.selectedLesson = 10; setup.state.role = 'teacher'; setup.state.page = 'teacherLesson';
     setup.state.authUser = profile; setup.app.innerHTML = globalThis.window.teacherShell('<main>Урок</main>');
-    assert.match(setup.app.innerHTML, /Вернуться на главную/); assert.match(setup.app.innerHTML, /Выйти/); assert.doesNotMatch(setup.app.innerHTML, /Выберите преподавателя/);
+    assert.match(setup.app.innerHTML, /Вернуться на главную/); assertLogoutInSettings(setup); assert.doesNotMatch(setup.app.innerHTML, /Выберите преподавателя/);
   } finally { setup.restore(); }
 });
 
@@ -88,7 +97,7 @@ test('partner temporary teacher-view возвращается на партнё�
     setup.app.innerHTML = globalThis.window.teacherShell('<main>Урок</main>');
 
     assert.match(setup.app.innerHTML, /Вернуться на главную/);
-    assert.match(setup.app.innerHTML, /Выйти/);
+    assertLogoutInSettings(setup);
     globalThis.window.icubeReturnToHome();
     assert.equal(setup.state.role, 'partner');
     assert.equal(setup.state.page, 'dashboard');

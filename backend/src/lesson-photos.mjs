@@ -61,11 +61,11 @@ function safeOriginalFilename(value) {
   return decoded ? path.basename(decoded).replace(/[\u0000-\u001f\u007f]/g, '') || null : null;
 }
 
-function mapPhoto(row, context, lesson) {
+function mapPhoto(row, context, lesson, currentTime) {
   const teacherLessonAccess = hasRole(context, 'teacher')
     && [lesson.planned_teacher_id, lesson.actual_teacher_id].some((id) => String(id ?? '') === String(context.teacherId ?? ''));
   const canDelete = hasRole(context, 'director') || hasRole(context, 'partner') || teacherLessonAccess;
-  const expired = row.purged_at != null || row.deleted_at != null || new Date(row.expires_at).getTime() <= Date.now();
+  const expired = row.purged_at != null || row.deleted_at != null || new Date(row.expires_at).getTime() <= currentTime.getTime();
   return {
     id: String(row.id), lessonId: String(row.lesson_id), childId: String(row.child_id), mimeType: row.mime_type,
     sizeBytes: Number(row.size_bytes), width: row.width == null ? null : Number(row.width), height: row.height == null ? null : Number(row.height),
@@ -115,7 +115,8 @@ export function createLessonPhotoService(pool, {
     const lesson = await lessonForAccess(pool, lessonId, context);
     const [rows] = await pool.query(`SELECT * FROM lesson_photos WHERE lesson_id=:lessonId AND deleted_at IS NULL
       ORDER BY child_id,uploaded_at,id`, { lessonId: lesson.id });
-    return rows.map((row) => mapPhoto(row, context, lesson));
+    const currentTime = now();
+    return rows.map((row) => mapPhoto(row, context, lesson, currentTime));
   }
   async function upload(lessonId, { childId, buffer, mimeType, originalFilename, replacePhotoId = null, clientUploadId, capturedAt }, context = {}) {
     childId = identifier(childId, 'childId');
@@ -156,7 +157,7 @@ export function createLessonPhotoService(pool, {
             AND child_id=:childId AND deleted_at IS NULL FOR UPDATE`, { photoId: identifier(replacePhotoId, 'replacePhotoId'), lessonId: lesson.id, childId });
           replacement = rows[0];
           if (!replacement) throw new ApiProblem(404, 'PHOTO_NOT_FOUND', 'Заменяемая фотография не найдена');
-          if (!mapPhoto(replacement, context, lesson).canReplace) throw new ApiProblem(403, 'FORBIDDEN', 'Заменить эту фотографию нельзя');
+          if (!mapPhoto(replacement, context, lesson, now()).canReplace) throw new ApiProblem(403, 'FORBIDDEN', 'Заменить эту фотографию нельзя');
         }
         const [counts] = await connection.query(`SELECT COUNT(*) count FROM lesson_photos
           WHERE lesson_id=:lessonId AND child_id=:childId AND deleted_at IS NULL
@@ -196,7 +197,7 @@ export function createLessonPhotoService(pool, {
         AND deleted_at IS NULL FOR UPDATE`, { photoId: identifier(photoId, 'photoId'), lessonId: lesson.id });
       const photo = rows[0];
       if (!photo) throw new ApiProblem(404, 'PHOTO_NOT_FOUND', 'Фотография не найдена');
-      if (!mapPhoto(photo, context, lesson).canDelete) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить эту фотографию нельзя');
+      if (!mapPhoto(photo, context, lesson, now()).canDelete) throw new ApiProblem(403, 'FORBIDDEN', 'Удалить эту фотографию нельзя');
       storageKey = photo.storage_key;
       await connection.query('UPDATE lesson_photos SET deleted_at=NOW(6) WHERE id=:id', { id: photo.id });
     });

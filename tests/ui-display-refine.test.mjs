@@ -33,7 +33,7 @@ test('child group selectors use the shared title and group cards extend it with 
   assert.match(manageOptions, /selected/);
 
   const groupsStart = ui.lastIndexOf('window.groups=function()');
-  const groupsEnd = ui.indexOf('\n\n  render();', groupsStart);
+  const groupsEnd = ui.slice(groupsStart).search(/\r?\n\r?\n  render\(\);/) + groupsStart;
   const groupsPage = ui.slice(groupsStart, groupsEnd);
   assert.ok(groupsStart >= 0 && groupsEnd > groupsStart);
   assert.match(groupsPage, /<h3[^>]*>'\+escapeHtml\(groupTitle\(g\)\)/);
