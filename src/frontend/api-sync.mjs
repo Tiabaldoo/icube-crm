@@ -69,6 +69,8 @@ legacy.state.statisticsDateFrom ||= initialStatisticsPeriod.from;
 legacy.state.statisticsDateTo ||= initialStatisticsPeriod.to;
 legacy.state.statisticsProjectId ||= 'all';
 legacy.state.statisticsDirectionId ||= 'all';
+legacy.state.statisticsChartFrom ||= calendarMonthPeriod(new Date(), -11).from;
+legacy.state.statisticsChartTo ||= initialStatisticsPeriod.to;
 const initialRentPeriod = rentDefaultPeriod();
 legacy.state.rentSiteId ||= 'all';
 legacy.state.rentDateFrom ||= initialRentPeriod.from;
@@ -459,7 +461,7 @@ window.icubeRentPage = rentPage;
 async function reload({ render = true } = {}) {
   if (authProfile?.roles?.includes('teacher') && !authProfile.roles.includes('director')) return reloadTeacher({ render });
   const partner = authProfile?.roles?.includes('partner') && !authProfile.roles.includes('director');
-  const statisticsQuery = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
+  const statisticsQuery = statisticsQueryString();
   const [projects, directions, sites, teachers, groups, calendarGroups, children, payments, refunds, lessons, lessonDeletions, notifications, balanceTransfers, statistics, dailySummary, venues] = await Promise.all([
     api.list('projects'), api.list('directions'), api.list('sites'), api.list('teachers'), api.list('groups'), partner ? api.list('calendar-groups') : Promise.resolve([]), api.list('children'), api.list('payments'), api.list('refunds'), api.list('lessons'), api.list('lesson-deletions'), api.list('notifications').catch(() => []),
     api.list('balance-transfers'), partner ? Promise.resolve(null) : api.list('statistics', statisticsQuery), api.request('/dashboard/daily'), api.list('sites/venues'),
@@ -835,36 +837,105 @@ async function cancelBalanceTransfer(transferId) {
   } catch (error) { fail(error); }
 }
 
+function statisticsAllowed() {
+  return authProfile ? !!authProfile.roles?.includes('director') : legacy.state.role === 'director';
+}
+function statisticsQueryString() {
+  return `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}&chartFrom=${encodeURIComponent(legacy.state.statisticsChartFrom)}&chartTo=${encodeURIComponent(legacy.state.statisticsChartTo)}`;
+}
+let statisticsLoadSequence = 0;
 async function loadStatistics() {
+  if (!statisticsAllowed()) return;
   legacy.state.statisticsDateFrom = value('#stats-from') || legacy.state.statisticsDateFrom;
   legacy.state.statisticsDateTo = value('#stats-to') || legacy.state.statisticsDateTo;
   legacy.state.statisticsProjectId = value('#stats-project') || 'all';
   legacy.state.statisticsDirectionId = value('#stats-direction') || 'all';
-  const query = `?from=${encodeURIComponent(legacy.state.statisticsDateFrom)}&to=${encodeURIComponent(legacy.state.statisticsDateTo)}&projectId=${encodeURIComponent(legacy.state.statisticsProjectId)}&directionId=${encodeURIComponent(legacy.state.statisticsDirectionId)}`;
-  try { legacy.state.statistics = await api.list('statistics', query); legacy.render(); }
-  catch (error) { fail(error); }
+  const chartFrom = value('#stats-chart-from'); const chartTo = value('#stats-chart-to');
+  if (chartFrom) legacy.state.statisticsChartFrom = `${chartFrom}-01`;
+  if (chartTo) { const [year, month] = chartTo.split('-').map(Number); legacy.state.statisticsChartTo = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10); }
+  const sequence = ++statisticsLoadSequence;
+  legacy.state.statisticsLoading = true; legacy.state.statisticsError = ''; legacy.render();
+  try {
+    const result = await api.list('statistics', statisticsQueryString());
+    if (sequence === statisticsLoadSequence && statisticsAllowed()) legacy.state.statistics = result;
+  } catch (error) {
+    if (sequence === statisticsLoadSequence) { legacy.state.statistics = null; legacy.state.statisticsError = error.message; }
+  } finally { if (sequence === statisticsLoadSequence) { legacy.state.statisticsLoading = false; legacy.render(); } }
+}
+const statisticsRate = (number, estimated = false) => number == null ? 'Нет данных' : `${estimated ? '~' : ''}${Number(number).toFixed(1).replace('.', ',')}%`;
+const statisticsMetrics = (items) => `<div class="stats-metrics">${items.map(([label, metric, kind = '']) => `<div class="card metric ${kind}"><div class="label">${html(label)}</div><div class="value">${html(metric)}</div></div>`).join('')}</div>`;
+function statisticsDirectionClass(name) {
+  return /смешан/i.test(name) ? 'stats-direction-mixed' : /программ/i.test(name) ? 'stats-direction-code' : 'stats-direction-robot';
+}
+function statisticsProjectClass(project, index = 0) {
+  return project.code === 'icube-robots' ? 'stats-project-robots' : project.code === 'zebra' ? 'stats-project-zebra' : `stats-project-other-${index % 3}`;
+}
+function selectStatisticsMonth(month) {
+  if (!statisticsAllowed() || !legacy.state.statistics?.monthly?.some((item) => item.month === month)) return;
+  legacy.state.statisticsMonth = month; legacy.render();
+}
+function statisticsPayments(result) {
+  const rows = result.monthly ?? []; const maximum = Math.max(1, ...rows.map((row) => Number(row.received)));
+  const selected = rows.find((row) => row.month === legacy.state.statisticsMonth) ?? rows.at(-1);
+  const projects = [...new Map(rows.flatMap((row) => row.projects).map((project) => [project.id, project])).values()];
+  const compact = (amount) => new Intl.NumberFormat('ru-RU', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(amount));
+  const chart = rows.map((row) => `<button type="button" class="stats-month-button${row.month === selected?.month ? ' selected' : ''}" aria-pressed="${row.month === selected?.month}" aria-label="${html(row.month)}: оплаты ${html(displayMoney(row.received))}, возвраты ${html(displayMoney(row.refunds))}" onclick="icubeApi.selectStatisticsMonth('${row.month}')">
+    <span class="stats-month-amount">${html(compact(row.received))} ₽</span><span class="stats-bar-track"><span class="stats-stack" style="height:${Number(row.received) / maximum * 100}%">
+    ${row.projects.filter((p) => Number(p.received) > 0).map((p) => `<span class="stats-project-segment ${statisticsProjectClass(p, projects.findIndex((x) => x.id === p.id))}" style="height:${Number(p.received) / Number(row.received) * 100}%" title="${html(p.name)}: ${html(displayMoney(p.received))}"></span>`).join('')}</span></span>
+    <span class="stats-refund-marker">${Number(row.refunds) > 0 ? '<span class="negative" aria-label="В этом месяце есть возвраты">●</span>' : ''}</span><span class="stats-month-label">${html(row.month.slice(5))}.${html(row.month.slice(2, 4))}</span></button>`).join('');
+  const details = selected ? `<div class="stats-month-details" aria-live="polite"><h3>Подробности: ${html(selected.month)}</h3>
+    ${statisticsMetrics([['Получено оплат', displayMoney(selected.received)], ['Возвраты по дате возврата', displayMoney(selected.refunds)], ['Чистая сумма', displayMoney(selected.net)]])}
+    <div class="stats-project-details">${selected.projects.filter((p) => Number(p.received) || Number(p.refunds)).map((p) => `<section class="card pad"><h4>${html(p.name)}</h4><dl><dt>Получено</dt><dd>${html(displayMoney(p.received))}</dd><dt>Безналичные</dt><dd>${html(displayMoney(p.cashless))}</dd><dt>Наличные</dt><dd>${html(displayMoney(p.cash))}</dd><dt>Возвраты</dt><dd>${html(displayMoney(p.refunds))}</dd><dt>Чистая сумма</dt><dd>${html(displayMoney(p.net))}</dd></dl></section>`).join('') || '<div class="muted">За месяц оплат и возвратов нет.</div>'}</div></div>` : '';
+  return `<section class="card pad stats-section"><h2>Поступления по месяцам</h2><p class="muted">Высота столбца — все оплаты. Возвраты показаны отдельно. Нажмите на месяц, чтобы увидеть суммы.</p>
+    <div class="stats-chart-controls"><label>Месяц от<input class="input" id="stats-chart-from" type="month" value="${html(legacy.state.statisticsChartFrom.slice(0, 7))}"></label><label>Месяц до<input class="input" id="stats-chart-to" type="month" value="${html(legacy.state.statisticsChartTo.slice(0, 7))}"></label><button class="btn" onclick="icubeApi.loadStatistics()">Обновить графики</button></div>
+    <div class="stats-chart-legend">${projects.map((p, index) => `<span><i class="${statisticsProjectClass(p, index)}"></i>${html(p.name)}</span>`).join('')}</div>
+    <div class="stats-payments-chart" style="--stats-columns:${Math.max(1, Math.min(12, rows.length))}">${chart || '<div class="empty">Нет данных</div>'}</div>${details}</section>`;
+}
+function statisticsDynamics(result) {
+  const rows = result.monthly ?? []; const maximum = Math.max(1, ...rows.flatMap((row) => [row.newChildren, row.pausedChildren, row.finishedChildren]));
+  return `<section class="card pad stats-section"><h2>Динамика набора и ухода</h2><p class="muted">Пауза и завершение — итоговое историческое состояние на конец месяца. Для текущего месяца — на сегодня.</p><div class="stats-dynamics">${rows.map((row) => `<section><h4>${html(row.month)}</h4>${[['Новые записи', row.newChildren, 'stats-project-robots'], ['Ушли на паузу', row.pausedChildren, 'stats-paused'], ['Закончили', row.finishedChildren, 'stats-finished']].map(([label, count, style]) => `<div class="stats-trend-line"><span>${label}</span><span class="stats-trend-track"><i class="${style}" style="width:${count / maximum * 100}%"></i></span><b>${count}</b></div>`).join('')}${row.unknownStatuses ? `<small class="muted">Неполная история: ${row.unknownStatuses}</small>` : ''}</section>`).join('')}</div></section>`;
+}
+function statisticsGroupRows() {
+  const query = String(legacy.state.statisticsGroupSearch ?? '').toLocaleLowerCase('ru');
+  const sort = legacy.state.statisticsGroupSort ?? 'name';
+  const groups = [...(legacy.state.statistics?.groups ?? [])].filter((g) => `${g.name} ${g.siteName}`.toLocaleLowerCase('ru').includes(query));
+  groups.sort((a, b) => sort === 'attendance' ? Number(a.attendancePercent) - Number(b.attendancePercent) || a.name.localeCompare(b.name, 'ru')
+    : sort === 'occupancy' ? (a.averageOccupancyPercent == null ? Infinity : Number(a.averageOccupancyPercent)) - (b.averageOccupancyPercent == null ? Infinity : Number(b.averageOccupancyPercent)) || a.name.localeCompare(b.name, 'ru') : a.name.localeCompare(b.name, 'ru'));
+  return groups.map((g) => `<details class="stats-group-card card ${statisticsDirectionClass(g.directionName)}" data-stats-group="${g.id}"${(legacy.state.statisticsOpenGroups ?? []).includes(g.id) ? ' open' : ''} ontoggle="icubeApi.statisticsGroupToggle('${g.id}',this.open)"><summary><div><b>${html(displayGroup(g.id, g.name))}</b><div class="muted">${html(g.siteName)} · ${html(g.projectName)}</div><small>${html(g.directionName)} · ${dayShortNames[g.weekday - 1] ?? ''} ${html(g.startTime)}–${html(g.endTime)}${g.schedule ? `; ${html(g.schedule)}` : ''}</small></div><div class="stats-group-summary"><span>Сейчас: ${g.currentMembers} / ${g.capacity}</span><span>Посещаемость: ${statisticsRate(g.attendancePercent)}</span></div></summary><div class="stats-group-body">
+    <h4>За выбранный период</h4>${statisticsMetrics([['Проведено занятий', g.completedLessons], ['Посещения', g.visits], ['Пропуски', g.absences], ['Средняя посещаемость', statisticsRate(g.attendancePercent)], ['Средняя историческая заполняемость', statisticsRate(g.averageOccupancyPercent, g.estimatedCapacity)], ['Новые записи из занятия группы', g.newChildren], ['Впервые на ознакомительном', g.trials], ['Продолжили по направлению', g.continued], ['Не продолжили', g.notContinued], ['Ожидают результата', g.pending], ['Конверсия', statisticsRate(g.conversionPercent)], ['Ушли на паузу', g.pausedChildren], ['Закончили направление', g.finishedChildren]])}
+    <p class="muted">Сейчас: ${g.currentMembers} детей, вместимость ${g.capacity}. Историческая заполняемость рассчитана по ${g.occupancyLessons} занятиям; без достоверного статуса — ${g.unknownOccupancyLessons}. Новые записи группы определены только по карточкам, созданным из её занятий.</p></div></details>`).join('') || '<div class="empty">Групп по запросу не найдено.</div>';
+}
+function filterStatisticsGroups(query, sort) {
+  if (!statisticsAllowed()) return;
+  if (query !== undefined) legacy.state.statisticsGroupSearch = query;
+  if (sort !== undefined) legacy.state.statisticsGroupSort = sort;
+  const target = element('#stats-group-list'); if (target) target.innerHTML = statisticsGroupRows();
+}
+function statisticsGroupToggle(id, open) {
+  if (!statisticsAllowed()) return;
+  const current = new Set(legacy.state.statisticsOpenGroups ?? []); if (open) current.add(id); else current.delete(id); legacy.state.statisticsOpenGroups = [...current];
 }
 function statisticsPage() {
-  const result = legacy.state.statistics;
-  const summary = result?.summary ?? { completedLessons: 0, visits: 0, absences: 0, attendancePercent: '0.0', newChildren: 0, leftChildren: 0, activeChildren: 0, averageOccupancyPercent: '0.0' };
+  if (!statisticsAllowed()) return '<div class="empty">Статистика доступна только директору.</div>';
+  const result = legacy.state.statistics; const summary = result?.summary ?? {};
   const option = (item, selected) => `<option value="${item.id}"${String(item.id) === String(selected) ? ' selected' : ''}>${html(item.name)}</option>`;
-  const metrics = [
-    ['Проведено занятий', summary.completedLessons], ['Посещений', summary.visits], ['Пропусков', summary.absences],
-    ['Средняя посещаемость', `${summary.attendancePercent}%`], ['Новых детей', summary.newChildren], ['Ушли / пауза', summary.leftChildren],
-    ['Активные дети сейчас', summary.activeChildren], ['Средняя заполненность', `${summary.averageOccupancyPercent}%`],
-  ];
-  const rows = (result?.groups ?? []).map((group) => `<div class="row" style="grid-template-columns:2fr 1.2fr 1.3fr .8fr .8fr 1fr .8fr .8fr 1fr .7fr .7fr;min-width:1120px">
-    <div><b>${html(displayGroup(group.id, group.name))}</b></div><div>${html(group.projectName)}</div><div>${html(group.directionName)}</div><div>${group.currentMembers}</div><div>${group.capacity}</div>
-    <div>${group.currentMembers} / ${group.capacity} · ${group.occupancyPercent}%</div><div>${group.completedLessons}</div><div>${group.visits}</div><div>${group.absences} · ${group.attendancePercent}%</div><div>${group.newChildren}</div><div>${group.leftChildren}</div></div>`).join('');
-  return `${legacy.pageHead('Статистика', 'Посещаемость, движение детей и заполненность групп по данным системы.')}<div class="toolbar" style="align-items:end;flex-wrap:wrap">
-    <div class="field"><label>Дата от</label><input class="input" id="stats-from" type="date" value="${html(legacy.state.statisticsDateFrom)}"></div>
-    <div class="field"><label>Дата до</label><input class="input" id="stats-to" type="date" value="${html(legacy.state.statisticsDateTo)}"></div>
-    <div class="field"><label>Проект</label><select class="select" id="stats-project"><option value="all">Все</option>${directories.projects.map((item) => option(item, legacy.state.statisticsProjectId)).join('')}</select></div>
-    <div class="field"><label>Направление</label><select class="select" id="stats-direction"><option value="all">Все</option>${directories.directions.map((item) => option(item, legacy.state.statisticsDirectionId)).join('')}</select></div>
-    <button class="btn primary" onclick="icubeApi.loadStatistics()">Применить</button></div>
-    <div class="grid cols-4">${metrics.map(([label, metric]) => `<div class="card metric"><div class="label">${label}</div><div class="value">${metric}</div></div>`).join('')}</div>
-    <div class="card child-ledger-card" style="margin-top:16px"><div class="child-ledger-head"><div><h2>Группы</h2><div class="muted mini">Номинальная вместимость — 8 детей</div></div></div>
-      <div style="overflow-x:auto"><div class="list"><div class="row header" style="grid-template-columns:2fr 1.2fr 1.3fr .8fr .8fr 1fr .8fr .8fr 1fr .7fr .7fr;min-width:1120px"><div>Группа</div><div>Проект</div><div>Направление</div><div>Активных</div><div>Вместимость</div><div>Заполненность</div><div>Занятий</div><div>Посещений</div><div>Пропуски</div><div>Новых</div><div>Ушли</div></div>${rows || '<div class="empty">За выбранный период данных нет.</div>'}</div></div></div>`;
+  const filters = `<div class="stats-filters card pad"><label>Дата от<input class="input" id="stats-from" type="date" value="${html(legacy.state.statisticsDateFrom)}"></label><label>Дата до<input class="input" id="stats-to" type="date" value="${html(legacy.state.statisticsDateTo)}"></label><label>Проект<select class="select" id="stats-project"><option value="all">Все</option>${directories.projects.map((item) => option(item, legacy.state.statisticsProjectId)).join('')}</select></label><label>Направление<select class="select" id="stats-direction"><option value="all">Все</option>${directories.directions.map((item) => option(item, legacy.state.statisticsDirectionId)).join('')}</select></label><button class="btn primary" onclick="icubeApi.loadStatistics()"${legacy.state.statisticsLoading ? ' disabled' : ''}>Применить</button></div>`;
+  const head = legacy.pageHead('Статистика', 'Текущее состояние и показатели за период по серверным данным.');
+  if (legacy.state.statisticsLoading) return `<div class="stats-page">${head}${filters}<div class="notice">Загружаем статистику…</div></div>`;
+  if (!result) return `<div class="stats-page">${head}${filters}<div class="notice">${html(legacy.state.statisticsError || 'Примените фильтры, чтобы загрузить статистику.')}</div></div>`;
+  const c = result.current?.children ?? {}; const a = result.current?.activeDirections ?? { directions: [] };
+  const active = directories.directions.map((d) => [d.name + ' — активные', a.directions.find((x) => String(x.id) === String(d.id))?.count ?? 0, statisticsDirectionClass(d.name)]);
+  const r = result.recruitment ?? {}; const limits = result.limitations ?? {};
+  const warnings = [limits.unmarkedAttendances ? `${limits.unmarkedAttendances} строк основного состава без подтверждённой отметки не включены в пропуски.` : '',
+    limits.unknownStatusChildren || limits.unknownOccupancyLessons ? `История статусов неполна. Неизвестные состояния не заменяются сегодняшними. Для ${limits.unknownStatusChildren ?? 0} детей итоговый статус не установлен; показатели ухода неполны. Из заполняемости исключено занятий: ${limits.unknownOccupancyLessons ?? 0}.` : '',
+    limits.estimatedCapacity ? '~ Заполняемость оценочная: для стандартных занятий вместимость взята из модели группы (обычно 8, индивидуальная — 1). История изменений типа группы не сохранялась.' : ''].filter(Boolean);
+  return `<div class="stats-page">${head}${filters}<section class="stats-section"><h2>Дети сейчас</h2><p class="muted">По выбранным проекту и направлению. От выбранных дат не зависит.</p>${statisticsMetrics([['Всего детей', c.total ?? 0], ['Активные', c.active ?? 0], ['Лиды', c.lead ?? 0], ['На паузе', c.paused ?? 0], ['Закончили', c.finished ?? 0]])}</section>
+    <section class="stats-section"><h2>Активные направления сейчас</h2>${statisticsMetrics([['Всего активных направлений', a.total ?? 0], ...active, ['С двумя активными направлениями', a.dualChildren ?? 0]])}</section>
+    <section class="stats-section"><h2>За период ${html(isoToRu(result.period?.from))} — ${html(isoToRu(result.period?.to))}</h2>${statisticsMetrics([['Проведено занятий', summary.completedLessons], ['Посещения', summary.visits], ['Пропуски', summary.absences], ['Средняя посещаемость', statisticsRate(summary.attendancePercent)], ['Средняя историческая заполняемость', statisticsRate(summary.averageOccupancyPercent, summary.estimatedCapacity)], ['Ушли на паузу', summary.pausedChildren ?? 0], ['Закончили обучение', summary.finishedChildren ?? 0]])}</section>
+    ${warnings.length ? `<aside class="notice stats-section">${warnings.map((text) => `<p>${html(text)}</p>`).join('')}</aside>` : ''}
+    <section class="stats-section"><h2>Набор и ознакомительные занятия</h2>${statisticsMetrics([['Новые записи', summary.newChildren], ['Пришли на ознакомительное', r.trials ?? 0], ['Продолжили после ознакомительного', r.continued ?? 0], ['Не продолжили', r.notContinued ?? 0], ['Ожидают результата', r.pending ?? 0], ['Конверсия ознакомительных занятий', statisticsRate(r.conversionPercent)]])}<p class="muted">По клубу дети уникальны. Продолжение подтверждает обычное платное посещение в течение 30 календарных дней. Ожидающие исключены из конверсии.</p><div class="stats-project-details">${(r.directions ?? []).map((d) => `<section class="card pad ${statisticsDirectionClass(d.name)}"><h3>${html(d.name)}</h3><p>Пробные: ${d.trials} · продолжили: ${d.continued} · не продолжили: ${d.notContinued} · ожидают: ${d.pending}</p><b>Конверсия: ${statisticsRate(d.conversionPercent)}</b></section>`).join('')}</div></section>
+    ${statisticsPayments(result)}${statisticsDynamics(result)}
+    <section class="stats-section"><h2>Статистика групп</h2><div class="stats-group-controls"><label>Поиск по группе или площадке<input class="input" id="stats-group-search" type="search" value="${html(legacy.state.statisticsGroupSearch ?? '')}" oninput="icubeApi.filterStatisticsGroups(this.value)"></label><label>Сортировка<select class="select" onchange="icubeApi.filterStatisticsGroups(undefined,this.value)">${[['name','По названию'],['attendance','Сначала низкая посещаемость'],['occupancy','Сначала низкая заполняемость']].map(([key,label]) => `<option value="${key}"${(legacy.state.statisticsGroupSort ?? 'name') === key ? ' selected' : ''}>${label}</option>`).join('')}</select></label></div><div id="stats-group-list">${statisticsGroupRows()}</div></section></div>`;
 }
 
 const legacyChildPage = window.child;
@@ -2153,7 +2224,7 @@ window.icubeApi = { editVisit, renderVisitEdit, changeVisitField, visitCalendarM
   cancelCurrentLesson: cancelCurrentLessonApi, markCurrentLessonEmptyTrip: markCurrentLessonEmptyTripApi,
   confirmAddChildren: confirmAddChildrenApi, deleteLesson: deleteLessonApi,
   transferDirectionBalanceForm, refreshBalanceTransferPreview, confirmBalanceTransfer,
-  cancelBalanceTransferPrompt, cancelBalanceTransfer, loadStatistics,
+  cancelBalanceTransferPrompt, cancelBalanceTransfer, loadStatistics, selectStatisticsMonth, filterStatisticsGroups, statisticsGroupToggle,
   calculatePartnerSettlement, applySalaryFilters: applySalaryFiltersApi, refreshSalaryReport: refreshAppliedSalaryReport,
   calculateSiteRentReport, toggleSiteRentDetails, refreshSiteRentReport: refreshAppliedRentReport,
   lessonToggle: lessonToggleApi, deleteVisit: deleteVisitApi, salaryCalculation: salaryCalculationApi,

@@ -217,9 +217,9 @@ test('all price readers resolve mixed prices by own enrollment direction; histor
   assert.match(lessons, /pv\.valid_from<=:startsAt AND \(pv\.valid_to IS NULL OR pv\.valid_to>:startsAt\)/);
   assert.match(lessons, /attendance\.child_id, attendance\.enrollment_id/);
   const stats = await readFile(new URL('../backend/src/statistics.mjs', import.meta.url), 'utf8');
-  assert.match(stats, /COALESCE\(ae\.direction_id,l\.direction_id_snapshot\)=:directionId/);
-  assert.match(stats, /PARTITION BY a\.child_id,l\.project_id_snapshot,e\.direction_id/);
-  assert.match(stats, /CASE WHEN l\.is_mixed_snapshot THEN 'Смешанная'/);
+  assert.match(stats, /COALESCE\(ae\.direction_id,CASE WHEN l\.is_mixed_snapshot=FALSE THEN l\.direction_id_snapshot END\)=:directionId/);
+  assert.match(stats, /PARTITION BY child_id,direction_id ORDER BY starts_at,lesson_id,id/);
+  assert.match(stats, /flag\(g\.is_mixed\) \? 'Смешанная' : g\.direction_name/);
 });
 
 test('mixed quick-child keeps a real chosen direction and retry creates no extra enrollment', async () => {
