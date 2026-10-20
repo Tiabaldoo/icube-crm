@@ -79,7 +79,7 @@ export function financeFixture(t, { price = '1125.00', packageCount = 4, mode = 
       }
       db.prepare('UPDATE child_enrollments SET balance_lessons=balance_lessons-1 WHERE id=?').run(enrollmentId);
     }
-    db.exec("INSERT INTO lesson_roster_members VALUES(10,8,'main')");
+    db.exec("INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(10,8,'main')");
   }
   const rows = (table) => db.prepare(`SELECT * FROM ${table} ORDER BY id`).all().map((r) => ({ ...r }));
   return { db, query, calls, payments, refunds, lessons, pay, visits, rows, failAt(value) { failure = value; },

@@ -3443,7 +3443,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
     html+=rows.map(function(p){
       return '<div class="row" style="grid-template-columns:1fr 1.2fr .9fr 1.2fr .7fr minmax(max-content,2fr)">'+
         '<div><b>'+escapeHtml(p.date)+'</b></div><div>'+escapeHtml(p.direction)+'</div><div class="money">'+money(p.amount)+'</div><div>'+escapeHtml(p.method)+'</div><div class="positive">+'+fmt(p.lessons,4)+'</div>'+
-        '<div class="payment-row-actions">'+(Number(p.refundableAmount)>0?'<button class="btn soft" onclick="refundPayment('+p.id+')">Возврат</button>':'')+'<button class="btn" onclick="editChildPayment('+c.id+','+p.id+')">Изменить</button><button class="btn danger" onclick="deleteChildPayment('+c.id+','+p.id+')">Удалить</button></div>'+
+        '<div class="payment-row-actions"><button class="btn" onclick="editChildPayment('+c.id+','+p.id+')">Изменить</button></div>'+
       '</div>';
     }).join('');
     return html+'</div></div>';
@@ -3460,7 +3460,7 @@ window.icubeLegacy = { state: state, render: function(){ return window.render();
       return '<div class="row" style="grid-template-columns:1fr 1fr 1.4fr auto auto auto">'+
         '<div class="clickable" onclick="state.selectedLesson='+x.lesson.id+';state.page=\'lesson\';render()"><b>'+escapeHtml(x.lesson.date)+'</b><div class="muted mini">'+escapeHtml(x.lesson.time)+'</div></div>'+
         '<div>'+escapeHtml(x.direction)+'</div><div>'+escapeHtml(groupTitle(x.group))+'</div><div><span class="badge green">Был</span></div><div>'+type+'</div>'+
-        '<div><button class="btn danger" onclick="deleteVisitPrompt('+c.id+','+x.lesson.id+')">Удалить</button></div>'+
+        '<div>'+(['director','partner'].includes(state.role)?'<button class="btn" onclick="icubeApi.editVisit('+c.id+','+x.lesson.id+')">Изменить</button>':'')+'</div>'+
       '</div>';
     }).join('');
     return html+'</div></div>';

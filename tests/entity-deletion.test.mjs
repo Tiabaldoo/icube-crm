@@ -37,6 +37,7 @@ function enrollmentHandler({ ids = [10, 20], dependencies = emptyEnrollmentDepen
     if (sql.startsWith('SELECT id,status FROM child_enrollments')) return ids.map(id=>({id,status:'active'}));
     if (sql.startsWith('SELECT id,child_id,balance_lessons FROM child_enrollments')) return [{ id: 10, child_id: 5, balance_lessons: '0.00000000' }];
     if (sql.startsWith('SELECT id FROM child_enrollments WHERE child_id')) return ids.map((id) => ({ id }));
+    if (sql.startsWith('SELECT id FROM audit_log')) return [];
     if (sql.includes('FROM payments WHERE enrollment_id')) return [dependencies];
     if (sql.startsWith('DELETE blc FROM balance_lot_consumptions') || sql.startsWith('DELETE reversal FROM balance_entries') || sql.startsWith('DELETE FROM balance_lots') || sql.startsWith('DELETE FROM balance_entries') || sql.startsWith('DELETE FROM attendances')) return { affectedRows: 0 };
     if (sql.startsWith('DELETE FROM group_memberships')) return { affectedRows: 1 };

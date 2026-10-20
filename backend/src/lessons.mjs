@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { inTransaction } from './db.mjs';
 import { refreshChildStatus } from './enrollment-status.mjs';
 import { ApiProblem } from './catalog.mjs';
@@ -35,6 +36,12 @@ const mysqlDateTime = (value) => value instanceof Date
 const bool = (value) => value === true || value === 1 || value === '1';
 const nullableText = (value) => value == null || value === '' ? null : String(value).trim() || null;
 const hasRole = (context, role) => (context.roles ?? []).includes(role);
+const correctionAdmin = (context) => hasRole(context, 'director') || hasRole(context, 'partner');
+export const attendanceCorrectionVersion = (attendance, lesson, debitId = null) => createHash('sha256').update(JSON.stringify([
+  String(attendance.id), String(attendance.enrollment_id), bool(attendance.present), bool(attendance.is_trial),
+  isoDateTime(attendance.marked_at), String(attendance.price_snapshot ?? ''), String(attendance.charged_lessons ?? 0),
+  Number(lesson.lock_version), String(debitId ?? ''),
+])).digest('hex');
 
 function mysqlError(error) {
   if (error instanceof ApiProblem) return error;
@@ -103,6 +110,8 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
       ids ? connection.query(`SELECT id,lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,price_snapshot,charged_lessons,marked_at,
         (SELECT d.name FROM child_enrollments e JOIN directions d ON d.id=e.direction_id
           WHERE e.id=attendances.enrollment_id) attendance_direction_name
+        ${correctionAdmin(context) ? `,(SELECT MAX(be.id) FROM balance_entries be WHERE be.attendance_id=attendances.id
+          AND be.entry_type='attendance' AND NOT EXISTS (SELECT 1 FROM balance_entries r WHERE r.reversal_of_entry_id=be.id)) active_debit_id` : ''}
         ${hasRole(context, 'director') ? `,(SELECT CASE WHEN COUNT(*)=1 THEN -MIN(be.amount_delta) ELSE NULL END
           FROM balance_entries be WHERE be.attendance_id=attendances.id AND be.entry_type='attendance'
             AND NOT EXISTS (SELECT 1 FROM balance_entries reversal WHERE reversal.reversal_of_entry_id=be.id)) charged_amount` : ''}
@@ -138,6 +147,7 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         ...(hasRole(context, 'director') ? { priceSnapshot: item.price_snapshot == null ? null : String(item.price_snapshot), chargedLessons: String(item.charged_lessons),
           chargedAmount: item.charged_amount == null ? null : String(item.charged_amount) } : {}),
         markedAt: isoDateTime(item.marked_at),
+        ...(correctionAdmin(context) ? { correctionVersion: attendanceCorrectionVersion(item, row, item.active_debit_id) } : {}),
       }));
       const salary = salaryRows.find((item) => String(item.lesson_id) === String(row.id));
       return {
@@ -400,9 +410,11 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     } catch (error) { throw mysqlError(error); }
   }
 
-  async function enrollmentForAttendance(connection, lesson, childId, enrollmentId = null, requirePrice = true) {
+  async function enrollmentForAttendance(connection, lesson, childId, enrollmentId = null, requirePrice = true, historical = false) {
     const date = isoDate(lesson.starts_at);
     const [rows] = await connection.query(`SELECT e.id,e.child_id,e.direction_id,e.balance_lessons,
+      ${historical ? `(e.individual_price IS NOT NULL AND :date<:today AND NOT EXISTS
+        (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id)) price_history_missing,` : ''}
       COALESCE(
         (SELECT pv.price FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id AND pv.valid_from<=:startsAt AND (pv.valid_to IS NULL OR pv.valid_to>:startsAt) ORDER BY pv.valid_from DESC,pv.id DESC LIMIT 1),
         CASE WHEN NOT EXISTS (SELECT 1 FROM price_versions pv WHERE pv.scope_type='enrollment' AND pv.enrollment_id=e.id) THEN e.individual_price END,
@@ -418,9 +430,11 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
           OR e.created_at<=:startsAt)
       ORDER BY (e.direction_id=:directionId) DESC,e.id DESC FOR UPDATE`, {
       childId: identifier(childId, 'childId'), enrollmentId, directionId: lesson.direction_id_snapshot, isMixed: bool(lesson.is_mixed_snapshot),
-      projectId: lesson.project_id_snapshot, date, startsAt: lesson.starts_at,
+      projectId: lesson.project_id_snapshot, date, startsAt: lesson.starts_at, ...(historical ? { today: businessDate() } : {}),
     });
     if (!rows.length) throw new ApiProblem(409, 'ENROLLMENT_NOT_FOUND', 'У ребёнка нет доступного направления в проекте занятия');
+    if (requirePrice && Number(rows[0].price_history_missing) === 1) throw new ApiProblem(409, 'PRICE_HISTORY_UNAVAILABLE',
+      'Для прошлой даты отсутствует история индивидуальной цены. Требуется проверка исторического тарифа.');
     if (requirePrice && rows[0].current_price == null) throw new ApiProblem(409, 'PRICE_NOT_CONFIGURED', 'Для посещения не настроена историческая цена');
     return rows[0];
   }
@@ -661,6 +675,118 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         await setAttendance(connection, lesson, childId, roster[0].roster_type, body, context);
       });
       return get(lessonId, context);
+    } catch (error) { throw mysqlError(error); }
+  }
+
+  function assertCorrectionAdmin(context) {
+    if (!correctionAdmin(context)) throw new ApiProblem(403, 'FORBIDDEN', 'Исправлять историю посещений может только администратор проекта');
+  }
+
+  // Read existing lessons only: unlike the main calendar this must not materialize a schedule.
+  async function correctionLessons(childId, filters = {}, context = {}) {
+    assertCorrectionAdmin(context);
+    childId = identifier(childId, 'childId');
+    const from = dateOnly(filters.from, 'from'); const to = dateOnly(filters.to, 'to');
+    if (to < from || Date.parse(to) - Date.parse(from) > 31 * DAY) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Выберите один месяц');
+    const projectId = partnerProjectId(context);
+    const [children] = await pool.query(`SELECT c.id FROM children c WHERE c.id=:childId AND c.deleted_at IS NULL
+      AND EXISTS (SELECT 1 FROM child_enrollments e WHERE e.child_id=c.id AND (:projectId IS NULL OR e.project_id=:projectId))`, { childId, projectId });
+    if (!children.length) throw new ApiProblem(403, 'FORBIDDEN', 'Ребёнок недоступен в вашем проекте');
+    const [rows] = await pool.query(`SELECT l.id,l.starts_at,l.ends_at,l.project_id_snapshot,l.lock_version,g.name group_name,
+      d.name direction_name,l.is_mixed_snapshot,COALESCE(os.name,s.name) site_name
+      FROM lessons l JOIN study_groups g ON g.id=l.group_id JOIN directions d ON d.id=l.direction_id_snapshot
+      JOIN sites s ON s.id=l.site_id_snapshot LEFT JOIN sites os ON os.id=l.site_override_id
+      WHERE l.deleted_at IS NULL AND l.status IN ('in_progress','completed') AND DATE(l.starts_at) BETWEEN :from AND :to
+        AND (:projectId IS NULL OR l.project_id_snapshot=:projectId)
+        AND EXISTS (SELECT 1 FROM child_enrollments e WHERE e.child_id=:childId AND e.project_id=l.project_id_snapshot
+          AND (e.superseded_at IS NULL OR e.superseded_at>l.starts_at)
+          AND (NOT EXISTS (SELECT 1 FROM enrollment_project_transfers pt WHERE pt.target_enrollment_id=e.id) OR e.created_at<=l.starts_at))
+        AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id AND r.child_id=:childId)
+        AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id AND a.child_id=:childId AND a.present=TRUE)
+        AND NOT EXISTS (SELECT 1 FROM partner_settlements ps WHERE ps.project_id=l.project_id_snapshot AND DATE(l.starts_at) BETWEEN ps.period_from AND ps.period_to)
+      ORDER BY l.starts_at,l.id`, { childId, projectId, from, to });
+    return rows.map((row) => ({ id: String(row.id), startsAt: isoDateTime(row.starts_at), endsAt: isoDateTime(row.ends_at),
+      projectId: String(row.project_id_snapshot), lockVersion: Number(row.lock_version), groupName: row.group_name, directionName: bool(row.is_mixed_snapshot) ? 'Смешанная' : row.direction_name, siteName: row.site_name }));
+  }
+
+  async function correctAttendance(sourceId, childId, body, context = {}) {
+    assertCorrectionAdmin(context);
+    sourceId = identifier(sourceId); childId = identifier(childId, 'childId');
+    const targetId = identifier(body.targetLessonId, 'targetLessonId');
+    const enrollmentId = identifier(body.enrollmentId, 'enrollmentId');
+    if (typeof body.trial !== 'boolean' || !/^[a-f0-9]{64}$/.test(body.expectedRevision ?? '')
+      || !Number.isSafeInteger(body.expectedTargetVersion) || body.expectedTargetVersion < 0) {
+      throw new ApiProblem(400, 'VALIDATION_ERROR', 'Нужны тип посещения и актуальная версия записи');
+    }
+    const operationKey = scopedIdempotencyKey({ key: context.idempotencyKey, actorUserId: context.userId,
+      operation: 'attendance.correct', entity: `${sourceId}:${childId}` });
+    const payload = { sourceId, childId, targetId, enrollmentId, trial: body.trial, expectedRevision: body.expectedRevision, expectedTargetVersion: body.expectedTargetVersion };
+    const requestHash = createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    try {
+      return await inTransaction(pool, async (connection) => {
+        const locked = new Map();
+        for (const id of [...new Set([sourceId, targetId])].sort((a, b) => BigInt(a) < BigInt(b) ? -1 : 1)) {
+          const lesson = await lockLesson(connection, id); await assertAccess(connection, lesson, context);
+          locked.set(id, lesson);
+        }
+        const source = locked.get(sourceId); const target = locked.get(targetId);
+        const [children] = await connection.query('SELECT id FROM children WHERE id=:childId AND deleted_at IS NULL FOR UPDATE', { childId });
+        if (!children.length) throw new ApiProblem(404, 'CHILD_NOT_FOUND', 'Ребёнок недоступен');
+        // Current locking read, after the lesson locks: concurrent retries see the committed result.
+        const [replays] = await connection.query(`SELECT after_data FROM audit_log WHERE action='attendance.correct'
+          AND entity_type='child' AND entity_id=:childId AND JSON_UNQUOTE(JSON_EXTRACT(after_data,'$.operationKey'))=:operationKey FOR UPDATE`, { childId, operationKey });
+        if (replays.length) {
+          const saved = typeof replays[0].after_data === 'string' ? JSON.parse(replays[0].after_data) : replays[0].after_data;
+          // MySQL JSON normalizes object key order; compare a stable request hash.
+          if (saved.requestHash !== requestHash) throw new ApiProblem(409, 'IDEMPOTENCY_CONFLICT', 'Этот запрос уже использован для другой корректировки');
+          return saved.result;
+        }
+        for (const lesson of locked.values()) if (!['in_progress', 'completed'].includes(lesson.status)) {
+          throw new ApiProblem(409, 'LESSON_NOT_STARTED', 'Для исправления выберите начатое или завершённое занятие');
+        }
+        if (Number(target.lock_version) !== body.expectedTargetVersion) throw new ApiProblem(409, 'ATTENDANCE_STALE', 'Выбранное занятие изменилось. Откройте форму заново.');
+        const [rows] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: source.id, childId });
+        const attendance = rows[0];
+        if (!attendance || !bool(attendance.present)) throw new ApiProblem(409, 'ATTENDANCE_NOT_FOUND', 'Посещение уже изменено или удалено. Обновите историю ребёнка.');
+        const debit = await activeAttendanceDebit(connection, attendance.id);
+        if (attendanceCorrectionVersion(attendance, source, debit?.id) !== body.expectedRevision) throw new ApiProblem(409, 'ATTENDANCE_STALE', 'Посещение изменилось. Откройте форму заново.');
+        // Validate both financial scopes even for a no-op or an explicitly supplied enrollment ID.
+        await enrollmentForAttendance(connection, source, childId, attendance.enrollment_id, false);
+        const selected = await enrollmentForAttendance(connection, target, childId, enrollmentId, false);
+        const [roster] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: source.id, childId });
+        if (!roster.length) throw new ApiProblem(409, 'CHILD_NOT_IN_LESSON', 'Исходный состав занятия изменился');
+        const unchanged = sourceId === targetId && String(attendance.enrollment_id) === enrollmentId && bool(attendance.is_trial) === body.trial;
+        if (!unchanged) {
+          if (sourceId !== targetId) {
+            const [targetRoster] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: target.id, childId });
+            const [targetAttendance] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: target.id, childId });
+            if (targetRoster.length || targetAttendance.some((row) => bool(row.present) || row.marked_at != null || Number(row.charged_lessons) !== 0)
+              || (targetAttendance[0] && await activeAttendanceDebit(connection, targetAttendance[0].id))) {
+              throw new ApiProblem(409, 'CHILD_ALREADY_IN_LESSON', 'Ребёнок уже есть в выбранном занятии');
+            }
+          }
+          let enrollment = await enrollmentForAttendance(connection, target, childId, selected.id, !body.trial, true);
+          // Capture the old ledger and FIFO links in the durable audit before any future empty-enrollment cleanup.
+          const [consumptions] = debit ? await connection.query('SELECT * FROM balance_lot_consumptions WHERE balance_entry_id=:entryId FOR UPDATE', { entryId: debit.id }) : [[]];
+          payload.before = { attendance, debit, consumptions };
+          if (sourceId !== targetId) {
+            await setAttendance(connection, source, childId, roster[0].roster_type, { present: false }, context);
+            // The reversal may restore the same enrollment used by the destination.
+            enrollment = await enrollmentForAttendance(connection, target, childId, selected.id, !body.trial, true);
+            if (roster[0].roster_type === 'extra') await connection.query("DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId AND roster_type='extra'", { lessonId: source.id, childId });
+            await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
+              VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: target.id, childId, actorId: context.userId });
+          }
+          await setAttendance(connection, target, childId, sourceId === targetId ? roster[0].roster_type : 'extra', { present: true, trial: body.trial }, context, enrollment);
+          for (const lesson of locked.values()) await connection.query('UPDATE lessons SET lock_version=lock_version+1 WHERE id=:id', { id: lesson.id });
+        }
+        const result = { sourceLessonId: sourceId, lessonId: targetId, childId, unchanged };
+        const { before = null, ...request } = payload;
+        await connection.query(`INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data)
+          VALUES (:actorId,'attendance.correct','child',:id,:before,:after)`, { actorId: context.userId, id: childId,
+          before: JSON.stringify(before), after: JSON.stringify({ operationKey, requestHash, request, result }) });
+        return result;
+      });
     } catch (error) { throw mysqlError(error); }
   }
 
@@ -1002,5 +1128,5 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
     }));
   }
 
-  return { materialize, list, get, create, deletedOccurrences, update, start, putAttendance, finish, remove, removeAttendance, cancel, emptyTrip, addExtra, makeExtraTrialDirection, removeExtra, quickChild, salaryAccruals, notifications };
+  return { materialize, list, get, create, deletedOccurrences, update, start, putAttendance, correctionLessons, correctAttendance, finish, remove, removeAttendance, cancel, emptyTrip, addExtra, makeExtraTrialDirection, removeExtra, quickChild, salaryAccruals, notifications };
 }

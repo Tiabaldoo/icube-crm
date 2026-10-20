@@ -71,6 +71,15 @@ async function fixture(){
    groupRosterFrozenV146:true,groupChildIdsV146:[8],effectiveGroupChildIds:[8],enrollmentByChild:{8:81},attendanceDetailsByChild:{8:{enrollmentId:81,directionName:'Программирование'}}}]
  });return f;
 }
+test('child attendance and payment rows each expose only Edit for director and partner',async()=>{
+ const {context,state}=await fixture();state.page='child';state.payments=[{id:46,childId:8,direction:'Программирование',date:'15.10.2026',amount:4500,method:'Безналичный расчёт',lessons:4,refundableAmount:3375}];
+ for(const role of ['director','partner']){
+  state.role=role;state.childTab='visits';context.render();let output=context.document.getElementById('app').innerHTML;
+  assert.match(output,/icubeApi.editVisit\(8,50\)/);assert.doesNotMatch(output,/deleteVisitPrompt\(8,50\)/);
+  state.childTab='payments';context.render();output=context.document.getElementById('app').innerHTML;
+  assert.match(output,/editChildPayment\(8,46\)/);assert.doesNotMatch(output,/refundPayment\(46\)|deleteChildPayment\(8,46\)/);
+ }
+});
 for(const [input,expected] of [[3,'3'],[2.5,'2,5'],[2.4444444,'2,44'],[-1,'−1'],[0,'0'],[0.001,'<0,01'],[-0.001,'−<0,01'],[null,'—'],['','—'],['bad','—']]) test(`compact balance ${input} is ${expected} without data mutation`,()=>{
  assert.equal(formatBalance(input),expected);
  const e={direction:'Робототехника',balance:input},before=JSON.stringify(e);const html=balanceBadge(e);

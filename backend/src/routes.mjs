@@ -210,7 +210,7 @@ export function createApiRouter(pool, {
     });
   }));
   router.post('/enrollments/:id/project-transfer', requirePermission('enrollments:write'), run((request) => projectTransfers.create(request.params.id, request.body, request.auth), 201));
-  router.delete('/enrollments/:id', requirePermission('enrollments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.params.id, request.auth); return deletions.deleteEnrollment(request.params.id); }, 204));
+  router.delete('/enrollments/:id', requirePermission('enrollments:write'), run(async (request) => { await assertOwned(pool, 'enrollments', request.params.id, request.auth); return deletions.deleteEnrollment(request.params.id, request.auth); }, 204));
   router.get('/teachers/:id/access', requirePermission('teachers:read'), run(async (request) => {
     await assertOwned(pool, 'teachers', request.params.id, request.auth);
     return authService.getTeacherAccess(request.params.id);
@@ -302,6 +302,10 @@ export function createApiRouter(pool, {
   router.post('/groups/:id/memberships', requirePermission('*'), notImplemented('group membership'));
   router.post('/lessons/:id/start', requirePermission('lessons:start'), run((request) => lessons.start(request.params.id, request.body, lessonContext(request))));
   router.put('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.putAttendance(request.params.id, request.params.childId, request.body, lessonContext(request))));
+  router.get('/children/:id/attendance-correction-lessons', requirePermission('enrollments:write'), run((request) => lessons.correctionLessons(request.params.id, request.query, lessonContext(request))));
+  router.post('/lessons/:id/attendance/:childId/correct', requirePermission('enrollments:write'), run((request) => lessons.correctAttendance(request.params.id, request.params.childId, request.body, {
+    ...lessonContext(request), idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+  })));
   router.delete('/lessons/:id/attendance/:childId', requirePermission('lessons:attendance'), run((request) => lessons.removeAttendance(request.params.id, request.params.childId, lessonContext(request))));
   router.post('/lessons/:id/finish', requirePermission('lessons:finish'), run((request) => lessons.finish(request.params.id, request.body, lessonContext(request))));
   router.patch('/lessons/:id/teacher-details', requirePermission('lessons:update-assigned'), run((request) => lessons.update(request.params.id, request.body, lessonContext(request))));

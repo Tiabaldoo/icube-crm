@@ -169,7 +169,7 @@ export function createDeletionService(pool) {
     return null;
   }
 
-  async function deleteEnrollment(rawId) {
+  async function deleteEnrollment(rawId, context = {}) {
     const enrollmentId = numericId(rawId, 'enrollmentId');
     try {
       await inTransaction(pool, async (connection) => {
@@ -194,6 +194,25 @@ export function createDeletionService(pool) {
               AND (original.lessons_delta<>0 OR original.amount_delta<>0)) balanceEffects`, { id: enrollmentId });
         const dependencies = dependencyRows[0] ?? {};
         dependencies.balance = Number(enrollment.balance_lessons) === 0 ? 0 : 1;
+        // An explicitly corrected mistaken enrollment may retain only technical
+        // memberships. Keep the financial guards and archive those links before cleanup.
+        if (!hasAny({ ...dependencies, memberships: 0 })) {
+          const [corrections] = await connection.query(`SELECT id FROM audit_log WHERE action='attendance.correct'
+            AND entity_type='child' AND entity_id=:childId
+            AND JSON_UNQUOTE(JSON_EXTRACT(before_data,'$.attendance.enrollment_id'))=:enrollmentId LIMIT 1 FOR UPDATE`,
+          { childId: enrollment.child_id, enrollmentId });
+          if (corrections.length) {
+            const [memberships] = await connection.query('SELECT * FROM group_memberships WHERE enrollment_id=:id FOR UPDATE', { id: enrollmentId });
+            const [ledger] = await connection.query('SELECT * FROM balance_entries WHERE enrollment_id=:id FOR UPDATE', { id: enrollmentId });
+            const [lots] = await connection.query('SELECT * FROM balance_lots WHERE enrollment_id=:id FOR UPDATE', { id: enrollmentId });
+            const [consumptions] = await connection.query(`SELECT blc.* FROM balance_lot_consumptions blc JOIN balance_entries be ON be.id=blc.balance_entry_id
+              WHERE be.enrollment_id=:id FOR UPDATE`, { id: enrollmentId });
+            await connection.query(`INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data)
+              VALUES (:actorId,'enrollment.delete-empty','child',:childId,:before,:after)`, { actorId: context.userId ?? null, childId: enrollment.child_id,
+              before: JSON.stringify({ enrollment, memberships, ledger, lots, consumptions }), after: JSON.stringify({ deletedEnrollmentId: enrollmentId, correctionAuditId: String(corrections[0].id) }) });
+            dependencies.memberships = 0;
+          }
+        }
         if (hasAny(dependencies)) throw new ApiProblem(409, 'ENROLLMENT_HAS_HISTORY', `Нельзя удалить направление. Остались зависимости: ${dependencyNames(dependencies)}.`, dependencies);
 
         await purgeEnrollmentLedger(connection, enrollmentId);

@@ -979,7 +979,9 @@ function paymentForm(childId, direction, paymentId) {
     <div class="field"><label>Цена занятия, ₽</label><input class="input" id="pf-price" type="number" min="0.01" step="0.01" value="${html(existing?.price ?? '')}" readonly></div>
     <div class="field"><label>Способ оплаты</label><select class="select" id="pf-method"><option value="cashless"${(existing?.methodCode ?? 'cashless') === 'cashless' ? ' selected' : ''}>Безналичный расчёт</option><option value="cash"${existing?.methodCode === 'cash' ? ' selected' : ''}>Наличные</option></select></div>
     ${existing ? '' : '<div class="field span-2" id="pf-receipt-field"></div>'}
-    </div><div class="notice" id="pf-calc" style="margin-top:14px"></div><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="pf-submit" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
+    </div><div class="notice" id="pf-calc" style="margin-top:14px"></div>
+    ${existing ? `<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">${Number(existing.refundableAmount) > 0 ? `<button class="btn" onclick="icubeApi.refundForm(${existing.id})">Оформить возврат</button>` : ''}<button class="btn danger" onclick="icubeApi.deletePaymentPrompt(${existing.id})">Удалить оплату</button></div>` : ''}
+    <div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" id="pf-submit" onclick="icubeApi.savePayment(${existing?.id ?? 'null'})">${existing ? 'Сохранить изменения' : 'Сохранить оплату'}</button></div>`;
   legacy.render();
   if (historical) setTimeout(updatePaymentCalc, 0);
   else setTimeout(() => { refreshPaymentDirections(existing?.id ?? null, preferred); window.icubePaymentReceipts?.refreshCandidates?.(); }, 0);
@@ -1524,6 +1526,129 @@ async function deleteVisitApi(childId, lessonId) {
   } catch (error) { fail(error); }
 }
 
+// Historical corrections use online transactions, never the teacher offline queue.
+let visitDraft = null;
+const canCorrectVisit = () => ['director', 'partner'].includes(legacy.state.role);
+const visitLessonLabel = (lesson) => `${isoToRu(timestampDate(lesson.startsAt))} · ${timestampTime(lesson.startsAt)}–${timestampTime(lesson.endsAt)} · ${lesson.groupName}`;
+function visitDirections(draft) {
+  const child = legacy.state.children.find((item) => item.id === draft.childId);
+  return [...(child?.enrollments ?? []), ...(child?.enrollmentHistory ?? [])]
+    .filter((enrollment, index, all) => enrollment.editable !== false && String(enrollment.projectId) === String(draft.target.projectId)
+      && all.findIndex((item) => item.id === enrollment.id) === index);
+}
+async function editVisit(childId, lessonId) {
+  if (!canCorrectVisit()) return;
+  try {
+    const source = await api.get('lessons', lessonId);
+    const attendance = source.attendances.find((item) => Number(item.childId) === Number(childId) && item.present);
+    if (!attendance?.correctionVersion) throw new Error('Посещение изменилось. Обновите историю ребёнка.');
+    const mapped = mapLesson(source); const index = legacy.state.lessons.findIndex((item) => item.id === mapped.id);
+    if (index < 0) legacy.state.lessons.push(mapped); else legacy.state.lessons[index] = mapped;
+    visitDraft = { childId: Number(childId), source, target: source, enrollmentId: String(attendance.enrollmentId), trial: attendance.trial,
+      expectedRevision: attendance.correctionVersion, key: operationKey(), month: timestampDate(source.startsAt).slice(0, 7),
+      date: timestampDate(source.startsAt), lessons: [source], calendar: false, pending: false, error: '' };
+    renderVisitEdit();
+  } catch (error) { fail(error); }
+}
+function renderVisitEdit() {
+  const draft = visitDraft; if (!draft || !canCorrectVisit()) return;
+  const disabled = draft.pending ? ' disabled' : '';
+  const directions = visitDirections(draft);
+  legacy.state.modal = `<h3>Изменить посещение</h3><div id="visit-edit-form">
+    ${draft.error ? `<div class="notice">${html(draft.error)}</div>` : ''}
+    <div class="field"><label>Направление</label><select class="select" id="visit-enrollment" onchange="icubeApi.changeVisitField('enrollmentId',this.value)"${disabled}>
+    ${directions.some((item) => String(item.id) === draft.enrollmentId) ? '' : '<option value="">Выберите направление</option>'}
+    ${directions.map((item) => `<option value="${item.id}"${String(item.id) === draft.enrollmentId ? ' selected' : ''}>${html(item.direction)}</option>`).join('')}</select>
+    <div class="muted mini">Если нужного направления нет, сначала добавьте его ребёнку.</div></div>
+    <div class="field"><label>Занятие</label><div>${html(visitLessonLabel(draft.target))}</div>
+    <button class="btn soft" onclick="icubeApi.visitCalendarMonth(0)"${disabled}>Выбрать другое занятие</button></div>
+    ${draft.calendar ? renderVisitCalendar(draft) : ''}
+    <label class="field"><span><input type="checkbox" id="visit-trial" onchange="icubeApi.changeVisitField('trial',this.checked)"${draft.trial ? ' checked' : ''}${disabled}> Ознакомительное посещение</span></label>
+    <button class="btn" onclick="icubeApi.openVisitLesson()"${disabled}>Открыть занятие</button>
+    <div style="margin-top:16px"><button class="btn danger" onclick="icubeApi.deleteEditedVisit()"${disabled}>Удалить посещение</button></div>
+    <div class="modal-actions"><button class="btn" onclick="closeModal()"${disabled}>Отмена</button><button class="btn primary" id="visit-submit" onclick="icubeApi.saveVisitEdit()"${disabled}>${draft.pending ? 'Сохраняем…' : 'Сохранить'}</button></div></div>`;
+  legacy.render();
+}
+function renderVisitCalendar(draft) {
+  const [year, month] = draft.month.split('-').map(Number);
+  const first = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
+  const count = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const days = new Set(draft.lessons.map((item) => timestampDate(item.startsAt)));
+  const disabled = draft.pending ? ' disabled' : '';
+  return `<div class="card"><div class="toolbar"><button class="btn" onclick="icubeApi.visitCalendarMonth(-1)"${disabled}>←</button><b>${html(draft.month)}</b><button class="btn" onclick="icubeApi.visitCalendarMonth(1)"${disabled}>→</button></div>
+    <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">${dayShortNames.map((name) => `<span class="muted mini">${name}</span>`).join('')}${'<span></span>'.repeat(first)}
+    ${Array.from({ length: count }, (_, index) => {
+      const date = `${draft.month}-${String(index + 1).padStart(2, '0')}`;
+      return `<button class="btn ${date === draft.date ? 'primary' : days.has(date) ? 'soft' : ''}" onclick="icubeApi.visitCalendarDate('${date}')"${!days.has(date) || draft.pending ? ' disabled' : ''}>${index + 1}</button>`;
+    }).join('')}</div><div class="list" style="margin-top:12px">${draft.lessons.filter((item) => timestampDate(item.startsAt) === draft.date).map((item) =>
+      `<button class="btn${String(item.id) === String(draft.target.id) ? ' primary' : ''}" onclick="icubeApi.chooseVisitLesson('${item.id}')"${disabled}>${html(visitLessonLabel(item))}<span class="muted mini"> · ${html(item.directionName)} · ${html(item.siteName ?? '')}</span></button>`).join('') || '<div class="empty">Выберите дату с доступными занятиями.</div>'}</div></div>`;
+}
+async function visitCalendarMonth(offset) {
+  const draft = visitDraft; if (!draft || draft.pending || !canCorrectVisit()) return;
+  const [year, month] = draft.month.split('-').map(Number);
+  const first = new Date(Date.UTC(year, month - 1 + offset, 1)).toISOString().slice(0, 10);
+  const last = new Date(Date.UTC(year, month + offset, 0)).toISOString().slice(0, 10);
+  draft.month = first.slice(0, 7); draft.calendar = true; draft.error = '';
+  draft.lessons = timestampDate(draft.source.startsAt).startsWith(draft.month) ? [draft.source] : [];
+  const requestedMonth = draft.month;
+  renderVisitEdit();
+  try {
+    const lessons = await api.request(`/children/${draft.childId}/attendance-correction-lessons?from=${first}&to=${last}`);
+    if (visitDraft !== draft || draft.month !== requestedMonth || !legacy.state.modal?.includes('visit-edit-form')) return;
+    draft.lessons = lessons;
+    if (timestampDate(draft.source.startsAt).startsWith(draft.month)) draft.lessons = [draft.source, ...lessons.filter((item) => String(item.id) !== String(draft.source.id))];
+    renderVisitEdit();
+  } catch (error) { if (visitDraft === draft && draft.month === requestedMonth && legacy.state.modal?.includes('visit-edit-form')) { draft.error = error.message; renderVisitEdit(); } }
+}
+function visitCalendarDate(date) {
+  if (!visitDraft || visitDraft.pending || !visitDraft.lessons.some((item) => timestampDate(item.startsAt) === date)) return;
+  visitDraft.date = date; renderVisitEdit();
+}
+function chooseVisitLesson(id) {
+  if (!visitDraft || visitDraft.pending) return;
+  const lesson = visitDraft.lessons.find((item) => String(item.id) === String(id)); if (!lesson) return;
+  visitDraft.target = lesson;
+  if (!visitDirections(visitDraft).some((item) => String(item.id) === visitDraft.enrollmentId)) visitDraft.enrollmentId = '';
+  renderVisitEdit();
+}
+function changeVisitField(field, value) {
+  if (!visitDraft || visitDraft.pending || !['enrollmentId', 'trial'].includes(field)) return;
+  visitDraft[field] = value;
+}
+async function openVisitLesson() {
+  const draft = visitDraft; if (!draft || draft.pending) return;
+  try {
+    const lesson = mapLesson(await api.get('lessons', draft.target.id));
+    const index = legacy.state.lessons.findIndex((item) => item.id === lesson.id);
+    if (index < 0) legacy.state.lessons.push(lesson); else legacy.state.lessons[index] = lesson;
+    legacy.state.modal = null; legacy.state.selectedLesson = lesson.id; legacy.state.page = 'lesson'; legacy.render();
+  } catch (error) { draft.error = error.message; renderVisitEdit(); }
+}
+function deleteEditedVisit() {
+  if (!visitDraft || visitDraft.pending || !canCorrectVisit()) return;
+  window.deleteVisitPrompt(visitDraft.childId, Number(visitDraft.source.id));
+  legacy.state.modal = legacy.state.modal.replace('onclick="closeModal()"', 'onclick="icubeApi.renderVisitEdit()"');
+  legacy.render();
+}
+async function saveVisitEdit() {
+  const draft = visitDraft; if (!draft || draft.pending || !canCorrectVisit()) return;
+  if (!visitDirections(draft).some((item) => String(item.id) === draft.enrollmentId)) { draft.error = 'Сначала добавьте нужное направление ребёнку и выберите его.'; renderVisitEdit(); return; }
+  draft.pending = true; draft.error = ''; renderVisitEdit();
+  try {
+    await api.request(`/lessons/${draft.source.id}/attendance/${draft.childId}/correct`, { method: 'POST', idempotencyKey: draft.key,
+      body: { targetLessonId: String(draft.target.id), enrollmentId: draft.enrollmentId, trial: draft.trial, expectedRevision: draft.expectedRevision, expectedTargetVersion: draft.target.lockVersion } });
+    await reload({ render: false });
+    // Include historical lessons outside the calendar's usual loading window.
+    for (const id of new Set([draft.source.id, draft.target.id])) {
+      const lesson = mapLesson(await api.get('lessons', id));
+      const index = legacy.state.lessons.findIndex((item) => item.id === lesson.id);
+      if (index < 0) legacy.state.lessons.push(lesson); else legacy.state.lessons[index] = lesson;
+    }
+    legacy.state.selectedChild = draft.childId; legacy.state.childTab = 'visits'; legacy.state.page = 'child'; legacy.state.modal = null;
+    visitDraft = null; legacy.render(); window.alert('Посещение изменено');
+  } catch (error) { draft.error = error.message; draft.pending = false; renderVisitEdit(); }
+}
+
 function salaryCalculationApi(lesson) {
   const salary = lesson?.salaryAccrual;
   if (!salary) return { type: 'Не начисляется', children: 0, fixed: 0, childrenPay: 0, total: 0, rates: {} };
@@ -2014,7 +2139,8 @@ async function reconnectTeacherOffline() {
   return syncLessonActionsWithSession();
 }
 
-window.icubeApi = { saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollmentStatus, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
+window.icubeApi = { editVisit, renderVisitEdit, changeVisitField, visitCalendarMonth, visitCalendarDate, chooseVisitLesson, openVisitLesson, deleteEditedVisit, saveVisitEdit,
+  saveSite, saveTeacher, teacherProjectChanged, deleteTeacher, saveGroup, saveChild, saveEnrollmentStatus, saveEnrollment, addEnrollment, deleteChild, deleteChildPrompt,
   projectTransferForm, confirmProjectTransfer,
   paymentForm, refreshPaymentDirections, updatePaymentPrice, updatePaymentCalc, savePayment, deletePaymentPrompt, deletePayment,
   refundForm, refreshRefundMaximum, saveRefund, deleteRefundPrompt, deleteRefund,
