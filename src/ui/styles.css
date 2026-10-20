@@ -1514,6 +1514,7 @@ body.context-help-open{overflow:hidden}
 #childRows .row[hidden]{display:none!important}
 
 /* Statistics keeps its own responsive layout; other CRM screens are unaffected. */
+.stats-page .stats-limitations summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}.stats-page .stats-limitations p{margin:8px 0}.stats-page .stats-group-controls .btn{min-height:44px}
 .stats-page{min-width:0;max-width:100%}.stats-page .stats-section{margin-top:20px}.stats-page h2{margin:0 0 12px}.stats-page h3,.stats-page h4{margin:0 0 10px}.stats-page p{line-height:1.5}.stats-page label{display:grid;gap:6px;min-width:0}.stats-page .input,.stats-page .select{width:100%;min-width:0;box-sizing:border-box}
 .stats-page .stats-filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:12px;align-items:end}.stats-page .stats-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}.stats-page .metric{min-width:0;padding:14px}.stats-page .metric .value{font-size:clamp(20px,2.3vw,30px);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.stats-page .metric .label{white-space:normal;line-height:1.4}
 .stats-page .stats-direction-robot{border-top:3px solid var(--direction-robot)}.stats-page .stats-direction-code{border-top:3px solid var(--direction-code)}.stats-page .stats-direction-mixed{border-top:3px solid var(--mixed-color)}

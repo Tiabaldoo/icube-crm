@@ -7,8 +7,8 @@ export const stamp = (value) => {
 };
 const before = (a, b) => a.changed_at.localeCompare(b.changed_at) || (BigInt(a.id) < BigInt(b.id) ? -1 : 1);
 
-// Only recorded history, or a row provably unchanged since creation, can establish
-// a past status. Financial updates may remove that proof; never guess in that case.
+// updated_at bounds the last possible status change, not just financial changes.
+// A row establishes its status from that instant forward, never before it.
 export function enrollmentHistory(enrollments, histories) {
   const entries = new Map(enrollments.map((e) => [String(e.id), { ...e, history: [] }]));
   for (const h of histories) entries.get(String(h.enrollment_id))?.history.push({ ...h, changed_at: stamp(h.changed_at) });
@@ -23,8 +23,7 @@ export function enrollmentHistory(enrollments, histories) {
     }
     if (low) return items[low - 1].new_status;
     if (items.length) return items[0].old_status ?? null;
-    if (e.created_at != null && e.updated_at != null && stamp(e.created_at) === stamp(e.updated_at)
-      && stamp(e.created_at) <= timestamp) return e.status;
+    if (e.updated_at != null && stamp(e.updated_at) <= timestamp) return e.status;
     return null;
   }
   function overall(rows, timestamp, limitId = null) {

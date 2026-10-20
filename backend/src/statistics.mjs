@@ -1,7 +1,7 @@
 import { ApiProblem } from './catalog.mjs';
 import { aggregateChildStatus } from './enrollment-status.mjs';
 import { moneyCents, moneyDecimal } from './lesson-rules.mjs';
-import { addCalendarDays, businessDate, calendarMonthPeriod, parseCalendarDate } from '../../src/shared/business-time.mjs';
+import { addCalendarDays, BUSINESS_TIME_ZONE, businessDate, calendarMonthPeriod, parseCalendarDate } from '../../src/shared/business-time.mjs';
 import { enrollmentHistory, periodDepartures, stamp } from './statistics-history.mjs';
 
 const flag = (value) => value === true || value === 1 || value === '1';
@@ -67,13 +67,13 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
     directionId: String(g.direction_id), directionName: flag(g.is_mixed) ? 'Смешанная' : g.direction_name, isMixed: flag(g.is_mixed), siteName: g.site_name,
     weekday: Number(g.weekday), startTime: String(g.start_time ?? '').slice(0, 5), endTime: String(g.end_time ?? '').slice(0, 5), schedule: g.extra_schedule ?? '',
     currentMembers: Number(g.current_members), capacity: flag(g.is_individual) ? 1 : 8,
-    completedLessons: 0, visits: 0, absences: 0, unmarked: 0, newChildren: 0, ...emptyConversion(),
+    completedLessons: 0, visits: 0, absences: 0, unmarked: 0, unresolvedDirections: 0, newChildren: 0, ...emptyConversion(),
     pausedChildren: departures.groups.get(String(g.id))?.paused.size ?? 0, finishedChildren: departures.groups.get(String(g.id))?.finished.size ?? 0,
-    occupancy: [], unknownOccupancyLessons: 0, estimatedCapacity: false }]));
-  const summary = { completedLessons: lessonRows.length, visits: 0, absences: 0, unmarked: 0, newChildren: 0,
+    occupancy: [], unknownOccupancyLessons: 0, partialOccupancyLessons: 0, unknownOccupancyChildren: new Set(), estimatedCapacity: false }]));
+  const summary = { completedLessons: lessonRows.length, visits: 0, absences: 0, unmarked: 0, unresolvedDirections: 0, newChildren: 0,
     pausedChildren: departures.paused, finishedChildren: departures.finished, leftChildren: departures.paused + departures.finished,
-    activeChildren: current.children.active, averageOccupancyPercent: null, occupancyLessons: 0, unknownOccupancyLessons: 0, estimatedCapacity: false };
-  for (const child of children.values()) if (child.createdAt?.slice(0, 10) >= period.from && child.createdAt.slice(0, 10) <= end) {
+    activeChildren: current.children.active, averageOccupancyPercent: null, occupancyLessons: 0, unknownOccupancyLessons: 0, partialOccupancyLessons: 0, estimatedCapacity: false };
+  for (const child of children.values()) if (child.createdAt?.slice(0, 10) >= period.from && child.createdAt.slice(0, 10) <= end && child.createdAt <= observedAt) {
     summary.newChildren++; const group = groupMap.get(String(child.groupId)); if (group) group.newChildren++;
   }
   const firstPaid = new Map(paidRows.map((p) => [`${p.child_id}:${p.direction_id}`, stamp(p.first_paid_at)]));
@@ -81,24 +81,36 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
   for (const row of memberRows) {
     const rows = membersByLesson.get(String(row.lesson_id)) ?? new Map(); rows.set(String(row.enrollment_id), row); membersByLesson.set(String(row.lesson_id), rows);
   }
-  const occupancy = [];
+  const occupancy = []; const unknownOccupancyChildren = new Set();
   for (const lesson of lessonRows) {
     summary.visits += Number(lesson.visits); summary.absences += Number(lesson.absences); summary.unmarked += Number(lesson.unmarked);
+    summary.unresolvedDirections += Number(lesson.unresolved_directions ?? 0);
     const group = groupMap.get(String(lesson.group_id)); if (!group) continue;
     group.completedLessons++; group.visits += Number(lesson.visits); group.absences += Number(lesson.absences); group.unmarked += Number(lesson.unmarked);
-    const counted = new Set(); const uncertain = new Set();
+    group.unresolvedDirections += Number(lesson.unresolved_directions ?? 0);
+    const counted = new Set(); const uncertain = new Set(); const known = new Set();
     for (const row of membersByLesson.get(String(lesson.lesson_id))?.values() ?? []) {
       const status = history.at(row.enrollment_id, stamp(lesson.starts_at));
-      if (status == null) uncertain.add(String(row.child_id));
-      if (status === 'active' || (status === 'lead' && firstPaid.get(`${row.child_id}:${row.direction_id}`) <= stamp(lesson.starts_at))) counted.add(String(row.child_id));
+      const paid = firstPaid.get(`${row.child_id}:${row.direction_id}`) <= stamp(lesson.starts_at);
+      // Starting a lesson freezes only active/lead main members. A same-day
+      // snapshot plus paid history proves eligibility even without an old status.
+      const frozenEligible = flag(row.eligible_roster_snapshot) && paid;
+      if (status == null && !frozenEligible) uncertain.add(String(row.child_id));
+      else known.add(String(row.child_id));
+      if (status === 'active' || (status === 'lead' && paid) || (status == null && frozenEligible)) counted.add(String(row.child_id));
     }
     // Only attendance_share proves historical individual capacity. Standard
     // lessons use the model capacity with an explicit estimate warning.
     const verified = lesson.calculation_mode_snapshot === 'attendance_share';
     const capacity = verified ? 1 : group.capacity;
     group.estimatedCapacity ||= !verified; summary.estimatedCapacity ||= !verified;
-    if ([...uncertain].some((id) => !counted.has(id))) { group.unknownOccupancyLessons++; summary.unknownOccupancyLessons++; }
-    else { const value = counted.size * 100 / capacity; group.occupancy.push(value); occupancy.push(value); }
+    const missing = [...uncertain].filter((id) => !counted.has(id));
+    for (const id of missing) { group.unknownOccupancyChildren.add(id); unknownOccupancyChildren.add(id); }
+    if (missing.length && !known.size) { group.unknownOccupancyLessons++; summary.unknownOccupancyLessons++; }
+    else {
+      if (missing.length) { group.partialOccupancyLessons++; summary.partialOccupancyLessons++; }
+      const value = counted.size * 100 / capacity; group.occupancy.push(value); occupancy.push(value);
+    }
   }
   summary.attendancePercent = percent(summary.visits, summary.visits + summary.absences);
   summary.occupancyLessons = occupancy.length;
@@ -115,7 +127,7 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
   const recruitment = { ...conversion([...perChild.values()].map((cases) => cases.includes('continued') ? 'continued' : cases.includes('pending') ? 'pending' : 'notContinued')),
     directionCases: trialRows.length, directions: [...perDirection.values()].map(({ cases, ...d }) => ({ ...d, ...conversion(cases) })) };
   const groups = [...groupMap.values()].filter((g) => !filters.directionId || g.directionId === filters.directionId || g.isMixed || g.completedLessons || g.trials || g.currentMembers || g.pausedChildren || g.finishedChildren)
-    .map(({ occupancy: values, ...g }) => ({ ...g, ...conversion([...(perGroup.get(g.id)?.values() ?? [])].map((cases) => cases.includes('continued') ? 'continued' : cases.includes('pending') ? 'pending' : 'notContinued')), occupancyPercent: percent(g.currentMembers, g.capacity),
+    .map(({ occupancy: values, unknownOccupancyChildren: missing, ...g }) => ({ ...g, unknownOccupancyChildren: missing.size, ...conversion([...(perGroup.get(g.id)?.values() ?? [])].map((cases) => cases.includes('continued') ? 'continued' : cases.includes('pending') ? 'pending' : 'notContinued')), occupancyPercent: percent(g.currentMembers, g.capacity),
       attendancePercent: percent(g.visits, g.visits + g.absences), averageOccupancyPercent: values.length ? (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : null,
       occupancyLessons: values.length, leftChildren: g.pausedChildren + g.finishedChildren })).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
   const monthly = monthsBetween(chartPeriod.from, chartPeriod.to).map((month) => {
@@ -135,15 +147,19 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
       newChildren: [...children.values()].filter((c) => c.createdAt?.slice(0, 7) === month && c.createdAt <= observedAt).length,
       pausedChildren: left.paused, finishedChildren: left.finished, unknownStatuses: left.unknown };
   });
-  return { period, filters, chartPeriod, observedAt, current, summary, recruitment, groups, monthly,
-    limitations: { unmarkedAttendances: summary.unmarked, unknownStatusChildren: departures.unknown,
-      unknownOccupancyLessons: summary.unknownOccupancyLessons, estimatedCapacity: summary.estimatedCapacity, groupNewChildrenBasis: 'created-from-lesson' } };
+  return { period: { ...period, effectiveTo: end }, filters, chartPeriod: { ...chartPeriod, effectiveTo: chartPeriod.to < today ? chartPeriod.to : today }, observedAt, current, summary, recruitment, groups, monthly,
+    limitations: { unmarkedAttendances: summary.unmarked, unresolvedAttendanceDirections: summary.unresolvedDirections, unknownStatusChildren: departures.unknown,
+      unknownOccupancyLessons: summary.unknownOccupancyLessons, partialOccupancyLessons: summary.partialOccupancyLessons, unknownOccupancyChildren: unknownOccupancyChildren.size,
+      estimatedCapacity: summary.estimatedCapacity, groupNewChildrenBasis: 'created-from-lesson' } };
 }
 
 export function createStatistics(pool, { now = () => new Date() } = {}) {
   async function get(raw = {}, context = {}) {
     if (!(context.roles ?? []).includes('director')) throw new ApiProblem(403, 'FORBIDDEN', 'Статистика доступна только директору');
-    const clock = now(); const today = businessDate(clock); const observedAt = stamp(new Date(clock.getTime() + 11 * 3600000).toISOString());
+    const clock = now(); const today = businessDate(clock);
+    const time = new Intl.DateTimeFormat('en-GB', { timeZone: BUSINESS_TIME_ZONE, hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(clock);
+    const observedAt = stamp(`${today} ${time}.${String(clock.getUTCMilliseconds()).padStart(3, '0')}`);
+    const groupsOnly = raw.scope === 'groups';
     const from = dateOnly(raw.from, 'from'); const to = dateOnly(raw.to, 'to');
     if (from > to) throw new ApiProblem(400, 'VALIDATION_ERROR', 'Дата начала периода должна быть не позже даты окончания');
     const chartFrom = dateOnly(raw.chartFrom ?? calendarMonthPeriod(clock, -11).from, 'chartFrom');
@@ -180,23 +196,35 @@ export function createStatistics(pool, { now = () => new Date() } = {}) {
             AND (:projectId IS NULL OR historic.project_id_snapshot=:projectId))`, params),
       pool.query(`WITH participants AS (SELECT lesson_id,child_id,roster_type FROM lesson_roster_members UNION ALL
         SELECT a.lesson_id,a.child_id,a.attendance_type FROM attendances a WHERE NOT EXISTS
-          (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=a.lesson_id AND r.child_id=a.child_id))
+          (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=a.lesson_id AND r.child_id=a.child_id)),
+        participant_directions AS (SELECT l.id lesson_id,e.child_id,CASE WHEN COUNT(DISTINCT e.direction_id)=1 THEN MIN(e.direction_id) END direction_id
+          FROM lessons l JOIN group_memberships gm ON gm.group_id=l.group_id
+            AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
+          JOIN child_enrollments e ON e.id=gm.enrollment_id AND e.project_id=l.project_id_snapshot
+          WHERE l.status='completed' AND l.deleted_at IS NULL AND l.starts_at<=:observedAt AND DATE(l.starts_at) BETWEEN :from AND :to
+            AND (:projectId IS NULL OR l.project_id_snapshot=:projectId) GROUP BY l.id,e.child_id)
         SELECT l.id lesson_id,l.group_id,l.starts_at,l.calculation_mode_snapshot,
         SUM(CASE WHEN a.present=TRUE AND a.is_trial=FALSE AND l.is_intro_group=FALSE AND (:directionId IS NULL OR COALESCE(ae.direction_id,CASE WHEN l.is_mixed_snapshot=FALSE THEN l.direction_id_snapshot END)=:directionId) THEN 1 ELSE 0 END) visits,
-        SUM(CASE WHEN a.present=FALSE AND a.marked_at IS NOT NULL AND r.roster_type='main' AND a.is_trial=FALSE AND l.is_intro_group=FALSE
-          AND (:directionId IS NULL OR COALESCE(ae.direction_id,CASE WHEN l.is_mixed_snapshot=FALSE THEN l.direction_id_snapshot END)=:directionId) THEN 1 ELSE 0 END) absences,
-        SUM(CASE WHEN r.roster_type='main' AND (a.id IS NULL OR (a.present=FALSE AND a.marked_at IS NULL)) THEN 1 ELSE 0 END) unmarked
+        SUM(CASE WHEN COALESCE(a.present,FALSE)=FALSE AND r.roster_type='main' AND COALESCE(a.is_trial,FALSE)=FALSE AND l.is_intro_group=FALSE
+          AND (:directionId IS NULL OR COALESCE(ae.direction_id,CASE WHEN l.is_mixed_snapshot=FALSE THEN l.direction_id_snapshot ELSE pd.direction_id END)=:directionId) THEN 1 ELSE 0 END) absences,
+        0 unmarked,
+        SUM(CASE WHEN l.is_intro_group=FALSE AND COALESCE(a.is_trial,FALSE)=FALSE AND (
+          (a.present=TRUE AND COALESCE(ae.direction_id,CASE WHEN l.is_mixed_snapshot=FALSE THEN l.direction_id_snapshot END) IS NULL)
+          OR (COALESCE(a.present,FALSE)=FALSE AND r.roster_type='main'
+            AND COALESCE(ae.direction_id,CASE WHEN l.is_mixed_snapshot=FALSE THEN l.direction_id_snapshot ELSE pd.direction_id END) IS NULL)) THEN 1 ELSE 0 END) unresolved_directions
         FROM lessons l LEFT JOIN participants r ON r.lesson_id=l.id LEFT JOIN attendances a ON a.lesson_id=l.id AND a.child_id=r.child_id
         LEFT JOIN child_enrollments ae ON ae.id=a.enrollment_id
+        LEFT JOIN participant_directions pd ON pd.lesson_id=l.id AND pd.child_id=r.child_id
         WHERE l.status='completed' AND l.deleted_at IS NULL AND l.starts_at<=:observedAt AND DATE(l.starts_at) BETWEEN :from AND :to
           AND (:projectId IS NULL OR l.project_id_snapshot=:projectId) AND (:directionId IS NULL OR (l.is_mixed_snapshot=FALSE AND l.direction_id_snapshot=:directionId)
             OR EXISTS (SELECT 1 FROM attendances da JOIN child_enrollments de ON de.id=da.enrollment_id
-              WHERE da.lesson_id=l.id AND de.direction_id=:directionId AND (da.present=TRUE OR da.marked_at IS NOT NULL))
+              WHERE da.lesson_id=l.id AND de.direction_id=:directionId)
             OR EXISTS (SELECT 1 FROM group_memberships gm JOIN child_enrollments de ON de.id=gm.enrollment_id
               WHERE gm.group_id=l.group_id AND de.direction_id=:directionId AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
                 AND (l.roster_frozen_at IS NULL OR EXISTS (SELECT 1 FROM lesson_roster_members dr WHERE dr.lesson_id=l.id AND dr.child_id=de.child_id AND dr.roster_type='main'))))
         GROUP BY l.id,l.group_id,l.starts_at,l.calculation_mode_snapshot`, params),
-      pool.query(`SELECT DISTINCT l.id lesson_id,e.id enrollment_id,e.child_id,e.direction_id FROM lessons l
+      pool.query(`SELECT DISTINCT l.id lesson_id,e.id enrollment_id,e.child_id,e.direction_id,
+        (r.child_id IS NOT NULL AND DATE(r.frozen_at)=DATE(l.starts_at) AND DATE(l.roster_frozen_at)=DATE(l.starts_at)) eligible_roster_snapshot FROM lessons l
         JOIN group_memberships gm ON gm.group_id=l.group_id AND gm.started_on<=DATE(l.starts_at) AND (gm.ended_on IS NULL OR gm.ended_on>=DATE(l.starts_at))
         JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN children c ON c.id=e.child_id
         LEFT JOIN lesson_roster_members r ON r.lesson_id=l.id AND r.child_id=e.child_id AND r.roster_type='main'
@@ -213,17 +241,18 @@ export function createStatistics(pool, { now = () => new Date() } = {}) {
           AND (:projectId IS NULL OR t.project_id_snapshot=:projectId) AND (:directionId IS NULL OR t.direction_id=:directionId)`, params),
       pool.query(`${actual} SELECT child_id,direction_id,MIN(starts_at) first_paid_at FROM actual WHERE is_trial=FALSE AND charged_lessons>0
         AND (:projectId IS NULL OR project_id_snapshot=:projectId) AND (:directionId IS NULL OR direction_id=:directionId) GROUP BY child_id,direction_id`, params),
-      pool.query(`SELECT DATE_FORMAT(p.paid_on,'%Y-%m') month,p.project_id_snapshot project_id,pr.name project_name,pr.code project_code,
+      groupsOnly ? Promise.resolve([[]]) : pool.query(`SELECT DATE_FORMAT(p.paid_on,'%Y-%m') month,p.project_id_snapshot project_id,pr.name project_name,pr.code project_code,
         'payment' kind,p.method,SUM(p.amount) amount FROM payments p LEFT JOIN projects pr ON pr.id=p.project_id_snapshot
-        WHERE p.deleted_at IS NULL AND p.paid_on BETWEEN :chartFrom AND :chartTo AND (:projectId IS NULL OR p.project_id_snapshot=:projectId) AND (:directionId IS NULL OR p.direction_id=:directionId)
+        WHERE p.deleted_at IS NULL AND p.paid_on BETWEEN :chartFrom AND :chartTo AND p.paid_on<=:today AND (:projectId IS NULL OR p.project_id_snapshot=:projectId) AND (:directionId IS NULL OR p.direction_id=:directionId)
         GROUP BY month,p.project_id_snapshot,pr.name,pr.code,p.method
         UNION ALL SELECT DATE_FORMAT(r.refunded_on,'%Y-%m'),r.project_id_snapshot,pr.name,pr.code,'refund','cashless',SUM(r.amount)
-        FROM refunds r LEFT JOIN projects pr ON pr.id=r.project_id_snapshot WHERE r.deleted_at IS NULL AND r.refunded_on BETWEEN :chartFrom AND :chartTo
+        FROM refunds r LEFT JOIN projects pr ON pr.id=r.project_id_snapshot WHERE r.deleted_at IS NULL AND r.refunded_on BETWEEN :chartFrom AND :chartTo AND r.refunded_on<=:today
           AND (:projectId IS NULL OR r.project_id_snapshot=:projectId) AND (:directionId IS NULL OR r.direction_id=:directionId)
         GROUP BY DATE_FORMAT(r.refunded_on,'%Y-%m'),r.project_id_snapshot,pr.name,pr.code`, params),
     ]);
-    return calculateStatistics({ period: { from, to }, chartPeriod: { from: chartFrom, to: chartTo }, filters: { projectId, directionId }, observedAt,
+    const result = calculateStatistics({ period: { from, to }, chartPeriod: { from: chartFrom, to: chartTo }, filters: { projectId, directionId }, observedAt,
       childRows, statusRows, groupRows, lessonRows, memberRows, trialRows, paidRows, moneyRows });
+    return groupsOnly ? { period: result.period, filters: result.filters, groups: result.groups, limitations: result.limitations } : result;
   }
   return { get };
 }

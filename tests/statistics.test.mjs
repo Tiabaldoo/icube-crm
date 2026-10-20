@@ -12,10 +12,10 @@ test('completed lessons and ordinary visits/absences include extras, exclude tri
   const result=await f.get();assert.deepEqual([result.summary.completedLessons,result.summary.visits,result.summary.absences,result.summary.attendancePercent],[2,2,1,'66.7']);
 });
 
-test('unmarked/cleared frozen main roster is not an absence; historical participants remain visible',async(t)=>{
+test('completed main roster without a checked presence is absent, including cleared/missing attendance rows',async(t)=>{
   const f=statisticsFixture(t);f.child(1);f.child(2);f.lesson(1,'2026-09-01');
   f.visit(1,1,{present:false,marked:false});f.db.exec("INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(1,2,'main')");
-  const result=await f.get();assert.equal(result.summary.absences,0);assert.equal(result.summary.unmarked,2);assert.equal(result.groups[0].completedLessons,1);
+  const result=await f.get();assert.equal(result.summary.absences,2);assert.equal(result.summary.unmarked,0);assert.equal(result.groups[0].completedLessons,1);
 });
 
 test('new records use unique child creation dates, never first paid visits or second enrollments',async(t)=>{
@@ -174,4 +174,110 @@ test('mixed attendance filters use its pinned direction and never guess a missin
 test('closing one direction while another remains a lead does not turn the overall lead into a finished child',async(t)=>{
   const f=statisticsFixture(t);f.child(1,{directions:[1,2]});f.db.exec("UPDATE child_enrollments SET status='lead' WHERE id=12");f.change(11,'active','finished','2026-09-10 10:00:00');
   const result=await f.get();assert.equal(result.current.children.lead,1);assert.equal(result.summary.finishedChildren,0);assert.equal(result.summary.pausedChildren,0);
+});
+
+test('regression: 43 unchecked main children are automatic absences after completion, without marked_at or any data rewrite',async(t)=>{
+  const f=statisticsFixture(t);f.lesson(1,'2026-10-10');
+  for(let id=1;id<=44;id++){f.child(id);f.visit(1,id,{present:id===1,marked:id===1});}
+  const before=f.snapshot();const changes=f.db.prepare('SELECT total_changes() n').get().n;
+  const result=await f.get({from:'2026-10-01',to:'2026-10-31'});
+  assert.deepEqual([result.summary.visits,result.summary.absences,result.summary.unmarked,result.summary.attendancePercent],[1,43,0,'2.3']);
+  assert.equal(result.groups[0].absences,43);assert.equal(result.limitations.unmarkedAttendances,0);
+  assert.equal(f.db.prepare('SELECT total_changes() n').get().n,changes);assert.equal(f.snapshot(),before);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM attendances WHERE present=0 AND marked_at IS NULL').get().n,43);
+});
+
+test('trials, introductory lessons and unchecked extras stay outside ordinary absences; mixed directions retain their own attendance',async(t)=>{
+  const f=statisticsFixture(t);for(let id=1;id<=5;id++)f.child(id,{directions:[1,2]});
+  f.lesson(1,'2026-10-10',{mixed:true});f.visit(1,1,{direction:1,present:false,marked:false});f.visit(1,2,{direction:2,present:false,marked:false});
+  f.visit(1,3,{trial:true,present:false,marked:false});f.visit(1,4,{type:'extra',present:false,marked:false});f.visit(1,5,{type:'extra',direction:2});
+  f.lesson(2,'2026-10-11');f.visit(2,1,{present:false,marked:false});f.db.exec('UPDATE lessons SET is_intro_group=1 WHERE id=2');
+  const params={from:'2026-10-01',to:'2026-10-31'};const result=await f.get(params);
+  assert.equal(result.summary.absences,2);assert.equal(result.summary.visits,1);
+  assert.equal((await f.get({...params,directionId:'1'})).summary.absences,1);
+  const code=await f.get({...params,directionId:'2'});assert.equal(code.summary.absences,1);assert.equal(code.summary.visits,1);
+});
+
+test('an absent mixed main roster row without attendance uses only unambiguous historical membership, never a current group or guessed direction',async(t)=>{
+  const f=statisticsFixture(t);f.child(1,{directions:[1,2]});f.lesson(1,'2026-09-10',{mixed:true});
+  f.db.exec("INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(1,1,'main'); INSERT INTO group_memberships VALUES(1,12,9,'2026-01-01','2026-09-30'),(2,11,99,'2026-10-01',NULL)");
+  assert.equal((await f.get({directionId:'2'})).summary.absences,1);assert.equal((await f.get({directionId:'1'})).summary.absences,0);
+  f.db.exec("INSERT INTO group_memberships VALUES(3,11,9,'2026-01-01','2026-09-30')");
+  const ambiguous=await f.get();assert.equal(ambiguous.summary.absences,1);assert.equal(ambiguous.limitations.unresolvedAttendanceDirections,1);
+  assert.equal((await f.get({directionId:'1'})).summary.absences,0);assert.equal((await f.get({directionId:'2'})).summary.absences,0);
+});
+
+test('actual historical move and removal leave final main absence and no extra absence, with no duplicate visits',async(t)=>{
+  const f=statisticsFixture(t,{keepFinancialSeed:true});f.seedVisit();const params={from:'2026-10-01',to:'2026-10-31'};
+  await f.correct(f.body({target:11}));let result=await f.get(params);
+  assert.deepEqual([result.summary.visits,result.summary.absences],[1,1]);
+  assert.equal(f.db.prepare('SELECT present FROM attendances WHERE lesson_id=10').get().present,0);
+  await f.lessons.removeAttendance('11','8',f.context);result=await f.get(params);
+  assert.deepEqual([result.summary.visits,result.summary.absences],[0,1]);
+  assert.equal(f.db.prepare('SELECT present FROM attendances WHERE lesson_id=11').get().present,0);assert.equal(f.balance(7),0);assert.equal(f.balance(8),0);
+});
+
+test('server business clock caps a full current month, future completed lessons, same-day future visits and future money',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.child(2,{created:'2026-10-20 13:00:00'});f.child(3,{created:'2026-10-21 10:00:00'});
+  f.lesson(1,'2026-10-19');f.visit(1,1,{trial:true});f.lesson(2,'2026-10-20');f.visit(2,1);
+  f.lesson(3,'2026-10-20');f.visit(3,1);f.db.exec("UPDATE lessons SET starts_at='2026-10-20 13:00:00' WHERE id=3");
+  f.lesson(4,'2026-10-21');f.visit(4,1);
+  f.db.exec("INSERT INTO payments(child_id,enrollment_id,direction_id,project_id_snapshot,paid_on,amount,method) VALUES(1,11,1,2,'2026-10-20','100.00','cash'),(1,11,1,2,'2026-10-21','900.00','cash'); INSERT INTO refunds(child_id,enrollment_id,direction_id,project_id_snapshot,refunded_on,amount) VALUES(1,11,1,2,'2026-10-20','10.00'),(1,11,1,2,'2026-10-21','90.00')");
+  const result=await f.get({from:'2026-10-01',to:'2026-10-31'});
+  assert.equal(result.observedAt,'2026-10-20 12:00:00.000000');assert.equal(result.period.to,'2026-10-31');assert.equal(result.period.effectiveTo,'2026-10-20');
+  assert.deepEqual([result.summary.completedLessons,result.summary.visits,result.summary.newChildren],[2,1,0]);
+  const month=result.monthly.find((m)=>m.month==='2026-10');assert.equal(month.received,'100.00');assert.equal(month.refunds,'10.00');assert.equal(result.chartPeriod.effectiveTo,'2026-10-20');
+  const future=await f.get({from:'2026-10-21',to:'2026-10-31'});assert.equal(future.summary.completedLessons,0);assert.equal(future.recruitment.trials,0);assert.equal(future.summary.newChildren,0);
+  assert.equal((await f.get()).period.effectiveTo,'2026-09-30');
+});
+
+test('future paid visits cannot prematurely convert a trial cohort',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.lesson(1,'2026-10-19');f.visit(1,1,{trial:true});f.lesson(2,'2026-10-21');f.visit(2,1);
+  const result=await f.get({from:'2026-10-01',to:'2026-10-31'});assert.equal(result.recruitment.pending,1);assert.equal(result.recruitment.continued,0);
+});
+
+test('effective observation date follows the existing CRM timezone across a UTC date boundary',async()=>{
+  const captured=[];const service=createStatistics({async query(_sql,params){captured.push(params);return [[]];}},{now:()=>new Date('2026-10-20T19:30:00Z')});
+  const result=await service.get({from:'2026-10-01',to:'2026-10-31'},{roles:['director']});
+  assert.equal(result.period.effectiveTo,'2026-10-21');assert.equal(result.observedAt,'2026-10-21 06:30:00.000000');assert.ok(captured.every((p)=>p.today==='2026-10-21'));
+});
+
+test('48 financially updated enrollments have a provable status after their last update without inventing earlier history',async(t)=>{
+  const f=statisticsFixture(t);for(let id=1;id<=48;id++)f.child(id);
+  f.db.exec("UPDATE child_enrollments SET updated_at='2026-10-15 10:00:00'");
+  assert.equal((await f.get({from:'2026-10-01',to:'2026-10-31'})).limitations.unknownStatusChildren,0);
+  assert.equal((await f.get()).limitations.unknownStatusChildren,48,'October status cannot prove September');
+  assert.equal((await f.get({from:'2026-10-01',to:'2026-10-31',projectId:'3'})).limitations.unknownStatusChildren,0);
+});
+
+test('recorded old status restores the initial interval even when creation snapshot is absent and a payment changed updated_at',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.db.exec("UPDATE child_enrollments SET updated_at='2026-09-03 10:00:00'; INSERT INTO group_memberships VALUES(1,11,9,'2026-01-01',NULL)");
+  f.change(11,'active','paused','2026-09-20 10:00:00');f.lesson(1,'2026-09-10');f.lesson(2,'2026-09-25');
+  const result=await f.get();assert.equal(result.summary.pausedChildren,1);assert.equal(result.summary.averageOccupancyPercent,'6.3');assert.equal(result.limitations.unknownStatusChildren,0);
+});
+
+test('26 frozen main rosters with paid history prove eligible active-or-lead membership despite missing old statuses',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.db.exec("UPDATE child_enrollments SET updated_at='2026-10-20 11:00:00'; INSERT INTO group_memberships VALUES(1,11,9,'2026-01-01',NULL)");
+  for(let id=1;id<=26;id++) {const date=`2026-09-${String(id).padStart(2,'0')}`;f.lesson(id,date);f.visit(id,1);f.db.prepare('UPDATE lessons SET roster_frozen_at=? WHERE id=?').run(`${date} 10:00:00`,id);f.db.prepare('UPDATE lesson_roster_members SET frozen_at=? WHERE lesson_id=?').run(`${date} 10:00:00`,id);}
+  const result=await f.get();assert.equal(result.summary.completedLessons,26);assert.equal(result.summary.occupancyLessons,26);assert.equal(result.summary.unknownOccupancyLessons,0);assert.equal(result.summary.averageOccupancyPercent,'12.5');assert.equal(result.summary.estimatedCapacity,true);
+  f.db.exec("UPDATE lessons SET starts_at='2026-08-31 10:00:00' WHERE id=1");
+  assert.equal((await f.get({from:'2026-08-01',to:'2026-08-31'})).summary.averageOccupancyPercent,null,'a roster frozen on another date does not establish a past status');
+});
+
+test('one unknown main member does not erase confirmed occupancy; partial coverage is explicit and today’s active state is not backfilled',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.child(2);f.db.exec("UPDATE child_enrollments SET updated_at='2026-10-20 11:00:00' WHERE id=21; INSERT INTO group_memberships VALUES(1,11,9,'2026-01-01',NULL),(2,21,9,'2026-01-01',NULL)");
+  f.lesson(1,'2026-09-10');const result=await f.get();
+  assert.equal(result.summary.averageOccupancyPercent,'12.5');assert.equal(result.summary.unknownOccupancyLessons,0);assert.equal(result.summary.partialOccupancyLessons,1);
+  assert.equal(result.limitations.unknownOccupancyChildren,1);assert.equal(result.groups[0].partialOccupancyLessons,1);assert.equal(result.groups[0].unknownOccupancyChildren,1);
+});
+
+test('group-only scope reuses the same period calculations and current roster, without returning or querying monetary charts',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.db.exec("INSERT INTO group_memberships VALUES(1,11,9,'2026-01-01',NULL)");
+  f.lesson(1,'2026-09-10');f.visit(1,1,{trial:true});f.lesson(2,'2026-10-10');f.visit(2,1);
+  const september=await f.get();const common=await f.get({from:'2026-10-01',to:'2026-10-31'});f.calls.length=0;
+  const groups=await f.get({scope:'groups'});assert.deepEqual(groups.groups,september.groups);assert.equal(groups.monthly,undefined);assert.equal(groups.summary,undefined);
+  assert.equal(groups.groups[0].visits,0);assert.equal(groups.groups[0].continued,1);assert.equal(common.groups[0].visits,1);assert.equal(groups.groups[0].currentMembers,common.groups[0].currentMembers);
+  assert.equal(f.calls.length,7);assert.ok(f.calls.every(({sql})=>!sql.includes('FROM payments')));
+  await assert.rejects(f.get({scope:'groups',from:'2026-10-02',to:'2026-10-01'}),{code:'VALIDATION_ERROR'});
+  for(const role of ['partner','teacher','parent'])await assert.rejects(f.get({scope:'groups'},{roles:[role]}),{code:'FORBIDDEN'});
 });
