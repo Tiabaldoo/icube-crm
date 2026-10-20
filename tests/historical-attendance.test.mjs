@@ -124,11 +124,66 @@ test('move to in-progress lesson uses existing deferred debit rule and completed
   assert.deepEqual(salary(f).map((s) => [s.lesson_id,s.total_amount]), [[10,'300.00']]);
 });
 
-for (const duplicate of ['roster','attendance']) test(`target ${duplicate} duplicate rejects without changing either lesson`, async (t) => {
+for (const duplicate of ['main','extra','unrostered']) test(`target present ${duplicate} duplicate rejects without changing either lesson`, async (t) => {
   const f = correctionFixture(t); f.seedVisit();
-  if (duplicate === 'roster') f.db.exec("INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(11,8,'extra')");
-  else f.db.exec("INSERT INTO attendances(lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,charged_lessons) VALUES(11,8,8,'extra',1,1,0)");
+  if (duplicate !== 'unrostered') f.db.prepare('INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(11,8,?)').run(duplicate);
+  f.db.prepare("INSERT INTO attendances(lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,charged_lessons) VALUES(11,8,8,?,1,1,0)").run(duplicate === 'main' ? 'main' : 'extra');
+  assert.deepEqual((await f.lessons.correctionLessons('8',{from:'2026-10-01',to:'2026-10-31'},f.context)).map((lesson)=>lesson.id),[]);
   const before = f.snapshot(); await assert.rejects(f.correct(f.body({ target: 11 })), { code: 'CHILD_ALREADY_IN_LESSON' }); assert.equal(f.snapshot(), before);
+});
+
+for (const type of ['main','extra']) for (const hasAttendance of [false,true]) test(`unmarked ${type} roster ${hasAttendance ? 'with' : 'without'} attendance is selectable and reused`,async(t)=>{
+  const f=correctionFixture(t);f.seedVisit();
+  f.db.prepare('INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(11,8,?)').run(type);
+  if(hasAttendance) f.db.prepare("INSERT INTO attendances(lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,charged_lessons) VALUES(11,8,8,?,0,0,0)").run(type);
+  const rosterBefore=f.db.prepare('SELECT * FROM lesson_roster_members WHERE lesson_id=11').get();
+  assert.deepEqual((await f.lessons.correctionLessons('8',{from:'2026-10-01',to:'2026-10-31'},f.context)).map((lesson)=>lesson.id),['11']);
+  await f.correct(f.body({target:11}));
+  assert.deepEqual(f.db.prepare('SELECT * FROM lesson_roster_members WHERE lesson_id=11').get(),rosterBefore);
+  assert.equal(present(f).length,1);assert.equal(present(f)[0].attendance_type,type);assert.equal(present(f)[0].lesson_id,11);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM attendances WHERE lesson_id=11 AND child_id=8').get().n,1);
+  assert.equal(activeDebits(f).length,1);
+});
+
+test('an old marker without actual presence or active financial effects does not block roster reuse',async(t)=>{
+  const f=correctionFixture(t);f.seedVisit();
+  f.db.exec("INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(11,8,'main'); INSERT INTO attendances(lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,charged_lessons,marked_at) VALUES(11,8,8,'main',0,0,0,'2026-10-09 15:00:00')");
+  await f.correct(f.body({target:11}));assert.equal(present(f).length,1);assert.equal(present(f)[0].lesson_id,11);assert.equal(activeDebits(f).length,1);
+});
+
+for(const dependency of ['charged-lessons','active-debit']) test(`absent target with ${dependency} still rejects atomically`,async(t)=>{
+  const f=correctionFixture(t);f.seedVisit();
+  f.db.exec("INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(11,8,'main'); INSERT INTO attendances(lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,charged_lessons) VALUES(11,8,8,'main',0,0,0)");
+  if(dependency==='charged-lessons')f.db.exec('UPDATE attendances SET charged_lessons=1 WHERE lesson_id=11');
+  else f.db.exec("INSERT INTO balance_entries(enrollment_id,entry_type,lessons_delta,amount_delta,attendance_id) SELECT 8,'attendance','-1.00000000','-1500.00',id FROM attendances WHERE lesson_id=11");
+  const before=f.snapshot();await assert.rejects(f.correct(f.body({target:11})),{code:'CHILD_ALREADY_IN_LESSON'});assert.equal(f.snapshot(),before);
+});
+
+for(const role of ['director','partner']) for(const group of ['own','other','mixed']) test(`${role}: completed ${group} group round trip restores FIFO, salary, main roster and child history`,async(t)=>{
+  const f=correctionFixture(t);const context={roles:[role],...(role==='partner'?{projectIds:['2']}:{})};
+  f.db.exec("UPDATE lessons SET starts_at='2026-10-10 10:00:00',ends_at='2026-10-10 11:00:00',is_mixed_snapshot=0 WHERE id=10; UPDATE lessons SET starts_at='2026-10-12 15:00:00',ends_at='2026-10-12 16:00:00' WHERE id=11");
+  f.db.prepare('UPDATE lessons SET group_id=?,is_mixed_snapshot=? WHERE id=11').run(group==='own'?9:99,group==='mixed'?1:0);
+  await f.pay('4500.00',{paidOn:'2026-10-01'});f.seedVisit();
+  f.db.exec("UPDATE attendances SET marked_at='2026-10-10 10:00:00'; UPDATE balance_entries SET occurred_at='2026-10-10 10:00:00' WHERE entry_type='attendance'; INSERT INTO salary_accruals(lesson_id,teacher_id,rate_version_id,accrual_type,present_children,fixed_amount,children_amount,total_amount) VALUES(10,5,1,'regular',1,'600.00','100.00','700.00')");
+  const lot=f.rows('balance_lots')[0],debit=activeDebits(f)[0];
+  f.db.prepare("INSERT INTO balance_lot_consumptions(balance_lot_id,balance_entry_id,lessons,amount) VALUES(?,?,'1.00000000','1125.00')").run(lot.id,debit.id);
+  f.db.prepare('UPDATE balance_lots SET remaining_lessons=remaining_lessons-1 WHERE id=?').run(lot.id);
+  const initialRoster=f.db.prepare('SELECT * FROM lesson_roster_members WHERE lesson_id=10').get();
+  const outbound=f.body({target:11,enrollment:7});await f.correct(outbound,context);
+  assert.equal(present(f).length,1);assert.equal(present(f)[0].lesson_id,11);
+  assert.deepEqual(salary(f).map((row)=>[row.lesson_id,row.teacher_id,row.total_amount]),[[11,6,'700.00']]);
+  const options=await f.lessons.correctionLessons('8',{from:'2026-10-01',to:'2026-10-31'},{...f.context,...context});
+  assert.deepEqual(options.map((lesson)=>lesson.id),['10']);assert.ok(options[0].startsAt.startsWith('2026-10-10'));
+  await f.correct(f.body({source:11,target:10,enrollment:7}),{...context,idempotencyKey:'return'},11);
+  assert.equal(present(f).length,1);assert.equal(present(f)[0].lesson_id,10);assert.equal(present(f)[0].attendance_type,'main');
+  assert.equal(activeDebits(f).length,1);assert.equal(f.balance(7),3);assert.equal(f.balance(8),0);
+  assert.equal(Number(f.rows('balance_lots')[0].remaining_lessons),3);
+  assert.deepEqual(salary(f).map((row)=>[row.lesson_id,row.teacher_id,row.total_amount]),[[10,5,'700.00']]);
+  assert.deepEqual(f.db.prepare('SELECT * FROM lesson_roster_members WHERE lesson_id=10').get(),initialRoster);
+  assert.equal(f.db.prepare('SELECT COUNT(*) n FROM lesson_roster_members WHERE lesson_id=11').get().n,0);
+  const original=await f.lessons.get(10,{...f.context,...context}),other=await f.lessons.get(11,{...f.context,...context});
+  assert.deepEqual(original.attendances.filter((a)=>a.present).map((a)=>a.childId),['8']);assert.ok(other.attendances.every((a)=>!a.present));
+  const after=f.snapshot();await f.correct(outbound,context);assert.equal(f.snapshot(),after);
 });
 
 for (const prefix of ['INSERT INTO balance_entries','INSERT INTO salary_accruals','INSERT INTO audit_log']) test(`transaction rolls back balances, FIFO, roster, salary and audit when ${prefix} fails`, async (t) => {

@@ -8,12 +8,12 @@ function ui() {
   const lesson = { id: '10', groupId: '9', groupName: 'Смешанная', projectId: '2', lockVersion: 0, directionName: 'Смешанная', startsAt: '2026-10-16T10:00:00+11:00', endsAt: '2026-10-16T11:00:00+11:00',
     attendances: [{ childId: '8', enrollmentId: '7', present: true, trial: true, correctionVersion: 'a'.repeat(64) }] };
   const state = { role: 'director', children: [{ id: 8, name: 'Ребёнок', enrollments: [{ id: 7, direction: 'Робототехника', projectId: 2 }, { id: 8, direction: 'Программирование', projectId: 2 }, { id: 9, direction: 'Чужое', projectId: 3, editable: false }] }], lessons: [], payments: [] };
-  const calls = []; const alerts = []; let failure = null; let deferred = null;
+  const calls = []; const alerts = []; let failure = null; let deferred = null; let availableLessons = null;
   const api = { async get() { return lesson; }, async request(path, options) {
     calls.push({ path, options });
     if (failure) throw new Error(failure);
     if (options?.method === 'POST') { if (deferred) await deferred; return {}; }
-    return [{ ...lesson, id: '11', groupName: 'Другая группа', startsAt: '2026-10-09T15:00:00+11:00', endsAt: '2026-10-09T16:00:00+11:00' },
+    return availableLessons ?? [{ ...lesson, id: '11', groupName: 'Другая группа', startsAt: '2026-10-09T15:00:00+11:00', endsAt: '2026-10-09T16:00:00+11:00' },
       { ...lesson, id: '12', groupName: 'Вторая группа', startsAt: '2026-10-09T17:00:00+11:00', endsAt: '2026-10-09T18:00:00+11:00' }];
   } };
   const context = vm.createContext({ legacy: { state, render() {} }, api, Date, Set, console,
@@ -27,7 +27,7 @@ function ui() {
   const start = source.indexOf('// Historical corrections use online'); const end = source.indexOf('\nfunction salaryCalculationApi', start);
   vm.runInContext(source.slice(start, end), context);
   vm.runInContext(source.slice(source.indexOf('function paymentForm('), source.indexOf('\nfunction refreshPaymentDirections')), context);
-  return { context, state, lesson, calls, alerts, failWith(message) { failure = message; }, waitFor(promise) { deferred = promise; } };
+  return { context, state, lesson, calls, alerts, setAvailableLessons(lessons) { availableLessons = lessons; }, failWith(message) { failure = message; }, waitFor(promise) { deferred = promise; } };
 }
 
 test('visit form pins attendance identity/type and scope; no free date; delete reuses existing confirmation', async () => {
@@ -50,6 +50,17 @@ test('mini calendar reads existing lessons, highlights dates, selects one of mul
   f.context.chooseVisitLesson('12'); assert.match(f.state.modal, /09\.10\.2026 · 17:00–18:00 · Вторая группа/);
   await f.context.visitCalendarMonth(-1); assert.match(f.calls[1].path, /from=2026-09-01&to=2026-09-30/);
   assert.doesNotMatch(f.state.modal, /type="date"/);
+});
+
+test('reopened editor shows the original own-group lesson returned by the chooser and submits the return move', async () => {
+  const f=ui();const original={...f.lesson,groupName:'Своя группа',startsAt:'2026-10-10T10:00:00+11:00',endsAt:'2026-10-10T11:00:00+11:00'};
+  Object.assign(f.lesson,{id:'11',groupName:'Другая группа',startsAt:'2026-10-12T15:00:00+11:00',endsAt:'2026-10-12T16:00:00+11:00'});
+  f.setAvailableLessons([original]);await f.context.editVisit(8,11);await f.context.visitCalendarMonth(0);
+  assert.match(f.state.modal,/visitCalendarDate\('2026-10-10'\)"/);
+  f.context.visitCalendarDate('2026-10-10');assert.match(f.state.modal,/Своя группа/);f.context.chooseVisitLesson('10');
+  assert.match(f.state.modal,/10\.10\.2026 · 10:00–11:00 · Своя группа/);await f.context.saveVisitEdit();
+  const request=f.calls.find((call)=>call.options?.method==='POST');assert.equal(request.path,'/lessons/11/attendance/8/correct');assert.equal(request.options.body.targetLessonId,'10');
+  assert.equal(f.state.childTab,'visits');assert.equal(f.state.modal,null);
 });
 
 test('save preserves draft on error; double click is suppressed; retry uses same key/revision and refreshes child card', async () => {

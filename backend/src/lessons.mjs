@@ -701,7 +701,6 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         AND EXISTS (SELECT 1 FROM child_enrollments e WHERE e.child_id=:childId AND e.project_id=l.project_id_snapshot
           AND (e.superseded_at IS NULL OR e.superseded_at>l.starts_at)
           AND (NOT EXISTS (SELECT 1 FROM enrollment_project_transfers pt WHERE pt.target_enrollment_id=e.id) OR e.created_at<=l.starts_at))
-        AND NOT EXISTS (SELECT 1 FROM lesson_roster_members r WHERE r.lesson_id=l.id AND r.child_id=:childId)
         AND NOT EXISTS (SELECT 1 FROM attendances a WHERE a.lesson_id=l.id AND a.child_id=:childId AND a.present=TRUE)
         AND NOT EXISTS (SELECT 1 FROM partner_settlements ps WHERE ps.project_id=l.project_id_snapshot AND DATE(l.starts_at) BETWEEN ps.period_from AND ps.period_to)
       ORDER BY l.starts_at,l.id`, { childId, projectId, from, to });
@@ -757,12 +756,16 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
         if (!roster.length) throw new ApiProblem(409, 'CHILD_NOT_IN_LESSON', 'Исходный состав занятия изменился');
         const unchanged = sourceId === targetId && String(attendance.enrollment_id) === enrollmentId && bool(attendance.is_trial) === body.trial;
         if (!unchanged) {
+          let destinationRoster = null;
           if (sourceId !== targetId) {
             const [targetRoster] = await connection.query('SELECT roster_type FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: target.id, childId });
             const [targetAttendance] = await connection.query('SELECT * FROM attendances WHERE lesson_id=:lessonId AND child_id=:childId FOR UPDATE', { lessonId: target.id, childId });
-            if (targetRoster.length || targetAttendance.some((row) => bool(row.present) || row.marked_at != null || Number(row.charged_lessons) !== 0)
+            // Frozen main/extra membership is not presence. Reuse it, while
+            // retaining protection against an actual visit or active debit.
+            destinationRoster = targetRoster[0] ?? null;
+            if (targetAttendance.some((row) => bool(row.present) || Number(row.charged_lessons) !== 0)
               || (targetAttendance[0] && await activeAttendanceDebit(connection, targetAttendance[0].id))) {
-              throw new ApiProblem(409, 'CHILD_ALREADY_IN_LESSON', 'Ребёнок уже есть в выбранном занятии');
+              throw new ApiProblem(409, 'CHILD_ALREADY_IN_LESSON', 'В выбранном занятии уже есть присутствие или действующее списание ребёнка');
             }
           }
           let enrollment = await enrollmentForAttendance(connection, target, childId, selected.id, !body.trial, true);
@@ -774,10 +777,10 @@ export function createMysqlLessons(pool, { lessonPhotos = null, parentNotificati
             // The reversal may restore the same enrollment used by the destination.
             enrollment = await enrollmentForAttendance(connection, target, childId, selected.id, !body.trial, true);
             if (roster[0].roster_type === 'extra') await connection.query("DELETE FROM lesson_roster_members WHERE lesson_id=:lessonId AND child_id=:childId AND roster_type='extra'", { lessonId: source.id, childId });
-            await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
+            if (!destinationRoster) await connection.query(`INSERT INTO lesson_roster_members (lesson_id,child_id,roster_type,added_by_user_id,frozen_at)
               VALUES (:lessonId,:childId,'extra',:actorId,NOW(6))`, { lessonId: target.id, childId, actorId: context.userId });
           }
-          await setAttendance(connection, target, childId, sourceId === targetId ? roster[0].roster_type : 'extra', { present: true, trial: body.trial }, context, enrollment);
+          await setAttendance(connection, target, childId, sourceId === targetId ? roster[0].roster_type : destinationRoster?.roster_type ?? 'extra', { present: true, trial: body.trial }, context, enrollment);
           for (const lesson of locked.values()) await connection.query('UPDATE lessons SET lock_version=lock_version+1 WHERE id=:id', { id: lesson.id });
         }
         const result = { sourceLessonId: sourceId, lessonId: targetId, childId, unchanged };
