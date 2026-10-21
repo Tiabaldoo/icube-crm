@@ -1,9 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { dashboardLessonsForDate } from '../src/frontend/dashboard-ui.mjs';
+import { dashboardLessonsForDate, installDashboardUi } from '../src/frontend/dashboard-ui.mjs';
+import { addCalendarDays, businessDate } from '../src/shared/business-time.mjs';
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8');
+
+test('tomorrow cards preserve their contents and use blue/orange/teal stripes, with mixed determined by the flag rather than its name',async()=>{
+  const tomorrow=addCalendarDays(businessDate(),1).split('-').reverse().join('.');
+  const groups=[{id:1,name:'Смешанная по названию',direction:'Робототехника',isMixed:false},{id:2,name:'Код',direction:'Программирование',isMixed:false},{id:3,name:'Особая группа',direction:'Робототехника',isMixed:true}].map(g=>({...g,projectId:1,siteId:1}));
+  const state={role:'director',projects:[{id:1,name:'Айкуб',active:true}],groups,lessons:groups.map(g=>({id:g.id,groupId:g.id,date:tomorrow,time:'10:00–11:00',teacherId:1,status:'Запланировано'})),sites:[{id:1,name:'Школа'}],teachers:[{id:1,name:'Преподаватель'}],children:[],payments:[],notifications:[]};
+  const host={icubeLegacy:{state,pageHead:()=>'',render(){}},crmDirectionClassV134:direction=>direction==='Программирование'?'crm-direction-program':'crm-direction-robot'};
+  installDashboardUi({windowObject:host,api:{}});const page=host.dashboard();
+  const cards=[...page.matchAll(/<div class="dashboard-upcoming-row clickable ([^"]+)" onclick="openLesson\((\d+)\)">([\s\S]*?)<\/span><\/div><\/div>/g)];
+  assert.equal(cards.length,3);assert.match(cards[0][1],/crm-direction-robot/);assert.match(cards[1][1],/crm-direction-program/);assert.match(cards[2][1],/crm-direction-mixed/);
+  for(const card of cards){assert.match(card[3],/Школа/);assert.match(card[3],/Преподаватель/);assert.match(card[3],/Айкуб/);}
+  assert.match(page,/Особая группа/);assert.match(page,/Смешанная по названию/);
+  const [css,legacy]=await Promise.all([read('../src/ui/dashboard.css'),read('../src/frontend/crm-ui.js')]);
+  assert.match(css,/\.dashboard-page \.dashboard-direction-card\.crm-direction-mixed\{border-top:4px solid var\(--mixed-color\)/);
+  assert.match(legacy,/\.dashboard-direction-card\.crm-direction-robot\{[^}]*border-top:4px solid var\(--direction-robot\)/);
+  assert.match(legacy,/\.dashboard-direction-card\.crm-direction-program\{[^}]*border-top:4px solid var\(--direction-code\)/);
+});
 
 test('dashboard attention remains a compact vertical list and tomorrow lessons are capped at three', async () => {
   const [source, css] = await Promise.all([read('../src/frontend/dashboard-ui.mjs'), read('../src/ui/dashboard.css')]);

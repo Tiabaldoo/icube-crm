@@ -14,17 +14,18 @@ function fixture(role='director') {
   const result={period:{from:'2026-10-01',to:'2026-10-31'},projects:[p('icube-robots','Айкуб'),p('zebra','Зебра')],
     totals:{payments:'13200.00',deductions:'6600.00',result:'6600.00',refunds:'0.00',salary:'3300.00',rent:'0.00',tax:'0.00',partnerShare:'3300.00',manualIncome:'0.00',manualExpense:'0.00',automaticResult:'6600.00',combinedMarginPercent:'50.00',overallMarginPercent:'50.00'},
     partner:{cashHeld:'3000.00',transfer:'1350.00',earnedIncome:'4950.00',earnedIcubeShare:'1650.00'},entries:[{id:'1',type:'expense',date:'2026-10-15',amount:'200.01',purpose:'Оборудование'}]};
-  const api={async list(resource,query){calls.push({resource,query});return listHandler?listHandler():result;},async request(path,options){calls.push({path,...options});return requestHandler(path,options);}};
+  const history={months:Array.from({length:12},(_,i)=>({month:new Date(Date.UTC(2025,10+i,1)).toISOString().slice(0,7),result:i===0?'-200.01':i===1?'0.00':'6600.00'}))};
+  const api={async list(resource,query){calls.push({resource,query});return listHandler?listHandler(resource):resource==='statistics/budget/monthly'?history:result;},async request(path,options){calls.push({path,...options});return requestHandler(path,options);}};
   const ui=createDirectorBudgetUi({api,getActor:()=>actor,find:selector=>selector==='#director-budget-body'?target:controls[selector],confirm:()=>confirmation,makeKey:()=>`budget-key-${++key}`,now:()=>new Date('2026-10-21T01:00:00Z')});
   const input=(date='2026-10-20',amount='1234.56',purpose='Материалы')=>{for(const [id,value]of [['date',date],['amount',amount],['purpose',purpose]])controls[`#budget-entry-${id}`]={value};};
-  return {ui,result,calls,controls,target,input,setActor(value){actor=value;},setConfirm(value){confirmation=value;},setRequest(fn){requestHandler=fn;},setList(fn){listHandler=fn;}};
+  return {ui,result,history,calls,controls,target,input,setActor(value){actor=value;},setConfirm(value){confirmation=value;},setRequest(fn){requestHandler=fn;},setList(fn){listHandler=fn;}};
 }
 
-test('budget starts closed, loads lazily, shows eight compact cards and preserves three closed detail sections',async()=>{
+test('budget starts closed, loads lazily, shows unchanged eight cards and separate closed breakdown, partner and history sections',async()=>{
   const f=fixture();assert.match(f.ui.section(),/Мой бюджет/);assert.doesNotMatch(f.ui.section(),/<details[^>]+ open/);assert.equal(f.calls.length,0);
   await f.ui.toggle(true);assert.match(f.ui.section(),/<details[^>]+ open/);assert.equal(f.calls.length,1);assert.equal((f.target.innerHTML.match(/class="card metric /g)||[]).length,8);
-  for(const label of ['Все оплаты','Расходы и удержания','Мой результат','Общая доходность','Айкуб + Зебра','Начисленная зарплата','Начисленная доля Айкуба','Дополнительные операции','Прочий доход','Прочий расход'])assert.ok(f.target.innerHTML.includes(label));
-  assert.equal((f.target.innerHTML.match(/class="budget-details"/g)||[]).length,3);assert.doesNotMatch(f.target.innerHTML,/<details[^>]*budget-details[^>]* open/);
+  for(const label of ['Все оплаты','Расходы и удержания','Мой результат','Общая маржинальность','Айкуб + Зебра','Начисленная зарплата','Начисленная доля Айкуба','Дополнительные операции','Прочий доход','Прочий расход'])assert.ok(f.target.innerHTML.includes(label));
+  assert.equal((f.target.innerHTML.match(/class="budget-details(?: budget-history)?"/g)||[]).length,4);assert.doesNotMatch(f.target.innerHTML,/<details[^>]*budget-details[^>]* open/);
   await f.ui.toggle(false);await f.ui.toggle(true);assert.equal(f.calls.length,1,'toggle uses the loaded report and does not reload CRM');
 });
 
@@ -56,7 +57,69 @@ test('formatting preserves kopecks, signs, large sums and no-data margins; user 
 });
 
 for(const role of ['partner','teacher','parent'])test(`${role} cannot render, fetch or mutate budget through direct UI actions`,async()=>{
-  const f=fixture(role);assert.equal(f.ui.section(),'');await f.ui.toggle(true);await f.ui.load();f.ui.add('income');f.ui.edit('1');await f.ui.save();await f.ui.remove('1');assert.equal(f.calls.length,0);
+  const f=fixture(role);assert.equal(f.ui.section(),'');await f.ui.toggle(true);await f.ui.load();await f.ui.toggleChart(true);await f.ui.loadChart();f.ui.selectMonth('2026-10');f.ui.add('income');f.ui.edit('1');await f.ui.save();await f.ui.remove('1');assert.equal(f.calls.length,0);
+});
+
+test('budget breakdown preserves amounts, four margins and references in project panels with signed deductions and highlighted totals',async()=>{
+  const f=fixture();f.result.projects[0].marginPercent='53.50';f.result.projects[1].marginPercent='28.71';f.result.totals.combinedMarginPercent='36.34';f.result.totals.overallMarginPercent='40.12';
+  await f.ui.toggle(true);const page=f.target.innerHTML;
+  assert.match(page,/<h4>Маржинальность<\/h4>/);assert.doesNotMatch(page,/Доходность|доходность/);
+  for(const rate of ['53,5%','28,71%','36,34%','40,12%'])assert.ok(page.includes(rate));
+  for(const p of f.result.projects){
+    const panel=page.match(new RegExp(`<section class="stats-panel ${p.code==='zebra'?'budget-zebra':'budget-icube'}">([\\s\\S]*?)</section>`))?.[1];assert.ok(panel);
+    for(const [label,key]of [['Всего оплат','payments'],['Наличные','cash'],['Безналичные','cashless'],['После возвратов','income']])assert.ok(panel.includes(`<dt>${label}</dt><dd>${budgetMoney(p[key])}</dd>`));
+    for(const [label,key]of [['Возвраты','refunds'],['Начисленная зарплата','salary'],['Аренда','rent'],['Налог','tax'],['Доля партнёра','partnerShare']])assert.ok(panel.includes(`<dt>${label}</dt><dd>−${budgetMoney(p[key])}</dd>`));
+    assert.match(panel,/class="budget-total"/);assert.ok(panel.includes(budgetMoney(p.result)));
+  }
+  const overall=page.match(/<section class="stats-panel budget-overall">([\s\S]*?)<\/section>/)?.[1];
+  assert.ok(overall.includes(`<dt>Мой результат</dt><dd>${budgetMoney(f.result.totals.result)}</dd>`));assert.match(overall,/budget-total budget-owner-result/);
+  assert.match(page,/<details class="budget-details"><summary>Партнёрские расчёты — подробнее<\/summary>/);
+  for(const value of Object.values(f.result.partner))assert.ok(page.includes(budgetMoney(value)));
+  assert.match(page,/Положительный перевод — к получению/);assert.match(page,/Общая маржинальность условная/);
+});
+
+test('monthly graph loads once on expansion independent of budget dates and renders positive, negative, zero and precise tap detail',async()=>{
+  const f=fixture();await f.ui.toggle(true);assert.equal(f.calls.length,1);
+  assert.match(f.target.innerHTML,/<details class="budget-details budget-history" ontoggle/);
+  await f.ui.toggleChart(true);assert.deepEqual(f.calls.at(-1),{resource:'statistics/budget/monthly',query:''});
+  assert.equal((f.target.innerHTML.match(/class="budget-month(?: selected)?"/g)||[]).length,12);
+  assert.match(f.target.innerHTML,/budget-positive"><i style="height:100%"/);
+  assert.match(f.target.innerHTML,/budget-negative"><i style="height:3\.030/);assert.match(f.target.innerHTML,/budget-zero/);
+  f.ui.selectMonth('2025-11');assert.match(f.target.innerHTML,/budget-month-detail[^>]*>нояб\.[^<]*<strong>-200,01 ₽/);
+  f.controls['#budget-from']={value:'2026-01-01'};f.controls['#budget-to']={value:'2026-01-31'};await f.ui.load();
+  assert.match(f.target.innerHTML,/нояб\./);assert.equal(f.calls.filter(c=>c.resource==='statistics/budget/monthly').length,1);
+  await f.ui.toggleChart(false);await f.ui.toggleChart(true);assert.equal(f.calls.filter(c=>c.resource==='statistics/budget/monthly').length,1);
+});
+
+test('open monthly graph refreshes after create, edit and delete; collapsed graph is invalidated and refreshed on next expansion',async()=>{
+  const f=fixture();await f.ui.toggle(true);await f.ui.toggleChart(true);
+  const historyCalls=()=>f.calls.filter(c=>c.resource==='statistics/budget/monthly').length;
+  f.setRequest(async()=>{f.history.months.at(-1).result='7000.01';return{id:'2'};});
+  f.ui.add('income');f.input();await f.ui.save();assert.equal(historyCalls(),2);assert.match(f.target.innerHTML,/7\s000,01 ₽/);
+  f.ui.edit('1');f.input();await f.ui.save();assert.equal(historyCalls(),3);
+  await f.ui.remove('1');assert.equal(historyCalls(),4);
+  await f.ui.toggleChart(false);f.ui.add('expense');f.input();await f.ui.save();assert.equal(historyCalls(),4);
+  await f.ui.toggleChart(true);assert.equal(historyCalls(),5);
+});
+
+test('monthly errors are isolated and retryable; changing actor discards a pending graph response',async()=>{
+  const f=fixture();await f.ui.toggle(true);
+  f.setList(async()=>{throw new Error('Нет сети');});await f.ui.toggleChart(true);
+  assert.match(f.target.innerHTML,/Нет сети/);assert.match(f.target.innerHTML,/Повторить/);assert.match(f.target.innerHTML,/Все оплаты/);
+  f.setList(async()=>f.history);await f.ui.loadChart();assert.match(f.target.innerHTML,/budget-month selected/);
+  let finish;f.setList(()=>new Promise(resolve=>{finish=resolve;}));const pending=f.ui.loadChart();
+  f.setActor({id:'2',roles:['director']});assert.doesNotMatch(f.ui.section(),/budget-month selected/);
+  finish(f.history);await pending;assert.doesNotMatch(f.ui.section(),/budget-month selected/);
+});
+
+test('negative obligations retain their credit sign and compact project/chart layouts stack within existing mobile breakpoints',async()=>{
+  const f=fixture();f.result.projects[1].partnerShare='-100.01';await f.ui.toggle(true);
+  assert.match(f.target.innerHTML,/<dt>Доля партнёра<\/dt><dd>\+100,01 ₽<\/dd>/);assert.doesNotMatch(f.target.innerHTML,/−-100/);
+  const css=await readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8');
+  assert.match(css,/@media\(max-width:680px\)\{\.stats-page \.stats-panels\{grid-template-columns:minmax\(0,1fr\)/);
+  assert.match(css,/@media\(max-width:540px\)\{\.stats-page \.budget-result-chart\{grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  for(const [kind,color]of [['robot','robot'],['code','code']])assert.ok(css.includes(`.stats-page .stats-panel.stats-direction-${kind}{border-top:3px solid var(--direction-${color})}`));
+  assert.match(css,/\.stats-page \.budget-positive\{align-items:end;border-bottom:1px solid var\(--muted\)/);assert.match(css,/\.stats-page \.budget-negative\{align-items:start\}/);
 });
 
 test('changing user clears budget/form state and discards an old in-flight response',async()=>{

@@ -30,6 +30,18 @@ test('overview has exactly six compact server metrics with two current and four 
   assert.equal((page.match(/class="stats-month-button/g)||[]).length,2);
 });
 
+test('budget precedes statistics filters in loaded, loading and empty states; child and attendance panels and recruitment stages stay distinct',async()=>{
+  const f=await statisticsUiFixture();f.context.window={icubeBudget:{section:()=>'<details class="director-budget"><summary>Мой бюджет</summary></details>'}};
+  for(const state of ['loaded','loading','empty']){
+    f.state.statisticsLoading=state==='loading';f.state.statistics=state==='empty'?null:f.result;
+    const page=f.context.statisticsPage();assert.ok(page.indexOf('<h1>Статистика')<page.indexOf('Мой бюджет'));assert.ok(page.indexOf('Мой бюджет')<page.indexOf('stats-filters'));
+    assert.equal((page.match(/class="director-budget"/g)||[]).length,1);
+  }
+  f.state.statistics=f.result;f.state.statisticsLoading=false;const page=f.context.statisticsPage();
+  for(const title of ['Дети сейчас','Активные направления сейчас','Фактические отметки','Посещаемость и заполненность','1. Запись','2. Результат ознакомительного','3. Начало обучения'])assert.ok(page.includes(`<h3>${title}</h3>`));
+  assert.match(page,/stats-panels stats-stages/);assert.match(page,/stats-explanation/);
+});
+
 test('all four thematic sections use native initially-closed disclosure controls and preserve every auxiliary metric as compact rows',async()=>{
   const f=await statisticsUiFixture();f.result.recruitment.regularStarts=7;
   f.result.recruitment.directions=[{id:'1',name:'Робототехника',trials:1,continued:0,notContinued:0,pending:1,conversionPercent:null,regularStarts:1}];

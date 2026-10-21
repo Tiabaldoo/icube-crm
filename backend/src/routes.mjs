@@ -365,6 +365,7 @@ export function createApiRouter(pool, {
     return request.auth;
   };
   router.get('/statistics/budget', requirePermission('*'), run((request) => directorBudget.get(request.query, budgetContext(request))));
+  router.get('/statistics/budget/monthly', requirePermission('*'), run((request) => directorBudget.monthly(request.query, budgetContext(request))));
   router.get('/statistics/budget/entries', requirePermission('*'), run((request) => budgetEntries.list(request.query, request.auth)));
   router.post('/statistics/budget/entries', requirePermission('*'), run((request) => budgetEntries.create(request.body, {
     ...budgetContext(request), idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),

@@ -122,7 +122,7 @@ export function installDashboardUi({ windowObject = globalThis.window, api = new
     return (state.sites ?? []).find((site) => Number(site.id) === Number(lesson?.siteId ?? group?.siteId))?.name ?? 'Площадка не указана';
   }
   function directionCardClass(group) {
-    const direction = typeof windowObject.crmDirectionClassV134 === 'function'
+    const direction = group?.isMixed ? 'crm-direction-mixed' : typeof windowObject.crmDirectionClassV134 === 'function'
       ? windowObject.crmDirectionClassV134(group?.direction)
       : '';
     return ['dashboard-direction-card', direction].filter(Boolean).join(' ');

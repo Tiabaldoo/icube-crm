@@ -2,7 +2,7 @@ import { statisticsFixture } from './statistics-fixture.mjs';
 import { createDirectorBudget } from '../../backend/src/director-budget.mjs';
 import { createBudgetEntries } from '../../backend/src/budget-entries.mjs';
 
-export function budgetFixture(t) {
+export function budgetFixture(t, { now = () => new Date('2026-10-21T01:00:00Z') } = {}) {
   const f=statisticsFixture(t);const {db}=f;
   db.exec(`ALTER TABLE projects ADD COLUMN partner_id INTEGER; UPDATE projects SET partner_id=9 WHERE id=3;
     CREATE TABLE partners(id INTEGER PRIMARY KEY,name TEXT);INSERT INTO partners VALUES(9,'Партнёр');
@@ -22,7 +22,7 @@ export function budgetFixture(t) {
     const r=statement.run(bindings);return [{insertId:Number(r.lastInsertRowid),affectedRows:r.changes}];
   }
   const pool={query,async getConnection(){return{query,async beginTransaction(){db.exec('BEGIN');},async commit(){db.exec('COMMIT');},async rollback(){db.exec('ROLLBACK');},release(){}};}};
-  const service=createDirectorBudget(pool,{now:()=>new Date('2026-10-21T01:00:00Z')});const manual=createBudgetEntries(pool);
+  const service=createDirectorBudget(pool,{now});const manual=createBudgetEntries(pool);
   const context={roles:['director'],userId:'1',idempotencyKey:'manual-budget-1'};const period={from:'2026-09-10',to:'2026-10-20'};
   function payment(id,{project=2,date='2026-10-15',amount='4100.00',method='cashless',mode='standard',deleted=null}={}) {
     db.prepare('INSERT INTO payments(id,child_id,enrollment_id,direction_id,project_id_snapshot,paid_on,amount,method,calculation_mode_snapshot,deleted_at) VALUES(?,1,11,1,?,?,?,?,?,?)').run(id,project,date,amount,method,mode,deleted);

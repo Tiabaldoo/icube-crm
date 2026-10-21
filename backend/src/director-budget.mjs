@@ -66,7 +66,23 @@ export function createDirectorBudget(pool, { now = () => new Date() } = {}) {
   async function get(raw = {}, context = {}) {
     assertBudgetDirector(context); const defaults = calendarMonthPeriod(now());
     const period = budgetPeriod({ from: raw.from ?? defaults.from, to: raw.to ?? defaults.to });
+    return inTransaction(pool, (connection) => report(connection, period, context));
+  }
+  // Both views use the same report and rounding, in one consistent read snapshot.
+  async function monthly(_raw = {}, context = {}) {
+    assertBudgetDirector(context);
+    const instant = now();
+    const periods = Array.from({ length: 12 }, (_, index) => calendarMonthPeriod(instant, index - 11));
     return inTransaction(pool, async (connection) => {
+      const months = [];
+      for (const period of periods) {
+        const budget = await report(connection, period, context);
+        months.push({ month: period.from.slice(0, 7), ...period, result: budget.totals.result });
+      }
+      return { months };
+    });
+  }
+  async function report(connection, period, context) {
       const [projects] = await connection.query("SELECT id,code,name FROM projects WHERE code IN ('icube-robots','zebra')");
       const zebra = projects.find((p) => p.code === 'zebra');
       if (!zebra || !projects.some((p) => p.code === 'icube-robots')) throw new ApiProblem(409, 'BUDGET_PROJECTS_NOT_CONFIGURED', 'Для бюджета должны быть настроены проекты Айкуб и Зебра');
@@ -86,7 +102,6 @@ export function createDirectorBudget(pool, { now = () => new Date() } = {}) {
         createBudgetEntries(connection).list(period, context),
       ]);
       return calculateDirectorBudget({ period, projects, financialRows, rent, partner, entries });
-    });
   }
-  return { get };
+  return { get, monthly };
 }
