@@ -14,10 +14,14 @@ test('tomorrow cards preserve their contents and use blue/orange/teal stripes, w
   installDashboardUi({windowObject:host,api:{}});const page=host.dashboard();
   const cards=[...page.matchAll(/<div class="dashboard-upcoming-row clickable ([^"]+)" onclick="openLesson\((\d+)\)">([\s\S]*?)<\/span><\/div><\/div>/g)];
   assert.equal(cards.length,3);assert.match(cards[0][1],/crm-direction-robot/);assert.match(cards[1][1],/crm-direction-program/);assert.match(cards[2][1],/crm-direction-mixed/);
+  for(const card of cards.slice(0,2))assert.doesNotMatch(card[1],/crm-direction-mixed/);
   for(const card of cards){assert.match(card[3],/Школа/);assert.match(card[3],/Преподаватель/);assert.match(card[3],/Айкуб/);}
   assert.match(page,/Особая группа/);assert.match(page,/Смешанная по названию/);
   const [css,legacy]=await Promise.all([read('../src/ui/dashboard.css'),read('../src/frontend/crm-ui.js')]);
   assert.match(css,/\.dashboard-page \.dashboard-direction-card\.crm-direction-mixed\{border-top:4px solid var\(--mixed-color\)/);
+  const mixedFill=css.match(/([^{}]+)\{background:linear-gradient\(180deg,var\(--mixed-tint\),white 38%\)\}/);
+  assert.ok(mixedFill,'mixed cards reuse the existing soft tint gradient');
+  assert.equal(mixedFill[1].trim(),'.dashboard-page .dashboard-upcoming-row.crm-direction-mixed','fill is limited to mixed tomorrow cards, excluding today and ordinary cards');
   assert.match(legacy,/\.dashboard-direction-card\.crm-direction-robot\{[^}]*border-top:4px solid var\(--direction-robot\)/);
   assert.match(legacy,/\.dashboard-direction-card\.crm-direction-program\{[^}]*border-top:4px solid var\(--direction-code\)/);
 });

@@ -21,6 +21,7 @@
 .dashboard-upcoming{display:grid;gap:8px}
 .dashboard-upcoming-row{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 .dashboard-page .dashboard-direction-card.crm-direction-mixed{border-top:4px solid var(--mixed-color)}
+.dashboard-page .dashboard-upcoming-row.crm-direction-mixed{background:linear-gradient(180deg,var(--mixed-tint),white 38%)}
 .dashboard-upcoming-copy{min-width:0}
 .dashboard-upcoming-title{font-weight:700}
 .dashboard-upcoming-meta{margin-top:3px}
