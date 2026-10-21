@@ -74,19 +74,19 @@ test('unknown historical statuses are reported and excluded, never replaced by t
   f.lesson(1,'2026-09-01');const result=await f.get();assert.equal(result.current.children.active,1);assert.equal(result.summary.averageOccupancyPercent,null);assert.equal(result.limitations.unknownOccupancyLessons,1);
 });
 
-test('first actual trial per child/direction defines 30-day conversion across month boundaries; payments alone and repeated trials do not convert',async(t)=>{
+test('first actual trial per child/direction defines dynamic conversion across months; payments alone and repeated trials do not convert',async(t)=>{
   const f=statisticsFixture(t);for(let id=1;id<=4;id++)f.child(id);
   f.lesson(1,'2026-09-29');for(let id=1;id<=3;id++)f.visit(1,id,{trial:true});f.visit(1,4,{trial:true,present:false});
   f.lesson(2,'2026-10-03');f.visit(2,1);f.visit(2,2,{trial:true});
   f.db.exec("INSERT INTO payments(enrollment_id,child_id,direction_id,project_id_snapshot,paid_on,amount,method) VALUES(21,2,1,2,'2026-09-29','4500.00','cashless')");
-  const result=await f.get();assert.deepEqual([result.recruitment.trials,result.recruitment.continued,result.recruitment.pending,result.recruitment.notContinued,result.recruitment.conversionPercent],[3,1,2,0,'100.0']);
+  const result=await f.get();assert.deepEqual([result.recruitment.trials,result.recruitment.continued,result.recruitment.pending,result.recruitment.notContinued,result.recruitment.conversionPercent],[3,1,0,2,'33.3']);
   assert.equal((await f.get({from:'2026-10-01',to:'2026-10-31'})).recruitment.trials,0);
 });
 
-test('unresolved cohorts exclude pending outcomes from conversion; an ordinary visit on day 31 is too late',async(t)=>{
+test('late ordinary visits convert an old cohort beyond day 30 while unresolved outcomes remain unsuccessful',async(t)=>{
   const f=statisticsFixture(t);f.child(1);f.child(2);f.child(3);f.lesson(1,'2026-09-01');f.visit(1,1,{trial:true});f.visit(1,2,{trial:true});
   f.lesson(2,'2026-09-30');f.visit(2,1);f.visit(2,3,{trial:true});f.lesson(3,'2026-10-02');f.visit(3,2);
-  const result=await f.get();assert.deepEqual([result.recruitment.continued,result.recruitment.notContinued,result.recruitment.pending,result.recruitment.conversionPercent],[1,1,1,'50.0']);
+  const result=await f.get();assert.deepEqual([result.recruitment.continued,result.recruitment.notContinued,result.recruitment.pending,result.recruitment.conversionPercent],[2,1,0,'66.7']);
 });
 
 test('a child trying two directions stays unique at club level; another direction does not convert the original direction/group',async(t)=>{
@@ -145,9 +145,9 @@ test('current composition may exceed the norm but is never used as historical av
   f.db.exec('UPDATE group_memberships SET group_id=9');const later=await f.get();assert.equal(later.groups.find((g)=>g.id==='9').occupancyPercent,'112.5');assert.equal(later.summary.averageOccupancyPercent,'0.0');
 });
 
-test('day 30 is inclusive for continuation and pending observations, day 31 without a visit is failure',async(t)=>{
-  const f=statisticsFixture(t);for(let id=1;id<=3;id++)f.child(id);f.lesson(1,'2026-09-20');f.visit(1,1,{trial:true});f.visit(1,2,{trial:true});f.lesson(2,'2026-09-19');f.visit(2,3,{trial:true});
-  f.lesson(3,'2026-10-20');f.visit(3,1);const result=await f.get();assert.deepEqual([result.recruitment.continued,result.recruitment.pending,result.recruitment.notContinued],[1,1,1]);
+test('exactly seven calendar days without continuation is unsuccessful; six days remains pending',async(t)=>{
+  const f=statisticsFixture(t);for(let id=1;id<=3;id++)f.child(id);f.lesson(1,'2026-10-13');f.visit(1,1,{trial:true});f.visit(1,2,{trial:true});f.lesson(2,'2026-10-14');f.visit(2,3,{trial:true});
+  f.lesson(3,'2026-10-20');f.visit(3,1);const result=await f.get({from:'2026-10-01',to:'2026-10-31'});assert.deepEqual([result.recruitment.continued,result.recruitment.pending,result.recruitment.notContinued],[1,1,1]);
 });
 
 test('a mixed group cohort deduplicates a child trying two directions in the same group',async(t)=>{
@@ -280,4 +280,81 @@ test('group-only scope reuses the same period calculations and current roster, w
   assert.equal(f.calls.length,7);assert.ok(f.calls.every(({sql})=>!sql.includes('FROM payments')));
   await assert.rejects(f.get({scope:'groups',from:'2026-10-02',to:'2026-10-01'}),{code:'VALIDATION_ERROR'});
   for(const role of ['partner','teacher','parent'])await assert.rejects(f.get({scope:'groups'},{roles:[role]}),{code:'FORBIDDEN'});
+});
+
+test('ordinary paid visits within seven days, on day eight, day thirty and months later all convert the original trial cohort',async(t)=>{
+  const f=statisticsFixture(t);const trials=['2026-10-15','2026-10-12','2026-09-20','2026-03-01'];
+  for(let index=0;index<trials.length;index++){const id=index+1;f.child(id);f.lesson(id,trials[index]);f.visit(id,id,{trial:true});f.lesson(id+10,id===1?'2026-10-18':'2026-10-20');f.visit(id+10,id);}
+  const result=await f.get({from:'2026-03-01',to:'2026-10-31'});
+  assert.deepEqual([result.recruitment.trials,result.recruitment.continued,result.recruitment.notContinued,result.recruitment.pending,result.recruitment.conversionPercent],[4,4,0,0,'100.0']);
+  assert.equal(result.recruitment.regularStarts,4);assert.equal(result.groups[0].regularStarts,4);
+  assert.equal((await f.get({from:'2026-03-01',to:'2026-03-31'})).recruitment.continued,1);
+});
+
+test('a September cohort moves from pending to unsuccessful to continued in October without changing its period or any stored business state',async(t)=>{
+  let clock='2026-09-11T01:00:00Z';const f=statisticsFixture(t,{now:()=>new Date(clock)});f.child(1);f.lesson(1,'2026-09-05');f.visit(1,1,{trial:true});f.lesson(2,'2026-10-20');f.visit(2,1);
+  const snapshot=f.snapshot(),changes=f.db.prepare('SELECT total_changes() n').get().n;
+  let result=await f.get();assert.equal(result.recruitment.pending,1);assert.equal(result.recruitment.conversionPercent,null);assert.equal(result.recruitment.regularStarts,0);
+  clock='2026-09-12T01:00:00Z';result=await f.get();assert.equal(result.recruitment.notContinued,1);assert.equal(result.recruitment.conversionPercent,'0.0');
+  clock='2026-10-20T01:00:00Z';result=await f.get();assert.equal(result.recruitment.continued,1);assert.equal(result.recruitment.notContinued,0);assert.equal(result.recruitment.conversionPercent,'100.0');assert.equal(result.period.to,'2026-09-30');assert.equal(result.recruitment.regularStarts,0);
+  const october=await f.get({from:'2026-10-01',to:'2026-10-31'});assert.equal(october.recruitment.trials,0);assert.equal(october.recruitment.regularStarts,1);
+  assert.equal((await f.get({scope:'groups'})).groups[0].continued,1);assert.equal((await f.get({scope:'groups',from:'2026-10-01',to:'2026-10-31'})).groups[0].regularStarts,1);
+  assert.equal(f.db.prepare('SELECT total_changes() n').get().n,changes);assert.equal(f.snapshot(),snapshot);
+});
+
+test('correcting or removing the first paid visit recomputes dynamic conversion and regular starts from remaining actual attendances',async(t)=>{
+  const f=statisticsFixture(t,{keepFinancialSeed:true});f.seedVisit();f.lesson(1,'2026-09-05');
+  f.db.exec("INSERT INTO attendances(lesson_id,child_id,enrollment_id,attendance_type,present,is_trial,charged_lessons) VALUES(1,8,7,'main',1,1,0); INSERT INTO lesson_roster_members(lesson_id,child_id,roster_type) VALUES(1,8,'main')");
+  const october={from:'2026-10-01',to:'2026-10-31'};
+  assert.equal((await f.get()).recruitment.continued,1);assert.equal((await f.get(october)).recruitment.regularStarts,1);
+  await f.correct(f.body({enrollment:7,trial:true}));assert.equal((await f.get()).recruitment.notContinued,1);assert.equal((await f.get(october)).recruitment.regularStarts,0);
+  await f.correct(f.body({enrollment:7,trial:false}),{idempotencyKey:'restore-paid-for-statistics'});assert.equal((await f.get()).recruitment.continued,1);
+  await f.lessons.removeAttendance('10','8',f.context);assert.equal((await f.get()).recruitment.notContinued,1);assert.equal((await f.get(october)).recruitment.regularStarts,0);
+});
+
+test('a deleted first paid visit is replaced by the next valid ordinary visit, not a payment, repeat trial or future visit',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.lesson(1,'2026-03-01');f.visit(1,1,{trial:true});f.lesson(2,'2026-09-01');f.visit(2,1);f.lesson(3,'2026-10-01');f.visit(3,1);f.lesson(4,'2026-10-21');f.visit(4,1);
+  f.db.exec("UPDATE lessons SET deleted_at='2026-10-02' WHERE id=2");
+  assert.equal((await f.get()).recruitment.regularStarts,0);assert.equal((await f.get({from:'2026-10-01',to:'2026-10-31'})).recruitment.regularStarts,1);
+  assert.equal((await f.get({from:'2026-03-01',to:'2026-03-31'})).recruitment.continued,1);
+  f.db.exec('UPDATE attendances SET is_trial=1,charged_lessons=0 WHERE lesson_id=3');
+  const result=await f.get({from:'2026-03-01',to:'2026-10-31'});assert.equal(result.recruitment.trials,1);assert.equal(result.recruitment.continued,0);assert.equal(result.recruitment.regularStarts,0);
+});
+
+test('regular starts are first paid visits without needing a trial; club uniqueness differs from per-direction and actual group attribution',async(t)=>{
+  const f=statisticsFixture(t);f.child(1,{directions:[1,2]});f.lesson(1,'2026-09-01');f.visit(1,1);f.lesson(2,'2026-10-01',{group:99});f.visit(2,1,{direction:2});f.lesson(3,'2026-10-02',{group:99});f.visit(3,1,{direction:2});
+  const all=await f.get({from:'2026-09-01',to:'2026-10-31'});assert.equal(all.recruitment.trials,0);assert.equal(all.recruitment.regularStarts,1);assert.equal(all.recruitment.directions.length,2);assert.ok(all.recruitment.directions.every((d)=>d.regularStarts===1));
+  assert.equal(all.groups.find((g)=>g.id==='9').regularStarts,1);assert.equal(all.groups.find((g)=>g.id==='99').regularStarts,1);
+  const october={from:'2026-10-01',to:'2026-10-31'};assert.equal((await f.get(october)).recruitment.regularStarts,0);assert.equal((await f.get({...october,directionId:'2'})).recruitment.regularStarts,1);
+});
+
+test('cross-direction continuation converts the club but not the trial direction/group; regular start belongs to the actual paid direction/group',async(t)=>{
+  const f=statisticsFixture(t);f.child(1,{directions:[1,2]});f.lesson(1,'2026-03-01');f.visit(1,1,{trial:true});f.lesson(2,'2026-10-20',{group:99});f.visit(2,1,{direction:2});
+  const march=await f.get({from:'2026-03-01',to:'2026-03-31'});assert.equal(march.recruitment.continued,1);assert.equal(march.recruitment.directions[0].continued,0);assert.equal(march.groups[0].continued,0);assert.equal(march.recruitment.regularStarts,0);
+  const october=await f.get({from:'2026-10-01',to:'2026-10-31',directionId:'2'});assert.equal(october.recruitment.regularStarts,1);assert.equal(october.recruitment.directions[0].regularStarts,1);assert.equal(october.groups.find((g)=>g.id==='99').regularStarts,1);
+});
+
+test('a paid visit before a trial cannot convert it; a later visit can, without inventing a second regular start',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.lesson(1,'2026-09-01');f.visit(1,1);f.lesson(2,'2026-09-05');f.visit(2,1,{trial:true});
+  assert.equal((await f.get()).recruitment.continued,0);assert.equal((await f.get()).recruitment.regularStarts,1);
+  f.lesson(3,'2026-10-20');f.visit(3,1);assert.equal((await f.get()).recruitment.continued,1);assert.equal((await f.get({from:'2026-10-01',to:'2026-10-31'})).recruitment.regularStarts,0);
+});
+
+test('project filters apply to actual first-visit snapshots after ranking, never turn a later visit into a new club start',async(t)=>{
+  const f=statisticsFixture(t);f.child(1,{directions:[1,2]});f.lesson(1,'2026-09-01');f.visit(1,1);f.lesson(2,'2026-10-01',{group:99,project:3});f.visit(2,1,{direction:2});
+  const params={from:'2026-10-01',to:'2026-10-31',projectId:'3'};const result=await f.get(params);
+  assert.equal(result.recruitment.regularStarts,0);assert.equal(result.recruitment.directions[0].regularStarts,1);assert.equal((await f.get({...params,directionId:'2'})).recruitment.regularStarts,1);
+  assert.equal((await f.get({...params,projectId:'2',directionId:'2'})).recruitment.regularStarts,0);assert.equal(f.calls.length,24,'three requests use the existing eight bulk queries each');
+});
+
+test('late continuation in another group of the same direction updates the trial group, while regular starts belong only to the paid group',async(t)=>{
+  const f=statisticsFixture(t);f.child(1);f.db.exec('UPDATE study_groups SET direction_id=1 WHERE id=99');
+  f.lesson(1,'2026-03-01');f.visit(1,1,{trial:true});f.lesson(2,'2026-10-01',{group:99});f.visit(2,1);
+  const march=await f.get({scope:'groups',from:'2026-03-01',to:'2026-03-31'});assert.equal(march.groups.find((g)=>g.id==='9').continued,1);assert.equal(march.groups.find((g)=>g.id==='99').trials,0);
+  const october=await f.get({scope:'groups',from:'2026-10-01',to:'2026-10-31'});assert.equal(october.groups.find((g)=>g.id==='9').regularStarts,0);assert.equal(october.groups.find((g)=>g.id==='99').regularStarts,1);
+});
+
+test('two first direction visits in a mixed group remain two direction starts but one unique club child, with no duplicate visit or trial case',async(t)=>{
+  const f=statisticsFixture(t);f.child(1,{directions:[1,2]});f.lesson(1,'2026-10-01',{mixed:true});f.visit(1,1);f.lesson(2,'2026-10-02',{mixed:true});f.visit(2,1,{direction:2});
+  const result=await f.get({from:'2026-10-01',to:'2026-10-31'});assert.equal(result.recruitment.regularStarts,1);assert.equal(result.recruitment.directions.length,2);assert.equal(result.groups[0].regularStarts,2);assert.equal(result.summary.visits,2);assert.equal(result.recruitment.trials,0);
 });

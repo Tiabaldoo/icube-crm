@@ -67,7 +67,7 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
     directionId: String(g.direction_id), directionName: flag(g.is_mixed) ? 'Смешанная' : g.direction_name, isMixed: flag(g.is_mixed), siteName: g.site_name,
     weekday: Number(g.weekday), startTime: String(g.start_time ?? '').slice(0, 5), endTime: String(g.end_time ?? '').slice(0, 5), schedule: g.extra_schedule ?? '',
     currentMembers: Number(g.current_members), capacity: flag(g.is_individual) ? 1 : 8,
-    completedLessons: 0, visits: 0, absences: 0, unmarked: 0, unresolvedDirections: 0, newChildren: 0, ...emptyConversion(),
+    completedLessons: 0, visits: 0, absences: 0, unmarked: 0, unresolvedDirections: 0, newChildren: 0, regularStarts: 0, ...emptyConversion(),
     pausedChildren: departures.groups.get(String(g.id))?.paused.size ?? 0, finishedChildren: departures.groups.get(String(g.id))?.finished.size ?? 0,
     occupancy: [], unknownOccupancyLessons: 0, partialOccupancyLessons: 0, unknownOccupancyChildren: new Set(), estimatedCapacity: false }]));
   const summary = { completedLessons: lessonRows.length, visits: 0, absences: 0, unmarked: 0, unresolvedDirections: 0, newChildren: 0,
@@ -76,7 +76,7 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
   for (const child of children.values()) if (child.createdAt?.slice(0, 10) >= period.from && child.createdAt.slice(0, 10) <= end && child.createdAt <= observedAt) {
     summary.newChildren++; const group = groupMap.get(String(child.groupId)); if (group) group.newChildren++;
   }
-  const firstPaid = new Map(paidRows.map((p) => [`${p.child_id}:${p.direction_id}`, stamp(p.first_paid_at)]));
+  const firstPaid = new Map(paidRows.filter((p) => p.kind !== 'regular-start').map((p) => [`${p.child_id}:${p.direction_id}`, stamp(p.first_paid_at)]));
   const membersByLesson = new Map();
   for (const row of memberRows) {
     const rows = membersByLesson.get(String(row.lesson_id)) ?? new Map(); rows.set(String(row.enrollment_id), row); membersByLesson.set(String(row.lesson_id), rows);
@@ -116,7 +116,7 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
   summary.occupancyLessons = occupancy.length;
   summary.averageOccupancyPercent = occupancy.length ? (occupancy.reduce((a, b) => a + b, 0) / occupancy.length).toFixed(1) : null;
   const perDirection = new Map(); const perGroup = new Map(); const perChild = new Map();
-  const outcome = (row, paid) => paid != null ? 'continued' : today <= addCalendarDays(String(row.starts_at).slice(0, 10), 30) ? 'pending' : 'notContinued';
+  const outcome = (row, paid) => paid != null ? 'continued' : today < addCalendarDays(String(row.starts_at).slice(0, 10), 7) ? 'pending' : 'notContinued';
   for (const row of trialRows) {
     const state = outcome(row, row.continued_at); const clubState = filters.directionId ? state : outcome(row, row.club_continued_at);
     const key = String(row.direction_id); const d = perDirection.get(key) ?? { id: key, name: row.direction_name, cases: [] }; d.cases.push(state); perDirection.set(key, d);
@@ -124,8 +124,17 @@ export function calculateStatistics({ period, filters, chartPeriod, observedAt, 
     groupCases.push(state); g.set(String(row.child_id), groupCases); perGroup.set(String(row.group_id), g);
     const c = perChild.get(String(row.child_id)) ?? []; c.push(clubState); perChild.set(String(row.child_id), c);
   }
+  const regularChildren = new Set();
+  for (const row of paidRows.filter((p) => p.kind === 'regular-start')) {
+    if (filters.directionId || Number(row.club_rn) === 1) regularChildren.add(String(row.child_id));
+    if (row.direction_id != null) {
+      const key = String(row.direction_id); const d = perDirection.get(key) ?? { id: key, name: row.direction_name, cases: [] };
+      d.regularStarts = (d.regularStarts ?? 0) + 1; perDirection.set(key, d);
+      const group = groupMap.get(String(row.group_id)); if (group) group.regularStarts++;
+    }
+  }
   const recruitment = { ...conversion([...perChild.values()].map((cases) => cases.includes('continued') ? 'continued' : cases.includes('pending') ? 'pending' : 'notContinued')),
-    directionCases: trialRows.length, directions: [...perDirection.values()].map(({ cases, ...d }) => ({ ...d, ...conversion(cases) })) };
+    regularStarts: regularChildren.size, directionCases: trialRows.length, directions: [...perDirection.values()].map(({ cases, ...d }) => ({ regularStarts: 0, ...d, ...conversion(cases) })) };
   const groups = [...groupMap.values()].filter((g) => !filters.directionId || g.directionId === filters.directionId || g.isMixed || g.completedLessons || g.trials || g.currentMembers || g.pausedChildren || g.finishedChildren)
     .map(({ occupancy: values, unknownOccupancyChildren: missing, ...g }) => ({ ...g, unknownOccupancyChildren: missing.size, ...conversion([...(perGroup.get(g.id)?.values() ?? [])].map((cases) => cases.includes('continued') ? 'continued' : cases.includes('pending') ? 'pending' : 'notContinued')), occupancyPercent: percent(g.currentMembers, g.capacity),
       attendancePercent: percent(g.visits, g.visits + g.absences), averageOccupancyPercent: values.length ? (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1) : null,
@@ -234,13 +243,20 @@ export function createStatistics(pool, { now = () => new Date() } = {}) {
         FROM actual WHERE is_trial=TRUE AND direction_id IS NOT NULL)
         SELECT t.child_id,t.direction_id,d.name direction_name,t.group_id,t.project_id_snapshot,t.starts_at,
           (SELECT MIN(p.starts_at) FROM actual p WHERE p.child_id=t.child_id AND p.direction_id=t.direction_id AND p.is_trial=FALSE AND p.charged_lessons>0
-            AND p.starts_at>t.starts_at AND DATE(p.starts_at)<=DATE_ADD(DATE(t.starts_at),INTERVAL 30 DAY) AND (:projectId IS NULL OR p.project_id_snapshot=:projectId)) continued_at,
+            AND p.starts_at>t.starts_at AND (:projectId IS NULL OR p.project_id_snapshot=:projectId)) continued_at,
           (SELECT MIN(p.starts_at) FROM actual p WHERE p.child_id=t.child_id AND p.is_trial=FALSE AND p.charged_lessons>0
-            AND p.starts_at>t.starts_at AND DATE(p.starts_at)<=DATE_ADD(DATE(t.starts_at),INTERVAL 30 DAY) AND (:projectId IS NULL OR p.project_id_snapshot=:projectId)) club_continued_at
+            AND p.starts_at>t.starts_at AND (:projectId IS NULL OR p.project_id_snapshot=:projectId)) club_continued_at
         FROM ranked t JOIN directions d ON d.id=t.direction_id WHERE t.rn=1 AND DATE(t.starts_at) BETWEEN :from AND :to
           AND (:projectId IS NULL OR t.project_id_snapshot=:projectId) AND (:directionId IS NULL OR t.direction_id=:directionId)`, params),
-      pool.query(`${actual} SELECT child_id,direction_id,MIN(starts_at) first_paid_at FROM actual WHERE is_trial=FALSE AND charged_lessons>0
-        AND (:projectId IS NULL OR project_id_snapshot=:projectId) AND (:directionId IS NULL OR direction_id=:directionId) GROUP BY child_id,direction_id`, params),
+      pool.query(`${actual}, paid_ranked AS (SELECT actual.*,
+          ROW_NUMBER() OVER(PARTITION BY child_id,direction_id ORDER BY starts_at,lesson_id,id) direction_rn,
+          ROW_NUMBER() OVER(PARTITION BY child_id ORDER BY starts_at,lesson_id,id) club_rn FROM actual WHERE is_trial=FALSE AND charged_lessons>0)
+        SELECT 'occupancy' kind,child_id,direction_id,MIN(starts_at) first_paid_at,NULL group_id,NULL direction_name,NULL club_rn
+        FROM actual WHERE is_trial=FALSE AND charged_lessons>0
+          AND (:projectId IS NULL OR project_id_snapshot=:projectId) AND (:directionId IS NULL OR direction_id=:directionId) GROUP BY child_id,direction_id
+        UNION ALL SELECT 'regular-start',p.child_id,p.direction_id,p.starts_at,p.group_id,d.name,p.club_rn
+        FROM paid_ranked p LEFT JOIN directions d ON d.id=p.direction_id WHERE p.direction_rn=1 AND DATE(p.starts_at) BETWEEN :from AND :to
+          AND (:projectId IS NULL OR p.project_id_snapshot=:projectId) AND (:directionId IS NULL OR p.direction_id=:directionId)`, params),
       groupsOnly ? Promise.resolve([[]]) : pool.query(`SELECT DATE_FORMAT(p.paid_on,'%Y-%m') month,p.project_id_snapshot project_id,pr.name project_name,pr.code project_code,
         'payment' kind,p.method,SUM(p.amount) amount FROM payments p LEFT JOIN projects pr ON pr.id=p.project_id_snapshot
         WHERE p.deleted_at IS NULL AND p.paid_on BETWEEN :chartFrom AND :chartTo AND p.paid_on<=:today AND (:projectId IS NULL OR p.project_id_snapshot=:projectId) AND (:directionId IS NULL OR p.direction_id=:directionId)

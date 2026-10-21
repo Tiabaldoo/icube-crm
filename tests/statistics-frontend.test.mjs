@@ -16,9 +16,51 @@ async function statisticsUiFixture(role='director') {
 
 test('statistics UI separates current values, period, pending trials and zero-evaluated conversion',async()=>{
   const f=await statisticsUiFixture();const page=f.context.statisticsPage();
-  for(const label of ['Дети сейчас','Всего детей','Активные направления сейчас','С двумя активными направлениями','За период','Набор и ознакомительные занятия','Ожидают результата'])assert.ok(page.includes(label));
+  for(const label of ['Дети сейчас','Всего детей','Активные направления сейчас','С двумя активными направлениями','За период','Набор и ознакомительные','Ожидают результата'])assert.ok(page.includes(label));
   assert.match(page,/Конверсия ознакомительных занятий[\s\S]*?Нет данных/);assert.match(page,/75,0%/);
   assert.match(page,/stats-direction-code/);assert.match(page,/stats-direction-robot/);
+});
+
+test('overview has exactly six compact server metrics with two current and four period labels; the unchanged payments chart follows immediately',async()=>{
+  const f=await statisticsUiFixture();const page=f.context.statisticsPage();const overview=page.match(/<section class="stats-section stats-overview">([\s\S]*?)<\/section>/)?.[1];
+  assert.ok(overview);assert.equal((overview.match(/class="card metric /g)||[]).length,6);
+  for(const label of ['Всего детей','Активных детей','Новые записи','Проведено занятий','Средняя посещаемость','Средняя историческая заполняемость'])assert.ok(overview.includes(label));
+  assert.equal((overview.match(/stats-metric-scope">Сейчас/g)||[]).length,2);assert.equal((overview.match(/stats-metric-scope">За период/g)||[]).length,4);
+  assert.ok(page.indexOf('Поступления по месяцам')>page.indexOf('stats-overview'));assert.ok(page.indexOf('Поступления по месяцам')<page.indexOf('data-stats-section="children"'));
+  assert.equal((page.match(/class="stats-month-button/g)||[]).length,2);
+});
+
+test('all four thematic sections use native initially-closed disclosure controls and preserve every auxiliary metric as compact rows',async()=>{
+  const f=await statisticsUiFixture();f.result.recruitment.regularStarts=7;
+  f.result.recruitment.directions=[{id:'1',name:'Робототехника',trials:1,continued:0,notContinued:0,pending:1,conversionPercent:null,regularStarts:1}];
+  const page=f.context.statisticsPage();const sections=[...page.matchAll(/<details class="card stats-disclosure stats-section" data-stats-section="([^"]+)"([^>]*)>([\s\S]*?)<\/details>/g)];
+  assert.equal(sections.length,4);assert.deepEqual(sections.map((s)=>s[1]),['children','attendance','recruitment','dynamics']);
+  for(const [,id,attributes,body]of sections){assert.doesNotMatch(attributes,/open|onclick/);assert.match(body,/^<summary><span><b>[^<]+<\/b><small>[^<]+<\/small><\/span><\/summary>/);assert.doesNotMatch(body,/class="card metric /);assert.match(body,/stats-detail-metrics/);}
+  const children=sections[0][3],attendance=sections[1][3],recruitment=sections[2][3],dynamics=sections[3][3];
+  for(const label of ['Лиды','На паузе','Закончили','Всего активных направлений','Робототехника — активные','Программирование — активные','С двумя активными направлениями'])assert.ok(children.includes(label));
+  for(const label of ['Посещения','Пропуски','Средняя посещаемость','Средняя историческая заполняемость'])assert.ok(attendance.includes(label));
+  for(const label of ['Новые записи','Пришли на ознакомительное','Продолжили после ознакомительного','Не продолжили','Ожидают результата','Конверсия ознакомительных занятий','Начали регулярные занятия'])assert.ok(recruitment.includes(label));
+  assert.match(recruitment,/Начали регулярные занятия<\/dt><dd>7<\/dd>/);assert.match(recruitment,/7 календарных дней/);assert.match(recruitment,/в любой последующий момент/);assert.doesNotMatch(recruitment,/30 календарных/);
+  assert.match(dynamics,/Ушли на паузу/);assert.match(dynamics,/Закончили обучение/);assert.match(dynamics,/stats-dynamics/);
+  assert.equal(f.calls.length,0);assert.equal(f.renders(),0,'native details do not need an API action or page render');
+});
+
+test('approximate occupancy keeps its sign and opens an explanatory disclosure on tap; unavailable occupancy stays unavailable',async()=>{
+  const f=await statisticsUiFixture();f.result.summary.estimatedCapacity=true;f.result.limitations.estimatedCapacity=true;
+  let page=f.context.statisticsPage();assert.match(page,/≈25,0%/);assert.match(page,/id="stats-history-limits"/);
+  const help=page.match(/class="btn soft stats-estimate-help"[^>]*onclick="([^"]+)"/)?.[1];assert.ok(help);
+  let scrolled=false;const note={open:false,scrollIntoView(){scrolled=true;}};f.context.document={getElementById:(id)=>id==='stats-history-limits'?note:null};
+  vm.runInContext(help,f.context);assert.equal(note.open,true);assert.equal(scrolled,true);assert.equal(f.calls.length,0);
+  f.result.summary.averageOccupancyPercent=null;page=f.context.statisticsPage();assert.match(page,/Средняя историческая заполняемость<\/div><div class="value">Нет данных/);
+});
+
+test('compact group cards retain their metrics and independent dates without repeating a formatted title schedule',async()=>{
+  const f=await statisticsUiFixture();f.result.groups[0].regularStarts=2;
+  f.context.displayGroup=(_id,name)=>`${name} · Робототехника · Пт 10:00–11:00`;
+  const rows=f.context.statisticsGroupRows();const firstSummary=rows.match(/<summary>([\s\S]*?)<\/summary>/)?.[1];
+  assert.equal((firstSummary.match(/10:00/g)||[]).length,1);assert.equal((firstSummary.match(/Робототехника/g)||[]).length,1);assert.doesNotMatch(rows,/class="card metric /);
+  for(const label of ['Проведено занятий','Посещения','Пропуски','Средняя посещаемость','Средняя историческая заполняемость','Новые записи из занятия группы','Впервые на ознакомительном','Продолжили по направлению','Не продолжили','Ожидают результата','Конверсия','Начали регулярные занятия','Ушли на паузу','Закончили направление','Сейчас:'])assert.ok(rows.includes(label));
+  assert.match(rows,/Начали регулярные занятия<\/dt><dd>2<\/dd>/);assert.match(f.context.statisticsPage(),/id="stats-group-from"/);assert.match(f.context.statisticsPage(),/id="stats-group-to"/);
 });
 
 test('one stacked button per month shows project segments, a separate refund marker and tap details',async()=>{
@@ -111,9 +153,12 @@ test('historical limitations are compact, closed, accurate and absent when no li
 
 test('responsive statistics CSS is scoped and supports touch, wrapped names, chart and vertical details without wide tables',async()=>{
   const css=await readFile(new URL('../src/ui/styles.css',import.meta.url),'utf8');const source=await readFile(new URL('../src/frontend/api-sync.mjs',import.meta.url),'utf8');
-  const scoped=css.slice(css.indexOf('/* Statistics keeps'),css.indexOf('/* Statistics keeps')+9000);
+  const start=css.indexOf('/* Statistics keeps');const scoped=css.slice(start,css.indexOf('.page-children .toolbar .search',start));
   for(const selector of ['.stats-page .stats-filters','.stats-page .stats-payments-chart','.stats-page .stats-group-card summary b','.stats-page .stats-project-details'])assert.ok(scoped.includes(selector));
   assert.match(scoped,/@media\(max-width:540px\)/);assert.match(scoped,/word-break:normal/);assert.match(scoped,/min-height:44px/);
+  assert.match(scoped,/stats-overview \.stats-metrics\{grid-template-columns:repeat\(6,minmax\(0,1fr\)\)/);
+  assert.match(scoped,/@media\(max-width:540px\)\{\.stats-page \.stats-overview \.stats-metrics\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(scoped,/\.stats-page \.stats-disclosure\[open\]>summary::after/);assert.match(scoped,/\.stats-page \.stats-detail-metrics/);
   assert.doesNotMatch(source.slice(source.indexOf('function statisticsAllowed()'),source.indexOf('\nconst legacyChildPage =')),/min-width:1120px|<table/);
 });
 

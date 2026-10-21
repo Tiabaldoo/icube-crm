@@ -1,7 +1,7 @@
 import { correctionFixture } from './attendance-correction-fixture.mjs';
 import { createStatistics } from '../../backend/src/statistics.mjs';
 
-export function statisticsFixture(t, { keepFinancialSeed = false } = {}) {
+export function statisticsFixture(t, { keepFinancialSeed = false, now = () => new Date('2026-10-20T01:00:00Z') } = {}) {
   const f = correctionFixture(t); const { db } = f;
   db.function('DATE_FORMAT', { varargs: true }, (date) => String(date).slice(0, 7));
   db.exec(`ALTER TABLE children ADD COLUMN created_at TEXT DEFAULT '2026-01-01 00:00:00';
@@ -43,7 +43,7 @@ export function statisticsFixture(t, { keepFinancialSeed = false } = {}) {
     return [db.prepare(sql).all(bindings).map((row) => 'amount' in row ? { ...row, amount: Number(row.amount).toFixed(2) } : row)];
   } };
   const director = { userId: '1', roles: ['director'] };
-  const service = createStatistics(pool, { now: () => new Date('2026-10-20T01:00:00Z') });
+  const service = createStatistics(pool, { now });
   const get = (params = {}, context = director) => service.get({ from: '2026-09-01', to: '2026-09-30', chartFrom: '2026-08-01', chartTo: '2026-10-31', ...params }, context);
   function child(id, { status = 'active', created = '2026-01-01 00:00:00', directions = [1], project = 2 } = {}) {
     db.prepare('INSERT INTO children(id,full_name,status,created_at) VALUES(?,?,?,?)').run(id, `Ребёнок ${id}`, status, created);
