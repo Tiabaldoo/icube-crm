@@ -1,4 +1,6 @@
 import { createReleaseNotes } from './release-notes.mjs';
+import { createBudgetEntries } from './budget-entries.mjs';
+import { createDirectorBudget } from './director-budget.mjs';
 import express, { Router } from 'express';
 import { authenticate, requirePermission } from './auth.mjs';
 import { clearSessionCookieOptions, createAuthService, parseSessionCookie, SESSION_COOKIE, sessionCookieOptions } from './auth-service.mjs';
@@ -60,6 +62,8 @@ export function createApiRouter(pool, {
   push = createWebPushService(pool, { config: {}, notificationEvents }),
   partnerSettlements = createPartnerSettlements(pool),
   statistics = createStatistics(pool),
+  budgetEntries = createBudgetEntries(pool),
+  directorBudget = createDirectorBudget(pool),
   authService = createAuthService(pool),
   loginRateLimiter = createLoginRateLimiter(),
   testAuth = null,
@@ -355,6 +359,18 @@ export function createApiRouter(pool, {
   router.get('/partner-settlements', requirePermission('partner-settlements:read'), run((request) => partnerSettlements.preview(projectFilters(request))));
   router.post('/partner-settlements', requirePermission('*'), notImplemented('partner-settlements'));
   router.get('/statistics', requirePermission('*'), run((request) => statistics.get(request.query, request.auth)));
+  const budgetContext = (request) => {
+    const expectedActor = request.get?.('X-Expected-Actor-Id');
+    if (expectedActor != null && String(expectedActor) !== String(request.auth.userId)) throw new ApiProblem(409, 'ACTOR_CHANGED', 'Пользователь изменился. Откройте бюджет заново.');
+    return request.auth;
+  };
+  router.get('/statistics/budget', requirePermission('*'), run((request) => directorBudget.get(request.query, budgetContext(request))));
+  router.get('/statistics/budget/entries', requirePermission('*'), run((request) => budgetEntries.list(request.query, request.auth)));
+  router.post('/statistics/budget/entries', requirePermission('*'), run((request) => budgetEntries.create(request.body, {
+    ...budgetContext(request), idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+  }), 201));
+  router.patch('/statistics/budget/entries/:id', requirePermission('*'), run((request) => budgetEntries.update(request.params.id, request.body, budgetContext(request))));
+  router.delete('/statistics/budget/entries/:id', requirePermission('*'), run((request) => budgetEntries.remove(request.params.id, budgetContext(request)), 204));
   router.post('/notifications/:id/read', requirePermission('notifications:read'), run((request) => notifications.markRead(request.params.id, request.auth)));
   router.post('/notifications/read-all', requirePermission('notifications:read'), run((request) => notifications.markAllRead(request.auth)));
   return router;

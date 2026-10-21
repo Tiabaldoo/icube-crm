@@ -903,14 +903,24 @@ async function loadStatisticsGroups({ readControls = true } = {}) {
 function renderStatisticsGroups() {
   if (!statisticsAllowed()) return;
   const target = element('#stats-group-result'); if (target) target.innerHTML = statisticsGroupsContent();
+  const notes = element('#stats-history-notes');
+  if (notes) notes.innerHTML = statisticsWarnings(legacy.state.statistics?.limitations, legacy.state.statisticsGroupsLoading || legacy.state.statisticsGroupError ? null : legacy.state.statisticsGroups);
 }
-function statisticsWarnings(limits = {}, id = 'stats-history-limits') {
-  const warnings = [limits.unknownStatusChildren ? `Нет достоверных данных о статусе на конец периода для ${limits.unknownStatusChildren} детей. Показатели ухода включают только подтверждённые переходы.` : '',
+function statisticsWarningMessages(limits = {}) {
+  return [limits.unknownStatusChildren ? `Нет достоверных данных о статусе на конец периода для ${limits.unknownStatusChildren} детей. Показатели ухода включают только подтверждённые переходы.` : '',
     limits.unknownOccupancyLessons ? `Нет достоверных данных о составе. Занятий, исключённых из средней заполняемости: ${limits.unknownOccupancyLessons}.` : '',
     limits.partialOccupancyLessons ? `Неполный расчёт заполняемости. Занятий с частично подтверждённым составом: ${limits.partialOccupancyLessons}. Детей с недостаточной историей: ${limits.unknownOccupancyChildren}; показанная заполняемость — нижняя оценка.` : '',
     limits.estimatedCapacity ? 'Средняя заполняемость рассчитана оценочно: историческая вместимость групп не сохранялась. Использована действующая модель вместимости.' : '',
     limits.unresolvedAttendanceDirections ? `Обнаружено несоответствие: отметок посещаемости без подтверждённого направления — ${limits.unresolvedAttendanceDirections}. В показателях отдельных направлений они не учитываются.` : ''].filter(Boolean);
-  return warnings.length ? `<details id="${id}" class="notice stats-section stats-limitations"><summary>Ограничения исторических данных: ${warnings.length}</summary>${warnings.map((text) => `<p>${html(text)}</p>`).join('')}</details>` : '';
+}
+function statisticsWarnings(limits = {}, groupResult = null) {
+  const warnings = new Map();
+  const add = (items, label) => { for (const text of statisticsWarningMessages(items)) { const scopes = warnings.get(text) ?? new Set(); scopes.add(label); warnings.set(text, scopes); } };
+  const commonPeriod = legacy.state.statistics?.period;
+  const independent = groupResult?.period && (groupResult.period.from !== commonPeriod?.from || groupResult.period.to !== commonPeriod?.to);
+  add(limits, independent ? 'Общая статистика' : '');
+  if (groupResult) add(groupResult.limitations, independent ? 'Статистика групп' : '');
+  return warnings.size ? `<details id="stats-history-limits" class="notice stats-section stats-limitations"><summary>Ограничения исторических данных: ${warnings.size}</summary>${[...warnings].map(([text, scopes]) => `<p>${html(text)}${independent ? `<small class="muted"> ${html([...scopes].join('; '))}.</small>` : ''}</p>`).join('')}</details>` : '';
 }
 function statisticsAsOf(period) {
   return period?.effectiveTo ? `<p class="muted">Данные по состоянию на ${html(isoToRu(period.effectiveTo))}${period.effectiveTo < period.from ? '. Выбранный период ещё не наступил' : ''}.</p>` : '';
@@ -920,7 +930,7 @@ function statisticsGroupsContent() {
   if (legacy.state.statisticsGroupsLoading) return '<div class="notice" role="status">Загружаем статистику групп…</div>';
   if (legacy.state.statisticsGroupError) return `<div class="notice" role="alert">${html(legacy.state.statisticsGroupError)}</div>`;
   const result = legacy.state.statisticsGroups ?? legacy.state.statistics;
-  return `${statisticsAsOf(result?.period)}${statisticsWarnings(result?.limitations, 'stats-group-history-limits')}<div id="stats-group-list">${statisticsGroupRows()}</div>`;
+  return `${statisticsAsOf(result?.period)}<div id="stats-group-list">${statisticsGroupRows()}</div>`;
 }
 const statisticsRate = (number, estimated = false) => number == null ? 'Нет данных' : `${estimated ? '≈' : ''}${Number(number).toFixed(1).replace('.', ',')}%`;
 const statisticsMetrics = (items) => `<div class="stats-metrics">${items.map(([label, metric, kind = '', scope = '']) => `<div class="card metric ${kind}">${scope ? `<small class="stats-metric-scope">${html(scope)}</small>` : ''}<div class="label">${html(label)}</div><div class="value">${html(metric)}</div></div>`).join('')}</div>`;
@@ -997,14 +1007,121 @@ function statisticsPage() {
   const estimated = summary.estimatedCapacity || summary.partialOccupancyLessons;
   const attendance = [['Посещения', summary.visits], ['Пропуски', summary.absences], ['Средняя посещаемость', statisticsRate(summary.attendancePercent)], ['Средняя историческая заполняемость', statisticsRate(summary.averageOccupancyPercent, estimated)]];
   return `<div class="stats-page">${head}${filters}<section class="stats-section stats-overview"><h2>Обзор</h2><p class="muted">За период ${html(isoToRu(result.period?.from))} — ${html(isoToRu(result.period?.to))}. Дети — текущее состояние.</p>${statisticsAsOf(result.period)}${statisticsMetrics([['Всего детей', c.total ?? 0, '', 'Сейчас'], ['Активных детей', c.active ?? 0, '', 'Сейчас'], ['Новые записи', summary.newChildren, '', 'За период'], ['Проведено занятий', summary.completedLessons, '', 'За период'], ['Средняя посещаемость', statisticsRate(summary.attendancePercent), '', 'За период'], ['Средняя историческая заполняемость', statisticsRate(summary.averageOccupancyPercent, estimated), '', 'За период']])}
-    ${estimated ? '<button class="btn soft stats-estimate-help" type="button" onclick="const note=document.getElementById(\'stats-history-limits\');if(note){note.open=true;note.scrollIntoView({block:\'nearest\'});}">≈ — оценочно. Посмотреть пояснение</button>' : ''}</section>
+    </section>
     ${statisticsPayments(result)}
     ${statisticsDisclosure('children', 'Дети и направления', 'Текущие статусы и активные направления', `<h3>Дети сейчас</h3>${statisticsRows([['Всего детей', c.total ?? 0], ['Активные', c.active ?? 0], ['Лиды', c.lead ?? 0], ['На паузе', c.paused ?? 0], ['Закончили', c.finished ?? 0]])}<h3>Активные направления сейчас</h3>${statisticsRows([['Всего активных направлений', a.total ?? 0], ...active, ['С двумя активными направлениями', a.dualChildren ?? 0]])}`)}
     ${statisticsDisclosure('attendance', 'Занятия и посещаемость', 'Посещения, пропуски и заполняемость за период', statisticsRows(attendance))}
     ${statisticsDisclosure('recruitment', 'Набор и ознакомительные', 'Результаты пробных и начало регулярных занятий', `${statisticsRows([['Новые записи', summary.newChildren], ['Пришли на ознакомительное', r.trials ?? 0], ['Продолжили после ознакомительного', r.continued ?? 0], ['Не продолжили', r.notContinued ?? 0], ['Ожидают результата', r.pending ?? 0], ['Конверсия ознакомительных занятий', statisticsRate(r.conversionPercent)], ['Начали регулярные занятия', r.regularStarts ?? 0]])}<p class="muted">После пробного ожидаем 7 календарных дней. Платное посещение в любой последующий момент меняет результат на «Продолжил», в том числе для прошлого месяца. Ожидающие исключены из конверсии. Начало регулярных занятий — первый обычный платный визит в выбранном периоде; по клубу дети уникальны.</p><div class="stats-project-details">${(r.directions ?? []).map((d) => `<section class="${statisticsDirectionClass(d.name)}"><h3>${html(d.name)}</h3>${statisticsRows([['Пробные', d.trials], ['Продолжили', d.continued], ['Не продолжили', d.notContinued], ['Ожидают', d.pending], ['Конверсия', statisticsRate(d.conversionPercent)], ['Начали регулярные занятия', d.regularStarts ?? 0]])}</section>`).join('')}</div>`)}
     ${statisticsDisclosure('dynamics', 'Динамика и уход', 'Паузы, завершения и динамика по месяцам', `${statisticsRows([['Ушли на паузу', summary.pausedChildren ?? 0], ['Закончили обучение', summary.finishedChildren ?? 0]])}${statisticsDynamics(result)}`)}
-    ${statisticsWarnings(result.limitations)}
-    <section class="stats-section"><h2>Статистика групп</h2><div class="stats-group-controls"><label>С<input class="input" id="stats-group-from" type="date" value="${html(legacy.state.statisticsGroupFrom || legacy.state.statisticsDateFrom)}"></label><label>По<input class="input" id="stats-group-to" type="date" value="${html(legacy.state.statisticsGroupTo || legacy.state.statisticsDateTo)}"></label><button class="btn" onclick="icubeApi.loadStatisticsGroups()">Применить даты групп</button><label>Поиск по группе или площадке<input class="input" id="stats-group-search" type="search" value="${html(legacy.state.statisticsGroupSearch ?? '')}" oninput="icubeApi.filterStatisticsGroups(this.value)"></label><label>Сортировка<select class="select" onchange="icubeApi.filterStatisticsGroups(undefined,this.value)">${[['name','По названию'],['attendance','Сначала низкая посещаемость'],['occupancy','Сначала низкая заполняемость']].map(([key,label]) => `<option value="${key}"${(legacy.state.statisticsGroupSort ?? 'name') === key ? ' selected' : ''}>${label}</option>`).join('')}</select></label></div><div id="stats-group-result">${statisticsGroupsContent()}</div></section></div>`;
+    <section class="stats-section"><h2>Статистика групп</h2><div class="stats-group-controls"><label>С<input class="input" id="stats-group-from" type="date" value="${html(legacy.state.statisticsGroupFrom || legacy.state.statisticsDateFrom)}"></label><label>По<input class="input" id="stats-group-to" type="date" value="${html(legacy.state.statisticsGroupTo || legacy.state.statisticsDateTo)}"></label><button class="btn" onclick="icubeApi.loadStatisticsGroups()">Применить даты групп</button><label>Поиск по группе или площадке<input class="input" id="stats-group-search" type="search" value="${html(legacy.state.statisticsGroupSearch ?? '')}" oninput="icubeApi.filterStatisticsGroups(this.value)"></label><label>Сортировка<select class="select" onchange="icubeApi.filterStatisticsGroups(undefined,this.value)">${[['name','По названию'],['attendance','Сначала низкая посещаемость'],['occupancy','Сначала низкая заполняемость']].map(([key,label]) => `<option value="${key}"${(legacy.state.statisticsGroupSort ?? 'name') === key ? ' selected' : ''}>${label}</option>`).join('')}</select></label></div><div id="stats-group-result">${statisticsGroupsContent()}</div></section>
+    ${typeof window === 'undefined' ? '' : window.icubeBudget?.section?.() ?? ''}
+    <div id="stats-history-notes">${statisticsWarnings(result.limitations, legacy.state.statisticsGroupsLoading || legacy.state.statisticsGroupError ? null : legacy.state.statisticsGroups)}</div></div>`;
+}
+
+function directorBudgetMoney(value) {
+  const text = String(value ?? '0.00'); const hasKopecks = !/\.00$|^-?\d+$/.test(text);
+  return `${new Intl.NumberFormat('ru-RU', { minimumFractionDigits: hasKopecks ? 2 : 0, maximumFractionDigits: 2 }).format(Number(text))} ₽`;
+}
+
+function createDirectorBudgetUi({ api, getActor, find = (selector) => document.querySelector(selector), confirm = (message) => window.confirm(message),
+  makeKey = () => crypto.randomUUID(), now = () => new Date() }) {
+  const budgetMoney = directorBudgetMoney;
+  const escape = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
+  const dateLabel = (value) => String(value ?? '').split('-').reverse().join('.');
+  const rate = (value) => value == null ? 'Нет данных' : `${Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 2 })}%`;
+  const rows = (items) => `<dl class="stats-detail-metrics">${items.map(([label, value]) => `<div><dt>${escape(label)}</dt><dd>${escape(value)}</dd></div>`).join('')}</dl>`;
+  const cards = (items) => `<div class="budget-metrics">${items.map(([label, value, kind = '']) => `<div class="card metric ${kind}"><div class="label">${escape(label)}</div><div class="value">${escape(value)}</div></div>`).join('')}</div>`;
+  const details = (title, content) => `<details class="budget-details"><summary>${escape(title)}</summary>${content}</details>`;
+  let state; let generation = 0;
+  function ready() {
+    const actor = getActor();
+    if (!actor?.roles?.includes('director')) { state = null; generation++; return null; }
+    const owner = String(actor.id ?? 'prototype');
+    if (!state || state.owner !== owner) {
+      const period = calendarMonthPeriod(now()); generation++;
+      state = { owner, open: false, ...period, result: null, loading: false, busy: false, error: '', message: '', form: null, sequence: 0 };
+    }
+    return state;
+  }
+  const value = (selector) => find(selector)?.value ?? '';
+  const current = (snapshot, token) => ready() === snapshot && generation === token;
+  function section() {
+    const s = ready(); if (!s) return '';
+    return `<details class="card stats-disclosure stats-section director-budget"${s.open ? ' open' : ''} ontoggle="icubeBudget.toggle(this.open)"><summary><span><b>Мой бюджет</b><small>Оплаты, начисленные расходы и управленческий результат</small></span></summary><div class="stats-disclosure-body" id="director-budget-body">${content()}</div></details>`;
+  }
+  function render() { if (!ready()) return; const target = find('#director-budget-body'); if (target) target.innerHTML = content(); }
+  function entryForm(s) {
+    const form = s.form; if (!form) return '';
+    return `<form class="budget-entry-form" onsubmit="event.preventDefault();icubeBudget.save()"><h4>${form.id ? 'Изменить операцию' : form.type === 'income' ? 'Прочий чистый доход' : 'Прочий расход'}</h4>
+      <div class="budget-form-fields"><label>Дата<input class="input" id="budget-entry-date" type="date" required value="${escape(form.date)}" onchange="icubeBudget.draft()"></label>
+      <label>Сумма, ₽<input class="input" id="budget-entry-amount" type="number" min="0.01" step="0.01" required value="${escape(form.amount)}" oninput="icubeBudget.draft()"></label>
+      <label>Назначение<input class="input" id="budget-entry-purpose" maxlength="1000" value="${escape(form.purpose)}" oninput="icubeBudget.draft()"></label></div>
+      <div class="budget-actions"><button class="btn primary" type="submit"${s.busy ? ' disabled' : ''}>Сохранить</button><button class="btn" type="button" onclick="icubeBudget.cancel()"${s.busy ? ' disabled' : ''}>Отмена</button></div></form>`;
+  }
+  function content() {
+    const s = ready(); if (!s) return '';
+    const controls = `<p class="muted">Расчёт по полученным оплатам и начисленным обязательствам. Это управленческий результат, а не остаток банковского счёта.</p>
+      <div class="budget-period"><label>С<input class="input" id="budget-from" type="date" value="${escape(s.from)}"></label><label>По<input class="input" id="budget-to" type="date" value="${escape(s.to)}"></label><button class="btn primary" onclick="icubeBudget.load()"${s.loading || s.busy ? ' disabled' : ''}>Рассчитать бюджет</button></div>`;
+    const notice = `${s.error ? `<div class="notice" role="alert">${escape(s.error)}</div>` : ''}${s.message ? `<p role="status">${escape(s.message)}</p>` : ''}`;
+    if (s.loading) return `${controls}<p role="status">Рассчитываем бюджет…</p>`;
+    const result = s.result; if (!result) return `${controls}${notice}`;
+    const total = result.totals; const own = result.projects.find((p) => p.code === 'icube-robots'); const zebra = result.projects.find((p) => p.code === 'zebra');
+    const incomeDetails = result.projects.map((p) => `<section class="${p.code === 'zebra' ? 'budget-zebra' : 'budget-icube'}"><h4>${escape(p.name)}</h4>${rows([['Всего оплат', budgetMoney(p.payments)], ['Наличные', budgetMoney(p.cash)], ['Безналичные', budgetMoney(p.cashless)], ['После возвратов', budgetMoney(p.income)]])}</section>`).join('');
+    const costDetails = result.projects.map((p) => `<section><h4>${escape(p.name)}</h4>${rows([['Возвраты', budgetMoney(p.refunds)], ['Начисленная зарплата', budgetMoney(p.salary)], ['Аренда', budgetMoney(p.rent)], ['Налог', budgetMoney(p.tax)], ['Доля партнёра', budgetMoney(p.partnerShare)], ['Управленческий результат', budgetMoney(p.result)]])}</section>`).join('');
+    const partner = result.partner;
+    const transfers = rows([['Доля партнёра — учтена в расходах', budgetMoney(zebra.partnerShare)], ['Наличные у партнёра — справочно', budgetMoney(partner.cashHeld)],
+      ['Взаимный перевод — справочно', budgetMoney(partner.transfer)], ['Начисленный доход — справочно', budgetMoney(partner.earnedIncome)], ['Начисленная доля Айкуба — справочно', budgetMoney(partner.earnedIcubeShare)]]);
+    const entries = result.entries.map((entry) => `<div class="budget-entry"><div><b>${escape(dateLabel(entry.date))}</b><div class="budget-purpose">${escape(entry.purpose || (entry.type === 'income' ? 'Прочий чистый доход' : 'Прочий расход'))}</div></div><strong class="${entry.type === 'expense' ? 'negative' : ''}">${entry.type === 'income' ? '+' : '−'}${escape(budgetMoney(entry.amount))}</strong><div class="budget-actions"><button class="btn" onclick="icubeBudget.edit('${entry.id}')"${s.busy ? ' disabled' : ''}>Редактировать</button><button class="btn" onclick="icubeBudget.remove('${entry.id}')"${s.busy ? ' disabled' : ''}>Удалить</button></div></div>`).join('');
+    return `${controls}${notice}${cards([['Все оплаты', budgetMoney(total.payments)], ['Расходы и удержания', budgetMoney(total.deductions)], ['Мой результат', budgetMoney(total.result)], ['Общая доходность', rate(total.overallMarginPercent)]])}
+      <h4>Доходность</h4>${cards([['Айкуб', rate(own.marginPercent), 'budget-icube'], ['Зебра', rate(zebra.marginPercent), 'budget-zebra'], ['Айкуб + Зебра', rate(total.combinedMarginPercent)], ['Общая доходность', rate(total.overallMarginPercent)]])}
+      <p class="muted">Общая доходность условная: прочие доходы вводятся уже чистыми. Результат Зебры рассчитан от оплат; начисленная доля Айкуба от индивидуальных посещений может отличаться.</p>
+      ${details('Доходы', `${incomeDetails}${rows([['Все оплаты', budgetMoney(total.payments)], ['Прочий чистый доход', budgetMoney(total.manualIncome)]])}`)}
+      ${details('Расходы и сверка результата', `${costDetails}${rows([['Возвраты', budgetMoney(total.refunds)], ['Зарплаты', budgetMoney(total.salary)], ['Аренда', budgetMoney(total.rent)], ['Налоги', budgetMoney(total.tax)], ['Доли партнёров', budgetMoney(total.partnerShare)], ['Прочие расходы', budgetMoney(total.manualExpense)], ['Расходы и удержания — всего', budgetMoney(total.deductions)], ['Результат Айкуб + Зебра', budgetMoney(total.automaticResult)], ['Прочий чистый доход', budgetMoney(total.manualIncome)], ['Мой результат', budgetMoney(total.result)]])}`)}
+      ${details('Партнёрские расчёты — пояснения', `<p class="muted">Положительный перевод — к получению от партнёра, отрицательный — к выплате партнёру. Переводы и начисленная доля Айкуба показаны справочно и повторно не изменяют результат.</p>${transfers}`)}
+      <h4>Дополнительные операции</h4><div class="budget-actions"><button class="btn" onclick="icubeBudget.add('income')"${s.busy ? ' disabled' : ''}>+ Прочий доход</button><button class="btn" onclick="icubeBudget.add('expense')"${s.busy ? ' disabled' : ''}>− Прочий расход</button></div>${entryForm(s)}
+      <div class="budget-entries">${entries || '<p class="muted">За выбранный период дополнительных операций нет.</p>'}</div>`;
+  }
+  async function load({ readControls = true } = {}) {
+    const s = ready(); if (!s || (s.busy && readControls)) return;
+    if (readControls) { s.from = value('#budget-from') || s.from; s.to = value('#budget-to') || s.to; }
+    const sequence = ++s.sequence; const token = generation; s.loading = true; s.error = ''; render();
+    try {
+      const result = await api.list('statistics/budget', `?from=${encodeURIComponent(s.from)}&to=${encodeURIComponent(s.to)}`);
+      if (current(s, token) && sequence === s.sequence) s.result = result;
+    } catch (error) { if (current(s, token) && sequence === s.sequence) { s.result = null; s.error = error.message; } }
+    finally { if (current(s, token) && sequence === s.sequence) { s.loading = false; render(); } }
+  }
+  async function toggle(open) { const s = ready(); if (!s) return; s.open = open; if (open && !s.result && !s.loading) await load({ readControls: false }); }
+  function draft() {
+    const s = ready(); if (!s?.form || s.busy) return;
+    Object.assign(s.form, { date: value('#budget-entry-date'), amount: value('#budget-entry-amount'), purpose: value('#budget-entry-purpose') });
+  }
+  function add(type) { const s = ready(); if (!s || s.busy || !['income','expense'].includes(type)) return; s.form = { type, date: businessDate(now()), amount: '', purpose: '', key: makeKey() }; s.error = ''; s.message = ''; render(); }
+  function edit(id) { const s = ready(); if (!s || s.busy) return; const entry = s.result?.entries.find((row) => row.id === String(id)); if (entry) { s.form = { ...entry }; s.error = ''; s.message = ''; render(); } }
+  function cancel() { const s = ready(); if (s && !s.busy) { s.form = null; s.error = ''; render(); } }
+  async function save() {
+    const s = ready(); if (!s?.form || s.busy) return; draft(); const form = { ...s.form }; const token = generation;
+    const body = { type: form.type, date: form.date, amount: form.amount, purpose: form.purpose };
+    s.busy = true; s.error = ''; render();
+    try {
+      await api.request(form.id ? `/statistics/budget/entries/${form.id}` : '/statistics/budget/entries', {
+        method: form.id ? 'PATCH' : 'POST', body, idempotencyKey: form.id ? undefined : form.key, expectedActorId: s.owner,
+      });
+      if (current(s, token)) { s.form = null; s.message = 'Операция сохранена.'; await load({ readControls: false }); }
+    } catch (error) { if (current(s, token)) s.error = error.message; }
+    finally { if (current(s, token)) { s.busy = false; render(); } }
+  }
+  async function remove(id) {
+    const s = ready(); if (!s || s.busy) return;
+    const entry = s.result?.entries.find((row) => row.id === String(id)); if (!entry || !confirm(`Удалить операцию ${dateLabel(entry.date)} на ${budgetMoney(entry.amount)}?`)) return;
+    const token = generation; s.busy = true; s.error = ''; render();
+    try {
+      await api.request(`/statistics/budget/entries/${entry.id}`, { method: 'DELETE', expectedActorId: s.owner });
+      if (current(s, token)) { if (s.form?.id === entry.id) s.form = null; s.message = 'Операция удалена.'; await load({ readControls: false }); }
+    } catch (error) { if (current(s, token)) s.error = error.message; }
+    finally { if (current(s, token)) { s.busy = false; render(); } }
+  }
+  return { section, toggle, load, add, edit, cancel, draft, save, remove };
 }
 
 const legacyChildPage = window.child;
@@ -2346,6 +2463,7 @@ window.transferDirectionBalanceFormV142 = window.icubeApi.transferDirectionBalan
 window.refreshTransferPreviewV142 = window.icubeApi.refreshBalanceTransferPreview;
 window.confirmTransferDirectionBalanceV142 = window.icubeApi.confirmBalanceTransfer;
 window.child = childPageWithTransferHistory;
+window.icubeBudget = createDirectorBudgetUi({ api, getActor: () => authProfile ?? { roles: [legacy.state.role] } });
 window.stats = statisticsPage;
 window.applyStatsFiltersV125 = window.icubeApi.loadStatistics;
 window.applySalaryFilters = window.icubeApi.applySalaryFilters;

@@ -45,12 +45,15 @@ test('all four thematic sections use native initially-closed disclosure controls
   assert.equal(f.calls.length,0);assert.equal(f.renders(),0,'native details do not need an API action or page render');
 });
 
-test('approximate occupancy keeps its sign and opens an explanatory disclosure on tap; unavailable occupancy stays unavailable',async()=>{
+test('approximate occupancy keeps its sign without an extra button; one deduplicated limitations block stays at the bottom',async()=>{
   const f=await statisticsUiFixture();f.result.summary.estimatedCapacity=true;f.result.limitations.estimatedCapacity=true;
   let page=f.context.statisticsPage();assert.match(page,/≈25,0%/);assert.match(page,/id="stats-history-limits"/);
-  const help=page.match(/class="btn soft stats-estimate-help"[^>]*onclick="([^"]+)"/)?.[1];assert.ok(help);
-  let scrolled=false;const note={open:false,scrollIntoView(){scrolled=true;}};f.context.document={getElementById:(id)=>id==='stats-history-limits'?note:null};
-  vm.runInContext(help,f.context);assert.equal(note.open,true);assert.equal(scrolled,true);assert.equal(f.calls.length,0);
+  assert.doesNotMatch(page,/stats-estimate-help|Посмотреть пояснение/);
+  f.state.statisticsGroups={period:f.result.period,groups:f.result.groups,limitations:{estimatedCapacity:true}};
+  f.context.window={icubeBudget:{section:()=>'<details class="director-budget"><summary>Мой бюджет</summary></details>'}};
+  page=f.context.statisticsPage();assert.equal((page.match(/id="stats-history-limits"/g)||[]).length,1);assert.equal((page.match(/историческая вместимость групп не сохранялась/g)||[]).length,1);
+  assert.ok(page.indexOf('stats-history-notes')>page.indexOf('Мой бюджет'));assert.ok(page.indexOf('stats-history-notes')>page.indexOf('stats-group-result'));
+  assert.doesNotMatch(f.context.statisticsGroupsContent(),/Ограничения исторических данных/);assert.equal(f.calls.length,0);
   f.result.summary.averageOccupancyPercent=null;page=f.context.statisticsPage();assert.match(page,/Средняя историческая заполняемость<\/div><div class="value">Нет данных/);
 });
 
@@ -149,6 +152,14 @@ test('historical limitations are compact, closed, accurate and absent when no li
   const inconsistent=f.context.statisticsWarnings({unresolvedAttendanceDirections:1});assert.match(inconsistent,/Обнаружено несоответствие/);assert.match(inconsistent,/направления — 1/);
   f.result.period.effectiveTo='2026-09-30';assert.match(f.context.statisticsPage(),/Данные по состоянию на 30\.09\.2026/);
   assert.match(f.context.statisticsPage(),/id="stats-group-to" type="date"/);
+});
+
+test('changing group dates refreshes the single footer warnings without repeating a shared capacity warning',async()=>{
+  const f=await statisticsUiFixture();const footer={innerHTML:''};f.result.limitations={estimatedCapacity:true};
+  f.state.statisticsGroups={period:{from:'2026-10-01',to:'2026-10-31'},groups:f.result.groups,limitations:{estimatedCapacity:true,unknownStatusChildren:2}};
+  f.context.element=(selector)=>selector==='#stats-history-notes'?footer:selector==='#stats-group-result'?f.groupTarget:null;
+  f.context.renderStatisticsGroups();assert.equal((footer.innerHTML.match(/историческая вместимость групп не сохранялась/g)||[]).length,1);assert.match(footer.innerHTML,/Ограничения исторических данных: 2/);assert.match(footer.innerHTML,/Статистика групп/);
+  assert.doesNotMatch(f.groupTarget.innerHTML,/Ограничения исторических данных/);
 });
 
 test('responsive statistics CSS is scoped and supports touch, wrapped names, chart and vertical details without wide tables',async()=>{
