@@ -4,7 +4,7 @@ import { createGameAccess } from '../../backend/src/game-access.mjs';
 import { createGameLoginGuard } from '../../backend/src/game-login-guard.mjs';
 import { createApiRouter } from '../../backend/src/routes.mjs';
 
-export function gameFixture({ guard = createGameLoginGuard() } = {}) {
+export function gameFixture({ guard = createGameLoginGuard(), ...options } = {}) {
   const state = {
     now: '2026-11-02 23:30:00.000000',
     users: [
@@ -23,11 +23,14 @@ export function gameFixture({ guard = createGameLoginGuard() } = {}) {
       { child_id: 9, project_id: 2, superseded_at: null }, { child_id: 10, project_id: 1, superseded_at: null },
       { child_id: 11, project_id: 1, superseded_at: null }, { child_id: 8, project_id: 3, superseded_at: '2026-01-01' },
     ],
-    accounts: [], audit: [], sessions: [], writes: [], nextUserId: 100,
+    accounts: [], audit: [], sessions: [], writes: [], statements: [], compares: [], nextUserId: 100,
   };
+  const faults = { failOn: null, deadlocks: 0, failPool: false };
   const userById = (id) => state.users.find((user) => user.id === Number(id));
   const accountByChild = (id) => state.accounts.find((account) => account.child_id === Number(id));
   function query(sql, params = {}) {
+    state.statements.push(sql);
+    if (faults.failOn && sql.includes(faults.failOn)) throw new Error('Сбой базы');
     const write = sql.match(/^\s*(INSERT(?: IGNORE)? INTO|UPDATE|DELETE FROM)\s+(\w+)/);
     if (write) state.writes.push(write[2]);
     if (/(UPDATE|DELETE FROM)\s+child_user_accounts/.test(sql)) throw new Error('Строку child_user_accounts нельзя менять');
@@ -41,7 +44,7 @@ export function gameFixture({ guard = createGameLoginGuard() } = {}) {
     }
     if (sql.startsWith('INSERT INTO auth_sessions')) { state.sessions.push({ id: params.id, user_id: Number(params.userId), refresh_token_hash: params.tokenHash }); return [{}]; }
     if (sql.startsWith('UPDATE users SET last_login_at=')) return [{ affectedRows: 1 }];
-    if (sql.includes('FROM user_roles ur JOIN roles')) return [[...userById(params.userId).roles].sort().map((code) => ({ code }))];
+    if (sql.startsWith('SELECT r.code FROM user_roles ur JOIN roles')) return [[...userById(params.userId).roles].sort().map((code) => ({ code }))];
     if (sql.startsWith('SELECT id,full_name,status FROM children')) {
       return [state.children.filter((child) => child.id === Number(params.childId) && child.deleted_at == null)];
     }
@@ -63,7 +66,19 @@ export function gameFixture({ guard = createGameLoginGuard() } = {}) {
       if (accountByChild(params.childId)) throw Object.assign(new Error('duplicate'), { code: 'ER_DUP_ENTRY' });
       state.accounts.push({ child_id: Number(params.childId), user_id: Number(params.userId), created_at: state.now }); return [{}];
     }
-    if (sql.startsWith('INSERT INTO audit_log')) { state.audit.push({ ...params }); return [{}]; }
+    if (sql.startsWith('INSERT INTO audit_log')) { state.audit.push({ action: sql.match(/'(game_access\.[a-z_]+)'/)?.[1], ...params }); return [{}]; }
+    if (sql.includes('JOIN child_user_accounts a ON a.child_id=c.id WHERE c.id=:childId FOR UPDATE')) {
+      const account = accountByChild(params.childId);
+      return [account ? [{ user_id: account.user_id, created_at: account.created_at }] : []];
+    }
+    if (sql.startsWith('DELETE ur FROM user_roles')) { const user = userById(params.userId); user.roles = user.roles.filter((role) => role !== 'child'); return [{}]; }
+    if (sql.startsWith("UPDATE users SET status='blocked',deleted_at=")) {
+      const user = userById(params.userId);
+      Object.assign(user, { status: 'blocked', deleted_at: state.now, email: null, phone: null, token_version: user.token_version + 1 });
+      if (sql.includes('display_name=:displayName')) user.display_name = params.displayName;
+      if (sql.includes('password_hash=:passwordHash')) user.password_hash = params.passwordHash;
+      return [{}];
+    }
     if (sql.startsWith('UPDATE users SET password_hash=')) {
       Object.assign(userById(params.userId), { password_hash: params.passwordHash, status: 'active', token_version: userById(params.userId).token_version + 1 }); return [{}];
     }
@@ -89,15 +104,45 @@ export function gameFixture({ guard = createGameLoginGuard() } = {}) {
     throw new Error(`Неожиданный SQL в фикстуре: ${sql}`);
   }
   const run = async (sql, params) => query(sql, params);
-  const connection = { query: run, beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {}, release() {} };
-  const pool = { query: run, getConnection: async () => connection };
+  const tables = ['users', 'accounts', 'audit', 'sessions'];
+  let snapshot = null;
+  // Транзакции идут по одной, как при блокировке строки ребёнка в InnoDB.
+  let turn = Promise.resolve();
+  const turns = [];
+  const connection = {
+    query: run,
+    beginTransaction: async () => {
+      const previous = turn;
+      turn = new Promise((resolve) => { turns.push(resolve); });
+      await previous;
+      snapshot = structuredClone(Object.fromEntries(tables.map((table) => [table, state[table]])));
+    },
+    commit: async () => {
+      if (faults.deadlocks > 0) { faults.deadlocks -= 1; throw Object.assign(new Error('deadlock'), { code: 'ER_LOCK_DEADLOCK' }); }
+      snapshot = null;
+    },
+    rollback: async () => { Object.assign(state, snapshot); snapshot = null; },
+    release() { turns.shift()?.(); },
+  };
+  const pool = {
+    query: async (sql, params) => { if (faults.failPool) throw new Error('Сбой базы'); return query(sql, params); },
+    getConnection: async () => {
+      if (faults.deadlocks > 0) return { ...connection, commit: async () => { faults.deadlocks -= 1; throw Object.assign(new Error('deadlock'), { code: 'ER_LOCK_DEADLOCK' }); } };
+      return connection;
+    },
+  };
   let password = 0;
   const gameAccess = createGameAccess(pool, {
-    guard, dummyPasswordHash: 'dummy', makePassword: () => `generated-password-${++password}`,
+    guard, makePassword: () => `generated-password-${++password}`,
     createPasswordHash: async (value) => `hash:${value}`,
-    comparePassword: async (value, hash) => hash === `hash:${value}`,
+    comparePassword: async (value, hash) => {
+      state.compares.push(hash);
+      await new Promise((resolve) => setImmediate(resolve));
+      return hash === `hash:${value}`;
+    },
+    ...options,
   });
-  return { state, pool, gameAccess, guard };
+  return { state, pool, connection, gameAccess, guard, faults };
 }
 
 export const director = { userId: '2', roles: ['director'] };

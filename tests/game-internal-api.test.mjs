@@ -40,9 +40,20 @@ test('без секрета и с неверным секретом ответ 4
   }
 });
 
-test('нелокальный адрес не принимается даже с секретом', () => {
+test('нелокальный адрес не принимается даже с секретом', async () => {
   for (const address of ['127.0.0.1', '::1', '::ffff:127.0.0.1']) assert.equal(isLoopbackAddress(address), true);
   for (const address of ['203.0.113.5', '10.0.0.1', '::ffff:10.0.0.1', undefined]) assert.equal(isLoopbackAddress(address), false);
+  const remote = startInternalGameServer({ app: createInternalGameApp({ token, gameAccess: fixture.gameAccess, isAllowedPeer: () => false }), port: 0, logger: silent });
+  await once(remote, 'listening');
+  try {
+    const response = await fetch(`http://127.0.0.1:${remote.address().port}${statusPath}`, { headers: { 'x-game-internal-token': token } });
+    assert.equal(response.status, 404);
+  } finally { await new Promise((resolve) => remote.close(resolve)); }
+});
+
+test('неверный секрет с плохим телом даёт 404: тело не разбирается до проверки', async () => {
+  const response = await fetch(`${baseUrl}${verifyPath}`, { method: 'POST', headers: { 'x-game-internal-token': 'wrong', 'content-type': 'application/json' }, body: '{broken' });
+  assert.equal(response.status, 404);
 });
 
 test('verify-child и status отвечают по секрету', async () => {
@@ -73,6 +84,13 @@ test('большое и неверное тело не раскрывает па
   const broken = await fetch(`${baseUrl}${verifyPath}`, { method: 'POST', headers: { 'x-game-internal-token': token, 'content-type': 'application/json' }, body: '{"password":"secret-text"' });
   assert.equal(broken.status, 400);
   assert.doesNotMatch(await broken.text(), /secret-text/);
+  for (const body of ['{"login":"misha.k","password":kot-luna-reka-dom-47}', 'kot-luna-reka-dom-47', '"kot-luna']) {
+    const leaked = await fetch(`${baseUrl}${verifyPath}`, { method: 'POST', headers: { 'x-game-internal-token': token, 'content-type': 'application/json' }, body });
+    assert.equal(leaked.status, 400);
+    const text = await leaked.text();
+    assert.doesNotMatch(text, /kot|luna/);
+    assert.equal(JSON.parse(text).error.code, 'INVALID_REQUEST');
+  }
   const large = await fetch(`${baseUrl}${verifyPath}`, { method: 'POST', headers: { 'x-game-internal-token': token, 'content-type': 'application/json' }, body: JSON.stringify({ login: 'x'.repeat(10_000) }) });
   assert.equal(large.status, 413);
 });

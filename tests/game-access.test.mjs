@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { childPasswordWords } from '../backend/src/child-password-words.mjs';
 import { generatedChildPassword } from '../backend/src/game-access.mjs';
 import { createGameLoginGuard } from '../backend/src/game-login-guard.mjs';
+import { releaseChildGameAccount } from '../backend/src/game-account-release.mjs';
 import { addLegacyAccount, director, gameFixture, partner, startCrm } from './helpers/game-access-fixture.mjs';
 
 const verify = (fixture, login, password, clientIp = '203.0.113.5') => fixture.gameAccess.verifyChild({ login, password, clientIp });
@@ -104,12 +105,52 @@ test('сброс и отключение не трогают взрослого,
 test('код CRM не обновляет child_user_accounts, удаление только вместе с ребёнком в deleteChild', () => {
   const directory = new URL('../backend/src/', import.meta.url);
   const hits = [];
-  for (const file of readdirSync(directory)) {
-    const source = readFileSync(new URL(file, directory), 'utf8');
-    if (/UPDATE\s+child_user_accounts/i.test(source)) hits.push(`update:${file}`);
-    if (/DELETE\s+FROM\s+child_user_accounts/i.test(source)) hits.push(`delete:${file}`);
+  for (const file of readdirSync(directory, { recursive: true }).filter((name) => name.endsWith('.mjs'))) {
+    const source = readFileSync(new URL(file.replaceAll('\\', '/'), directory), 'utf8');
+    if (/(UPDATE|REPLACE\s+INTO)\s+`?child_user_accounts/i.test(source)) hits.push(`update:${file}`);
+    if (/INSERT[^;`]*child_user_accounts[^;`]*ON\s+DUPLICATE/i.test(source)) hits.push(`update:${file}`);
+    if (/DELETE\s+(\w+\s+)?FROM\s+`?child_user_accounts/i.test(source)) hits.push(`delete:${file}`);
   }
   assert.deepEqual(hits, ['delete:catalog.mjs']);
+});
+
+test('удаление ребёнка: детская учётка обезличена, логин освобождён, дата первого доступа осталась в журнале', async () => {
+  const f = gameFixture();
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  const user = f.state.users.at(-1);
+  await releaseChildGameAccount(f.connection, 8, '2');
+  assert.deepEqual([user.status, user.email, user.password_hash, user.roles], ['blocked', null, '!', []]);
+  assert.equal(user.display_name.includes('Миша'), false);
+  assert.equal(user.token_version, 2); assert.ok(user.deleted_at);
+  const entry = f.state.audit.at(-1);
+  assert.deepEqual([entry.action, entry.childId, entry.actorId], ['game_access.child_deleted', 8, '2']);
+  assert.deepEqual(JSON.parse(entry.after), { userId: String(user.id), firstAccessOn: '2026-11-02', childOnly: true });
+  assert.doesNotMatch(JSON.stringify(f.state.audit), /Миша|misha/);
+  f.state.accounts = [];
+  assert.equal((await f.gameAccess.create(12, { login: 'misha.k' }, director)).login, 'misha.k');
+});
+
+test('удаление ребёнка: взрослый, связанный исторической строкой, теряет только роль child', async () => {
+  const f = gameFixture();
+  const adult = addLegacyAccount(f, { childId: 8, createdAt: '2025-01-10 09:00:00.000000', roles: ['child', 'parent'] });
+  const before = { ...adult };
+  await releaseChildGameAccount(f.connection, 8);
+  assert.deepEqual({ ...adult, roles: before.roles }, before);
+  assert.deepEqual(adult.roles, ['parent']);
+  assert.equal(JSON.parse(f.state.audit.at(-1).after).childOnly, false);
+});
+
+test('удаление ребёнка без игрового доступа ничего не пишет', async () => {
+  const f = gameFixture();
+  await releaseChildGameAccount(f.connection, 8);
+  assert.deepEqual(f.state.writes, []); assert.deepEqual(f.state.audit, []);
+});
+
+test('deleteChild освобождает учётку до удаления связи и в той же транзакции, сохраняя автора', () => {
+  const source = readFileSync(new URL('../backend/src/catalog.mjs', import.meta.url), 'utf8');
+  assert.match(source, /async function deleteChild\(childId, context = \{\}\)/);
+  assert.match(source, /await releaseChildGameAccount\(connection, childId, context\.userId \?\? null\); await connection\.query\('DELETE FROM child_user_accounts/);
+  assert.match(readFileSync(new URL('../backend/src/routes.mjs', import.meta.url), 'utf8'), /catalog\.deleteChild\(request\.params\.id, request\.auth\)/);
 });
 
 test('партнёр управляет только ребёнком, полностью относящимся к его проекту', async () => {
@@ -126,6 +167,14 @@ test('партнёр управляет только ребёнком, полн�
   await rejectsWith(f.gameAccess.get(12, partner), 'FORBIDDEN');
   await rejectsWith(f.gameAccess.create(12, { login: 'nobody' }, partner), 'FORBIDDEN');
   await rejectsWith(f.gameAccess.get(8, { roles: ['partner'], projectIds: ['2'] }), 'FORBIDDEN');
+});
+
+test('смешанные роли: директор-партнёр действует как директор, преподаватель-партнёр как партнёр', async () => {
+  const f = gameFixture();
+  assert.equal((await f.gameAccess.get(9, { userId: '4', roles: ['director', 'partner'], projectIds: ['1'] })).manageable, true);
+  const teacherPartner = { userId: '4', roles: ['partner', 'teacher'], projectIds: ['1'] };
+  assert.equal((await f.gameAccess.get(9, teacherPartner)).manageable, false);
+  await rejectsWith(f.gameAccess.create(9, { login: 'anya' }, teacherPartner), 'GAME_ACCESS_DIRECTOR_ONLY');
 });
 
 test('законченная запись в другом проекте тоже делает ребёнка общим, заменённая — нет', async () => {
@@ -227,6 +276,134 @@ test('заблокированная пара получает 429 даже с �
   await rejectsWith(verify(f, 'misha.k', password), 'LOGIN_RATE_LIMITED');
   const { password: fresh } = await f.gameAccess.resetPassword(8, director);
   assert.equal((await verify(f, 'misha.k', fresh)).childId, '8');
+});
+
+test('параллельные неверные попытки не обходят лимит: до пароля доходят ровно 5', async () => {
+  const f = gameFixture();
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  const results = await Promise.allSettled(Array.from({ length: 40 }, () => verify(f, 'misha.k', 'wrong')));
+  assert.equal(f.state.compares.length, 5);
+  assert.equal(results.filter((item) => item.reason?.code === 'INVALID_CREDENTIALS').length, 5);
+  assert.equal(results.filter((item) => item.reason?.code === 'LOGIN_RATE_LIMITED').length, 35);
+});
+
+test('параллельные верные входы знакомого ребёнка не считаются неудачей', async () => {
+  const f = gameFixture();
+  const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  const results = await Promise.all(Array.from({ length: 5 }, () => verify(f, 'misha.k', password)));
+  assert.equal(results.length, 5);
+  assert.equal((await verify(f, 'misha.k', password)).childId, '8');
+});
+
+test('сбой базы при входе освобождает резерв и не считается неудачей', async () => {
+  const f = gameFixture();
+  const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  f.faults.failPool = true;
+  for (let i = 0; i < 10; i += 1) await assert.rejects(verify(f, 'misha.k', password), /Сбой базы/);
+  f.faults.failPool = false;
+  assert.equal((await verify(f, 'misha.k', password)).childId, '8');
+});
+
+test('занятый проверщик паролей даёт отказ без записи неудачи', async () => {
+  const busy = Object.assign(new Error('busy'), { status: 429, code: 'GAME_LOGIN_BUSY' });
+  let overloaded = true;
+  const f = gameFixture({ comparePassword: async (value, hash) => { if (overloaded) throw busy; return hash === `hash:${value}`; } });
+  const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  for (let i = 0; i < 10; i += 1) await rejectsWith(verify(f, 'misha.k', password), 'GAME_LOGIN_BUSY');
+  overloaded = false;
+  assert.equal((await verify(f, 'misha.k', password)).childId, '8');
+});
+
+test('неизвестный логин проверяется по фиктивному хэшу той же стоимости', async () => {
+  const f = gameFixture();
+  await rejectsWith(verify(f, 'nobody', 'whatever'), 'INVALID_CREDENTIALS');
+  await rejectsWith(verify(f, 'x', 'whatever', '203.0.113.6'), 'INVALID_CREDENTIALS');
+  assert.equal(f.state.compares.length, 2);
+  for (const hash of f.state.compares) assert.match(hash, /^\$2a\$12\$/);
+});
+
+test('вход не считает bcrypt в главном потоке', () => {
+  const source = readFileSync(new URL('../backend/src/game-access.mjs', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /bcrypt/);
+  assert.match(source, /createPasswordVerifier/);
+});
+
+test('транзакция: сбой на середине создания откатывает пользователя, связь и журнал', async () => {
+  const f = gameFixture();
+  const users = f.state.users.length;
+  f.faults.failOn = 'INSERT INTO audit_log';
+  await assert.rejects(f.gameAccess.create(8, { login: 'misha.k' }, director), /Сбой базы/);
+  assert.equal(f.state.users.length, users);
+  assert.deepEqual(f.state.accounts, []);
+  assert.deepEqual(f.state.audit, []);
+});
+
+test('транзакция: сбой сброса пароля оставляет прежний пароль и версию', async () => {
+  const f = gameFixture();
+  const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  f.faults.failOn = 'INSERT INTO audit_log';
+  await assert.rejects(f.gameAccess.resetPassword(8, director), /Сбой базы/);
+  f.faults.failOn = null;
+  assert.equal((await verify(f, 'misha.k', password)).tokenVersion, 1);
+});
+
+test('сбой базы после commit не теряет показанный один раз пароль', async () => {
+  const f = gameFixture();
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  const original = f.connection.commit;
+  f.connection.commit = async () => { await original(); f.faults.failPool = true; };
+  const reset = await f.gameAccess.resetPassword(8, director);
+  assert.equal(reset.password, 'generated-password-2'); assert.equal(reset.login, 'misha.k');
+  f.faults.failPool = false;
+  const created = await f.gameAccess.create(9, { login: 'anya' }, director);
+  assert.equal(created.login, 'anya'); assert.equal(created.password, 'generated-password-3');
+});
+
+test('сбой журнала при разблокировке не снимает блокировку', async () => {
+  const f = gameFixture();
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  for (let i = 0; i < 5; i += 1) await rejectsWith(verify(f, 'misha.k', 'wrong'), 'INVALID_CREDENTIALS');
+  f.faults.failOn = 'INSERT INTO audit_log';
+  await assert.rejects(f.gameAccess.unlock(8, director), /Сбой базы/);
+  f.faults.failOn = null;
+  await rejectsWith(verify(f, 'misha.k', 'wrong'), 'LOGIN_RATE_LIMITED');
+});
+
+test('создание не блокирует отсутствующую строку доступа: нет основы для взаимоблокировки', async () => {
+  const f = gameFixture();
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  const reads = f.state.statements.filter((sql) => sql.includes('FROM child_user_accounts a JOIN users u'));
+  assert.ok(reads.length > 0);
+  for (const sql of reads) assert.doesNotMatch(sql, /FOR UPDATE/);
+  assert.ok(f.state.statements.some((sql) => /FROM children WHERE id=:childId AND deleted_at IS NULL FOR UPDATE/.test(sql)));
+});
+
+test('взаимоблокировка повторяется один раз и не создаёт дублей', async () => {
+  const f = gameFixture();
+  f.faults.deadlocks = 1;
+  const created = await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  assert.equal(created.login, 'misha.k');
+  assert.equal(f.state.accounts.length, 1);
+  assert.equal(f.state.users.filter((user) => user.roles.includes('child')).length, 1);
+});
+
+test('параллельное создание одному ребёнку оставляет одну строку и один пароль', async () => {
+  const f = gameFixture();
+  const results = await Promise.allSettled([f.gameAccess.create(8, { login: 'one.login' }, director), f.gameAccess.create(8, { login: 'two.login' }, director)]);
+  assert.equal(results.filter((item) => item.status === 'fulfilled').length, 1);
+  assert.equal(f.state.accounts.length, 1);
+});
+
+test('статус входа учитывает статус ребёнка, а чужая учётка не раскрывается', async () => {
+  const f = gameFixture();
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  assert.equal((await f.gameAccess.get(8, director)).canLogin, true);
+  f.state.children[0].status = 'finished';
+  const closed = await f.gameAccess.get(8, director);
+  assert.deepEqual([closed.status, closed.canLogin], ['active', false]);
+  const g = gameFixture();
+  addLegacyAccount(g, { childId: 8, createdAt: '2025-01-10 09:00:00.000000', roles: ['parent'], email: 'adult@example.com' });
+  assert.deepEqual(await g.gameAccess.get(8, partner), { manageable: true, exists: true, invalid: true });
 });
 
 test('кнопка разблокировки снимает блокировку без смены пароля', async () => {

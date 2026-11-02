@@ -46,7 +46,8 @@ function gameConfig(env, appEnv, database, port) {
   const tokenValid = token.length >= 32 && !/replace_me/i.test(token);
   const portValid = Number.isInteger(internalPort) && internalPort > 0 && internalPort < 65536 && internalPort !== port;
   const enabled = requested && environmentAllowed && tokenValid && portValid;
-  return { enabled, requested, internalToken: enabled ? token : null, internalPort };
+  const allowPrivateClientIp = String(env.GAME_ALLOW_PRIVATE_CLIENT_IP ?? '').toLowerCase() === 'true';
+  return { enabled, requested, internalToken: enabled ? token : null, internalPort, allowPrivateClientIp };
 }
 
 export function loadConfig(env = process.env) {

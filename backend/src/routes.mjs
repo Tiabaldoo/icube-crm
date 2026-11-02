@@ -197,7 +197,7 @@ export function createApiRouter(pool, {
     return deletions.deleteTeacher(request.params.id, { projectId: partnerProjectId(request.auth) });
   }, 204));
   router.delete('/groups/:id', requirePermission('groups:write'), run(async (request) => { await assertOwned(pool, 'groups', request.params.id, request.auth); return deletions.deleteGroup(request.params.id, request.auth); }, 204));
-  router.delete('/children/:id', requirePermission('children:write'), run(async (request) => { await assertOwned(pool, 'children', request.params.id, request.auth, { exclusiveChild: true }); return catalog.deleteChild(request.params.id); }, 204));
+  router.delete('/children/:id', requirePermission('children:write'), run(async (request) => { await assertOwned(pool, 'children', request.params.id, request.auth, { exclusiveChild: true }); return catalog.deleteChild(request.params.id, request.auth); }, 204));
   router.post('/children-with-enrollment', requirePermission('children:write'), run((request) => catalog.saveChildWithEnrollment(null, request.body, {
     ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }), 201));

@@ -1,16 +1,17 @@
-import { randomBytes, randomInt } from 'node:crypto';
-import bcrypt from 'bcryptjs';
+import { randomInt } from 'node:crypto';
 import { hashPassword } from './auth-service.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { childPasswordWords } from './child-password-words.mjs';
 import { inTransaction } from './db.mjs';
 import { createGameLoginGuard, normalizeClientIp } from './game-login-guard.mjs';
+import { createPasswordVerifier } from './game-password-verifier.mjs';
 import { partnerProjectId } from './project-scope.mjs';
 
 export const CHILD_LOGIN_SUFFIX = '@child.icube.local';
 const LOGIN_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const LOGIN_STATUSES = new Set(['active', 'paused']);
 const MAX_PASSWORD_LENGTH = 128;
+const DUMMY_PASSWORD_HASH = '$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW';
 
 const invalidCredentials = () => new ApiProblem(401, 'INVALID_CREDENTIALS', 'Неверный логин или пароль');
 const identifier = (value, name) => {
@@ -40,13 +41,21 @@ export function generatedChildPassword(pick = randomInt) {
 
 export function createGameAccess(pool, {
   guard = createGameLoginGuard(),
-  comparePassword = bcrypt.compare,
+  comparePassword = null,
   createPasswordHash = hashPassword,
   makePassword = generatedChildPassword,
-  dummyPasswordHash = null,
+  allowPrivateClientIp = false,
 } = {}) {
-  let dummyHash = dummyPasswordHash;
-  const dummy = async () => { dummyHash ??= await bcrypt.hash(randomBytes(16).toString('hex'), 12); return dummyHash; };
+  let verifier = null;
+  const compare = comparePassword ?? ((password, hash) => { verifier ??= createPasswordVerifier(); return verifier.compare(password, hash); });
+
+  async function transaction(operation) {
+    try { return await inTransaction(pool, operation); }
+    catch (error) {
+      if (error?.code !== 'ER_LOCK_DEADLOCK') throw error;
+      return inTransaction(pool, operation);
+    }
+  }
 
   async function rolesOf(connection, userId) {
     const [rows] = await connection.query(`SELECT r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id
@@ -82,14 +91,20 @@ export function createGameAccess(pool, {
   }
 
   // Строка child_user_accounts могла появиться раньше: чужую учётку управление доступом не трогает.
+  const isChildAccount = async (connection, account) => account.deleted_at == null && isChildOnly(await rolesOf(connection, account.user_id));
+
   async function childAccount(connection, childId, options) {
     const account = await accountOf(connection, childId, options);
     if (!account) throw new ApiProblem(409, 'GAME_ACCESS_MISSING', 'Игровой доступ ещё не создан');
-    if (account.deleted_at != null || !isChildOnly(await rolesOf(connection, account.user_id))) {
-      throw new ApiProblem(409, 'GAME_ACCESS_INVALID', 'Связанная учётная запись не является детской');
-    }
+    if (!await isChildAccount(connection, account)) throw new ApiProblem(409, 'GAME_ACCESS_INVALID', 'Связанная учётная запись не является детской');
     return account;
   }
+
+  const describe = (child, account) => ({
+    manageable: true, exists: true, login: loginFrom(account.email), status: account.status,
+    canLogin: account.status === 'active' && LOGIN_STATUSES.has(child.status),
+    firstAccessOn: firstAccessOn(account.created_at),
+  });
 
   async function audit(connection, context, action, childId, userId) {
     await connection.query(`INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data)
@@ -103,10 +118,8 @@ export function createGameAccess(pool, {
     if (!manageable) return { manageable: false };
     const account = await accountOf(pool, childId);
     if (!account) return { manageable: true, exists: false, canCreate: LOGIN_STATUSES.has(child.status) };
-    return {
-      manageable: true, exists: true, login: loginFrom(account.email), status: account.status,
-      firstAccessOn: firstAccessOn(account.created_at),
-    };
+    if (!await isChildAccount(pool, account)) return { manageable: true, exists: true, invalid: true };
+    return describe(child, account);
   }
 
   async function create(rawChildId, body = {}, context = {}) {
@@ -117,9 +130,11 @@ export function createGameAccess(pool, {
     const passwordHash = await createPasswordHash(password);
     const email = emailFor(login);
     try {
-      await inTransaction(pool, async (connection) => {
+      const access = await transaction(async (connection) => {
         const { child, childId } = await managedChild(connection, context, rawChildId, { lock: true });
-        if (await accountOf(connection, childId, { lock: true })) throw new ApiProblem(409, 'GAME_ACCESS_EXISTS', 'Игровой доступ уже создан');
+        // Блокировка строки ребёнка уже упорядочивает операции над ним; блокировать
+        // отсутствующую строку нельзя: gap-блокировка дала бы взаимоблокировку на вставке.
+        if (await accountOf(connection, childId)) throw new ApiProblem(409, 'GAME_ACCESS_EXISTS', 'Игровой доступ уже создан');
         if (!LOGIN_STATUSES.has(child.status)) throw new ApiProblem(409, 'GAME_ACCESS_CHILD_STATUS', 'Доступ создаётся только активному ребёнку или ребёнку на паузе');
         const [duplicate] = await connection.query('SELECT id FROM users WHERE LOWER(email)=:email LIMIT 1', { email });
         if (duplicate.length) throw new ApiProblem(409, 'LOGIN_EXISTS', 'Этот логин уже используется');
@@ -131,79 +146,89 @@ export function createGameAccess(pool, {
           VALUES (:userId,:roleId,:actorId)`, { userId: created.insertId, roleId: roles[0].id, actorId: context.userId ?? null });
         await connection.query('INSERT INTO child_user_accounts (child_id,user_id) VALUES (:childId,:userId)', { childId, userId: created.insertId });
         await audit(connection, context, 'game_access.create', childId, created.insertId);
+        return describe(child, await accountOf(connection, childId));
       });
+      return { ...access, password };
     } catch (error) {
       if (error?.code === 'ER_DUP_ENTRY') throw new ApiProblem(409, 'LOGIN_EXISTS', 'Этот логин или доступ уже существует');
       throw error;
     }
-    return { ...(await get(rawChildId, context)), password };
   }
 
   async function resetPassword(rawChildId, context = {}) {
     await managedChild(pool, context, rawChildId);
     const password = makePassword();
     const passwordHash = await createPasswordHash(password);
-    let login;
-    await inTransaction(pool, async (connection) => {
-      const { childId } = await managedChild(connection, context, rawChildId, { lock: true });
+    const access = await transaction(async (connection) => {
+      const { child, childId } = await managedChild(connection, context, rawChildId, { lock: true });
       const account = await childAccount(connection, childId, { lock: true });
-      login = loginFrom(account.email);
       await connection.query(`UPDATE users SET password_hash=:passwordHash,status='active',token_version=token_version+1 WHERE id=:userId`, { passwordHash, userId: account.user_id });
       await connection.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW(6)) WHERE user_id=:userId', { userId: account.user_id });
       await audit(connection, context, 'game_access.reset', childId, account.user_id);
+      return describe(child, { ...account, status: 'active' });
     });
-    guard.unlock(login);
-    return { ...(await get(rawChildId, context)), password };
+    guard.unlock(access.login);
+    return { ...access, password };
   }
 
   async function disable(rawChildId, context = {}) {
-    await inTransaction(pool, async (connection) => {
-      const { childId } = await managedChild(connection, context, rawChildId, { lock: true });
+    return transaction(async (connection) => {
+      const { child, childId } = await managedChild(connection, context, rawChildId, { lock: true });
       const account = await childAccount(connection, childId, { lock: true });
       await connection.query("UPDATE users SET status='blocked',token_version=token_version+1 WHERE id=:userId", { userId: account.user_id });
       await connection.query('UPDATE auth_sessions SET revoked_at=COALESCE(revoked_at,NOW(6)) WHERE user_id=:userId', { userId: account.user_id });
       await audit(connection, context, 'game_access.disable', childId, account.user_id);
+      return describe(child, { ...account, status: 'blocked' });
     });
-    return get(rawChildId, context);
   }
 
   async function unlock(rawChildId, context = {}) {
-    await inTransaction(pool, async (connection) => {
-      const { childId } = await managedChild(connection, context, rawChildId, { lock: true });
+    const access = await transaction(async (connection) => {
+      const { child, childId } = await managedChild(connection, context, rawChildId, { lock: true });
       const account = await childAccount(connection, childId);
-      guard.unlock(loginFrom(account.email));
       await audit(connection, context, 'game_access.unlock', childId, account.user_id);
+      return describe(child, account);
     });
-    return get(rawChildId, context);
+    guard.unlock(access.login);
+    return access;
   }
 
   async function verifyChild(body = {}) {
-    const clientIp = normalizeClientIp(body?.clientIp);
+    const clientIp = normalizeClientIp(body?.clientIp, { allowPrivate: allowPrivateClientIp });
     if (!clientIp) {
       console.error('Игровой вход отклонён: некорректный clientIp, проверьте цепочку прокси');
       throw new ApiProblem(400, 'INVALID_CLIENT_IP', 'Некорректный адрес клиента');
     }
     const login = normalizeLogin(body?.login);
-    guard.assertAllowed(clientIp, login);
-    const password = typeof body?.password === 'string' ? body.password : '';
-    const [rows] = login ? await pool.query(`SELECT u.id,u.password_hash,u.status,u.token_version,u.deleted_at,
-        a.child_id,a.created_at,c.full_name,c.status child_status,c.deleted_at child_deleted_at
-      FROM users u LEFT JOIN child_user_accounts a ON a.user_id=u.id LEFT JOIN children c ON c.id=a.child_id
-      WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
-    const user = rows[0] ?? null;
-    const passwordOk = await comparePassword(password, user?.password_hash ?? await dummy());
-    const allowed = passwordOk && password.length <= MAX_PASSWORD_LENGTH && user != null && user.status === 'active' && user.deleted_at == null
-      && user.child_id != null && user.child_deleted_at == null && LOGIN_STATUSES.has(user.child_status)
-      && isChildOnly(await rolesOf(pool, user.id));
-    if (!allowed) {
-      guard.failure(clientIp, login);
+    const attempt = guard.begin(clientIp, login);
+    let result = null;
+    try {
+      const password = typeof body?.password === 'string' ? body.password : '';
+      const [rows] = login ? await pool.query(`SELECT u.id,u.password_hash,u.status,u.token_version,u.deleted_at,
+          a.child_id,a.created_at,c.full_name,c.status child_status,c.deleted_at child_deleted_at
+        FROM users u LEFT JOIN child_user_accounts a ON a.user_id=u.id LEFT JOIN children c ON c.id=a.child_id
+        WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
+      const user = rows[0] ?? null;
+      const passwordOk = await compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
+      const allowed = passwordOk && password.length <= MAX_PASSWORD_LENGTH && user != null && user.status === 'active' && user.deleted_at == null
+        && user.child_id != null && user.child_deleted_at == null && LOGIN_STATUSES.has(user.child_status)
+        && isChildOnly(await rolesOf(pool, user.id));
+      if (allowed) {
+        result = {
+          childId: String(user.child_id), userId: String(user.id), displayName: user.full_name,
+          tokenVersion: Number(user.token_version), firstAccessOn: firstAccessOn(user.created_at),
+        };
+      }
+    } catch (error) {
+      attempt.release();
+      throw error;
+    }
+    if (!result) {
+      attempt.failure();
       throw invalidCredentials();
     }
-    guard.success(clientIp, login);
-    return {
-      childId: String(user.child_id), userId: String(user.id), displayName: user.full_name,
-      tokenVersion: Number(user.token_version), firstAccessOn: firstAccessOn(user.created_at),
-    };
+    attempt.success();
+    return result;
   }
 
   async function status(rawChildId) {

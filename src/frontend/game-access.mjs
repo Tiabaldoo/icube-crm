@@ -1,18 +1,45 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 
+const AVAILABLE_KEY = 'icube-game-access-available';
 const api = new ApiClient();
 const legacy = window.icubeLegacy;
 const cache = new Map();
 const loading = new Set();
+let owner = null;
 let featureMissing = false;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const canManage = () => ['director', 'partner'].includes(legacy.state.role);
 const refresh = (childId) => { if (legacy.state.page === 'child' && String(legacy.state.selectedChild) === String(childId)) legacy.render(); };
 
+function featureConfirmed() {
+  try { return localStorage.getItem(AVAILABLE_KEY) === '1'; } catch { return false; }
+}
+function rememberFeature(available) {
+  try {
+    if (available) localStorage.setItem(AVAILABLE_KEY, '1');
+    else localStorage.removeItem(AVAILABLE_KEY);
+  } catch {}
+}
+
+// Данные одного пользователя не должны пережить вход другого: страница при этом не перезагружается.
+function currentUser() {
+  const id = legacy.state.authUser?.id ?? null;
+  if (id !== owner) {
+    owner = id;
+    cache.clear();
+    loading.clear();
+    featureMissing = false;
+    document.querySelector('#game-credentials-dialog')?.remove();
+  }
+  return id;
+}
+
 // Выключенный флаг — это 404 неизвестного маршрута, без кода ошибки API.
-// 404 с кодом значит, что не найден ребёнок: это обычная ошибка, её надо показать.
 const isFeatureMissing = (error) => error instanceof ApiError && error.status === 404 && !error.code;
+// Функцию подтверждает только ответ самих игровых маршрутов. 401 приходит и при выключенном флаге,
+// а 5xx и сбой сети могут идти от прокси.
+const provesFeature = (error) => error instanceof ApiError && error.status < 500 && error.status !== 401 && Boolean(error.code);
 
 function message(error) {
   if (error instanceof ApiError) return error.status >= 500 ? `Ошибка сервера (${error.status}). Попробуйте позже` : error.message;
@@ -20,15 +47,33 @@ function message(error) {
 }
 
 async function load(childId) {
-  const key = String(childId);
-  if (!childId || featureMissing || loading.has(key) || !canManage()) return;
+  const user = currentUser();
+  const key = `${user}:${childId}`;
+  if (!childId || user == null || featureMissing || loading.has(key) || !canManage()) return;
   loading.add(key);
-  try { cache.set(key, await api.request(`/children/${childId}/game-access`)); }
-  catch (error) {
-    if (isFeatureMissing(error)) featureMissing = true;
-    else cache.set(key, { error: message(error) });
+  let visible = true;
+  let result;
+  try {
+    result = await api.request(`/children/${childId}/game-access`);
+    rememberFeature(true);
+  } catch (error) {
+    if (isFeatureMissing(error)) {
+      rememberFeature(false);
+      if (user === currentUser()) featureMissing = true;
+      visible = false;
+    } else if (provesFeature(error) || featureConfirmed()) {
+      if (provesFeature(error)) rememberFeature(true);
+      result = { error: message(error) };
+    } else {
+      // Неизвестно, включена ли игра: при выключенном флаге CRM работает как раньше.
+      result = { silent: true };
+      visible = false;
+    }
   }
-  finally { loading.delete(key); refresh(childId); }
+  loading.delete(key);
+  if (user !== currentUser()) return;
+  if (result) cache.set(String(childId), result);
+  if (visible) refresh(childId);
 }
 
 function showCredentials(credentials, title) {
@@ -50,17 +95,21 @@ function showCredentials(credentials, title) {
 
 function accountRows(childId, access) {
   const active = access.status === 'active';
-  return `<div class="kpi-line"><div><b>Логин: ${escapeHtml(access.login)}</b><div class="muted mini">${active ? 'Активен' : 'Отключён'} · первый доступ ${escapeHtml(access.firstAccessOn)}</div></div>
+  const state = !active ? 'Отключён' : access.canLogin ? 'Активен' : 'Вход закрыт: ребёнок не активен';
+  return `<div class="kpi-line"><div><b>Логин: ${escapeHtml(access.login)}</b><div class="muted mini">${state} · первый доступ ${escapeHtml(access.firstAccessOn)}</div></div>
     <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn" onclick="icubeResetGameAccess(${childId})">${active ? 'Сбросить пароль' : 'Восстановить с новым паролем'}</button>${active ? `<button class="btn" onclick="icubeUnlockGameAccess(${childId})">Разблокировать вход</button><button class="btn danger" onclick="icubeDisableGameAccess(${childId})">Отключить</button>` : ''}</div></div>`;
 }
 
 function accessBlock(childId) {
+  currentUser();
   if (featureMissing) return '';
   const access = cache.get(String(childId));
   if (!access) { queueMicrotask(() => load(childId)); return ''; }
+  if (access.silent) return '';
   const card = (body) => `<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Игра «Остров чудиков»</h2></div>${body}</div>`;
   if (access.error) return card(`<div class="notice">${escapeHtml(access.error)}</div><button class="btn" style="margin-top:8px" onclick="icubeRetryGameAccess(${childId})">Повторить</button>`);
   if (!access.manageable) return card('<div class="muted">Ребёнок относится к нескольким проектам: игровым доступом управляет директор.</div>');
+  if (access.invalid) return card('<div class="notice">Связанная учётная запись не является детской. Обратитесь к директору.</div>');
   if (access.exists) return card(accountRows(childId, access));
   if (!access.canCreate) return card('<div class="muted">Доступ создаётся только активному ребёнку или ребёнку на паузе.</div>');
   return card(`<div class="field"><label>Логин ребёнка</label><div style="display:flex;gap:8px"><input class="input" id="game-access-login" autocomplete="off" placeholder="misha.k"><button class="btn primary" onclick="icubeCreateGameAccess(${childId})">Создать доступ</button></div></div>`);
@@ -76,12 +125,20 @@ if (typeof originalChild === 'function') {
 }
 
 async function act(childId, operation, title) {
+  const user = currentUser();
   try {
     const result = await operation();
+    if (user !== currentUser()) return;
     if (result?.password) showCredentials(result, title);
-    cache.set(String(childId), result?.password ? { ...result, password: undefined } : result);
+    const { password, ...access } = result;
+    cache.set(String(childId), access);
     refresh(childId);
-  } catch (error) { window.alert(message(error)); }
+  } catch (error) {
+    if (user !== currentUser()) return;
+    window.alert(message(error));
+    cache.delete(String(childId));
+    await load(childId);
+  }
 }
 
 window.icubeRetryGameAccess = (childId) => { cache.delete(String(childId)); return load(childId); };

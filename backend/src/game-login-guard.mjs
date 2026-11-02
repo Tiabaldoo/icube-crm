@@ -21,26 +21,38 @@ function expandIpv6(value) {
   return [...left, ...Array(fill).fill('0'), ...right].map((part) => part.padStart(4, '0'));
 }
 
-const unusableIpv4 = (ip) => ip.startsWith('127.') || ip === '0.0.0.0';
+function classifyIpv4(ip) {
+  const [a, b] = ip.split('.').map(Number);
+  if (a === 0 || a === 127 || (a === 169 && b === 254) || a >= 224) return 'invalid';
+  if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return 'private';
+  return 'public';
+}
 
-// Адрес ребёнка приходит только от игрового процесса. Loopback значит, что прокси
-// настроен неверно: все дети попали бы в один счётчик, поэтому такой адрес отвергается.
-export function normalizeClientIp(value) {
+function classifyIpv6(groups) {
+  const first = parseInt(groups[0], 16);
+  if (groups.slice(0, 6).every((part) => part === '0000')) return 'invalid';
+  if (groups[0] === '0064' && groups[1] === 'ff9b') return 'invalid';
+  if ((first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00) return 'invalid';
+  return (first & 0xfe00) === 0xfc00 ? 'private' : 'public';
+}
+
+// Адрес ребёнка приходит только от игрового процесса. Служебный или внутренний адрес значит,
+// что прокси настроен неверно: все дети попали бы в один счётчик, поэтому такой адрес отвергается.
+export function normalizeClientIp(value, { allowPrivate = false } = {}) {
   if (typeof value !== 'string') return null;
   const text = value.trim();
   if (!text || text.length > 45 || text.includes('%')) return null;
+  const usable = (kind) => kind === 'public' || (kind === 'private' && allowPrivate);
   const version = isIP(text);
-  if (version === 4) return unusableIpv4(text) ? null : text;
+  if (version === 4) return usable(classifyIpv4(text)) ? text : null;
   if (version !== 6) return null;
   const groups = expandIpv6(text);
-  const zeros = groups.slice(0, 5).every((part) => part === '0000');
-  if (zeros && groups[5] === 'ffff') {
+  if (groups.slice(0, 5).every((part) => part === '0000') && groups[5] === 'ffff') {
     const [a, b] = [parseInt(groups[6], 16), parseInt(groups[7], 16)];
     const ipv4 = `${a >> 8}.${a & 255}.${b >> 8}.${b & 255}`;
-    return unusableIpv4(ipv4) ? null : ipv4;
+    return usable(classifyIpv4(ipv4)) ? ipv4 : null;
   }
-  if (zeros && groups[5] === '0000' && groups[6] === '0000' && ['0000', '0001'].includes(groups[7])) return null;
-  return `${groups.slice(0, 4).join(':')}::/64`;
+  return usable(classifyIpv6(groups)) ? `${groups.slice(0, 4).join(':')}::/64` : null;
 }
 
 export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOGIN_LIMITS } = {}) {
@@ -49,6 +61,7 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
   const ips = new Map();
   const knownPairs = new Map();
   const unlocked = new Map();
+  const flight = { pairs: new Map(), logins: new Map(), ips: new Map() };
   const pairKey = (ip, login) => `${ip}\n${login}`;
 
   function remember(map, key, value) {
@@ -62,16 +75,29 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
     map.delete(key);
     return null;
   }
-  const blocked = (map, key) => (current(map, key)?.blockedUntil ?? 0) > now();
   function count(map, key, maxFailures) {
     const value = current(map, key);
     const failures = (value?.failures ?? 0) + 1;
-    remember(map, key, { failures, firstFailureAt: value?.firstFailureAt ?? now(), blockedUntil: failures >= maxFailures ? now() + limits.blockMs : 0 });
+    const active = (value?.blockedUntil ?? 0) > now();
+    remember(map, key, {
+      failures, firstFailureAt: value?.firstFailureAt ?? now(),
+      blockedUntil: active ? value.blockedUntil : failures >= maxFailures ? now() + limits.blockMs : 0,
+    });
   }
-  function isKnown(ip, login) {
-    const until = knownPairs.get(pairKey(ip, login));
+  // Запросы в полёте считаются как неудачи: параллельные попытки не обходят лимит.
+  function exhausted(map, inFlight, key, maxFailures) {
+    const value = current(map, key);
+    return (value?.blockedUntil ?? 0) > now() || (value?.failures ?? 0) + (inFlight.get(key) ?? 0) >= maxFailures;
+  }
+  function hold(map, key) { map.set(key, (map.get(key) ?? 0) + 1); }
+  function drop(map, key) {
+    const left = (map.get(key) ?? 0) - 1;
+    if (left > 0) map.set(key, left); else map.delete(key);
+  }
+  function isKnown(key) {
+    const until = knownPairs.get(key);
     if (until > now()) return true;
-    if (until) knownPairs.delete(pairKey(ip, login));
+    if (until) knownPairs.delete(key);
     return false;
   }
   function isUnlocked(login) {
@@ -82,24 +108,39 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
   }
 
   // Знакомая пара проходит общие уровни: чужие попытки не могут закрыть вход ребёнку.
-  function assertAllowed(ip, login) {
-    const limited = login == null
-      ? blocked(ips, ip)
-      : blocked(pairs, pairKey(ip, login)) || (!isKnown(ip, login)
-        && (blocked(logins, login) || (blocked(ips, ip) && !isUnlocked(login))));
+  function begin(ip, login) {
+    const pair = login == null ? null : pairKey(ip, login);
+    const ipSpent = exhausted(ips, flight.ips, ip, limits.ipFailures);
+    const limited = login == null ? ipSpent
+      : exhausted(pairs, flight.pairs, pair, limits.pairFailures) || (!isKnown(pair)
+        && (exhausted(logins, flight.logins, login, limits.loginFailures) || (ipSpent && !isUnlocked(login))));
     if (limited) throw new ApiProblem(429, 'LOGIN_RATE_LIMITED', 'Слишком много попыток входа. Повторите позже');
-  }
 
-  function failure(ip, login) {
-    count(ips, ip, limits.ipFailures);
-    if (login == null) return;
-    count(pairs, pairKey(ip, login), limits.pairFailures);
-    count(logins, login, limits.loginFailures);
-  }
-
-  function success(ip, login) {
-    pairs.delete(pairKey(ip, login));
-    remember(knownPairs, pairKey(ip, login), now() + limits.knownPairMs);
+    hold(flight.ips, ip);
+    if (login != null) { hold(flight.pairs, pair); hold(flight.logins, login); }
+    let open = true;
+    const finish = () => {
+      if (!open) return false;
+      open = false;
+      drop(flight.ips, ip);
+      if (login != null) { drop(flight.pairs, pair); drop(flight.logins, login); }
+      return true;
+    };
+    return {
+      release: finish,
+      failure() {
+        if (!finish()) return;
+        count(ips, ip, limits.ipFailures);
+        if (login == null) return;
+        count(pairs, pair, limits.pairFailures);
+        count(logins, login, limits.loginFailures);
+      },
+      success() {
+        if (!finish() || login == null) return;
+        pairs.delete(pair);
+        remember(knownPairs, pair, now() + limits.knownPairMs);
+      },
+    };
   }
 
   function unlock(login) {
@@ -108,5 +149,6 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
     remember(unlocked, login, now() + limits.blockMs);
   }
 
-  return { assertAllowed, failure, success, unlock };
+  const size = () => ({ pairs: pairs.size, logins: logins.size, ips: ips.size, knownPairs: knownPairs.size });
+  return { begin, unlock, size };
 }

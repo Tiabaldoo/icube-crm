@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { after, before, test } from 'node:test';
 import { loadConfig } from '../backend/src/config.mjs';
@@ -11,7 +12,7 @@ const environment = (overrides) => ({ ...database, APP_ENV: 'test', DB_NAME: 'ic
 const enabled = { GAME_ENABLED: 'true', GAME_INTERNAL_TOKEN: token };
 
 test('без настроек игра выключена', () => {
-  assert.deepEqual(loadConfig(environment({})).game, { enabled: false, requested: false, internalToken: null, internalPort: 3001 });
+  assert.deepEqual(loadConfig(environment({})).game, { enabled: false, requested: false, internalToken: null, internalPort: 3001, allowPrivateClientIp: false });
 });
 
 test('включается только на test и development с полной настройкой', () => {
@@ -59,6 +60,27 @@ test('приложение CRM без блока game собирается ка�
   assert.equal(app.locals.gameAccess, null);
   const off = createApp({ config: loadConfig(environment({ PHOTO_STORAGE_DIR: 'x' })), pool: {} });
   assert.equal(off.locals.gameAccess, null);
+});
+
+async function realApp(env) {
+  const fixture = gameFixture();
+  fixture.state.sessions.push({ id: 's', user_id: 2, refresh_token_hash: createHash('sha256').update('director-token').digest('hex') });
+  const app = createApp({ config: loadConfig(environment({ PHOTO_STORAGE_DIR: 'x', ...env })), pool: fixture.pool });
+  const server = await new Promise((resolve, reject) => { const value = app.listen(0, '127.0.0.1', (error) => error ? reject(error) : resolve(value)); });
+  const call = (path) => fetch(`http://127.0.0.1:${server.address().port}/api/v1${path}`, { headers: { cookie: 'icube_session=director-token' } });
+  return { call, app, close: () => new Promise((resolve) => server.close(resolve)) };
+}
+
+test('настоящее приложение CRM: маршрут игры есть только при включённом флаге', async () => {
+  const disabled = await realApp({});
+  try {
+    assert.equal((await disabled.call('/auth/me')).status, 200);
+    assert.equal((await disabled.call('/children/8/game-access')).status, 404);
+  } finally { await disabled.close(); }
+  const active = await realApp(enabled);
+  try {
+    assert.equal((await active.call('/children/8/game-access')).status, 200);
+  } finally { await active.close(); }
 });
 
 const off = gameFixture(); const on = gameFixture();
