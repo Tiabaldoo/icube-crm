@@ -234,6 +234,7 @@ test('после полной очистки технической истори
     if (sql.startsWith('SELECT') && sql.includes('(SELECT COUNT(*) FROM payments WHERE child_id=')) return [[{ payments: 0, refunds: 0, attendances: 0, balanceTransfers: 0, nonzeroBalances: 0, balanceEffects: 0 }]];
     if (sql.startsWith('SELECT id FROM child_enrollments')) return [[{ id: 9 }]];
     if (sql.startsWith('SELECT guardian_id FROM child_guardians')) return [[]];
+    if (sql.includes('JOIN child_user_accounts a')) return [[]];
     if (sql.startsWith('DELETE FROM children')) childDeleted = true;
     if (sql.startsWith('DELETE') || sql.startsWith('UPDATE')) return [{ affectedRows: 1 }];
     throw new Error(`Неожиданный SQL: ${sql}`);

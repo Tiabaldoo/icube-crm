@@ -129,6 +129,7 @@ function fixture({ type = 'main', missing = false, status = 'completed', mode = 
       nonzeroBalances: state.enrollments.filter((e) => Number(e.balance_lessons) !== 0).length }]];
     if (sql.startsWith('SELECT id FROM child_enrollments WHERE child_id=')) return [state.enrollments];
     if (sql.startsWith('SELECT guardian_id FROM child_guardians')) return [[]];
+    if (sql.includes('JOIN child_user_accounts a')) return [[]];
     if (sql.startsWith('DELETE FROM attendances WHERE enrollment_id=')) { state.attendances = state.attendances.filter((a) => String(a.enrollment_id) !== String(p.id) || a.marked_at != null); return mutation(); }
     if (sql.startsWith('DELETE FROM lesson_roster_members WHERE child_id=')) { state.roster = []; return mutation(); }
     if (sql.startsWith('DELETE FROM children WHERE id=')) { state.deletedChild = true; return mutation(); }

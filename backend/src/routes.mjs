@@ -66,6 +66,7 @@ export function createApiRouter(pool, {
   directorBudget = createDirectorBudget(pool),
   authService = createAuthService(pool),
   loginRateLimiter = createLoginRateLimiter(),
+  gameAccess = null,
   testAuth = null,
 } = {}) {
   const router = Router();
@@ -196,7 +197,7 @@ export function createApiRouter(pool, {
     return deletions.deleteTeacher(request.params.id, { projectId: partnerProjectId(request.auth) });
   }, 204));
   router.delete('/groups/:id', requirePermission('groups:write'), run(async (request) => { await assertOwned(pool, 'groups', request.params.id, request.auth); return deletions.deleteGroup(request.params.id, request.auth); }, 204));
-  router.delete('/children/:id', requirePermission('children:write'), run(async (request) => { await assertOwned(pool, 'children', request.params.id, request.auth, { exclusiveChild: true }); return catalog.deleteChild(request.params.id); }, 204));
+  router.delete('/children/:id', requirePermission('children:write'), run(async (request) => { await assertOwned(pool, 'children', request.params.id, request.auth, { exclusiveChild: true }); return catalog.deleteChild(request.params.id, request.auth); }, 204));
   router.post('/children-with-enrollment', requirePermission('children:write'), run((request) => catalog.saveChildWithEnrollment(null, request.body, {
     ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
   }), 201));
@@ -231,6 +232,14 @@ export function createApiRouter(pool, {
     await assertOwned(pool, 'teachers', request.params.id, request.auth);
     return authService.disableTeacherAccess(request.params.id);
   }));
+  if (gameAccess) {
+    const noStore = (_request, response, next) => { response.set('Cache-Control', 'no-store'); next(); };
+    router.get('/children/:id/game-access', requirePermission('children:write'), noStore, run((request) => gameAccess.get(request.params.id, request.auth)));
+    router.post('/children/:id/game-access', requirePermission('children:write'), noStore, run((request) => gameAccess.create(request.params.id, request.body, request.auth), 201));
+    router.post('/children/:id/game-access/reset-password', requirePermission('children:write'), noStore, run((request) => gameAccess.resetPassword(request.params.id, request.auth)));
+    router.post('/children/:id/game-access/unlock', requirePermission('children:write'), noStore, run((request) => gameAccess.unlock(request.params.id, request.auth)));
+    router.delete('/children/:id/game-access', requirePermission('children:write'), noStore, run((request) => gameAccess.disable(request.params.id, request.auth)));
+  }
 
   const projectFilters = (request) => ({ ...request.query, ...(partnerProjectId(request.auth) ? { projectId: partnerProjectId(request.auth) } : {}) });
   router.get('/payment-receipts', requirePermission('payments:read'), run((request) => paymentReceipts.listStaff(request.query, request.auth)));

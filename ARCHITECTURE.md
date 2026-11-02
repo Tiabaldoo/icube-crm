@@ -81,3 +81,7 @@ Auth middleware получает actor только из проверенной 
 `src/frontend/parent-portal.mjs` — отдельное mobile-first приложение, которое запускается после общей session-auth только для чистой роли `parent`. Оно не загружает директорский catalog и обращается исключительно к `/parent/*`. `backend/src/parent-portal.mjs` строит read model из существующих children/enrollments/lessons/payments/refunds/photos и на каждом child request проверяет `guardians + child_guardians`. `backend/src/parent-notifications.mjs` содержит единые тексты, настройки, dedup и lesson/day-before triggers. Управление аккаунтом остаётся небольшим bridge в карточке ребёнка (`parent-access.mjs`).
 
 Будущие банковские платежи, PWA и Web Push должны подключаться к этим границам: payment provider создаёт payment только после подтверждённого webhook, service worker доставляет уже созданную notification. Текущая кнопка оплаты и internal notification center этих внешних эффектов не выполняют.
+
+## Игровой доступ
+
+Детские учётные записи управляются модулем `backend/src/game-access.mjs` и не получают сессию CRM: `login` и `authenticateToken` роль `child` не пропускают. Игра обращается к CRM только через внутренний API `backend/src/game-internal.mjs` на `127.0.0.1`, защищённый секретом. Сервисы, внутренний порт и маршруты работают только при включённой игре. При выключенной остаются фоновый `GET /children/:id/game-access` у директора и партнёра и проверка игровой учётки в `deleteChild`. Подробности — в разделе 6 `GAME_PLAN.md`.
