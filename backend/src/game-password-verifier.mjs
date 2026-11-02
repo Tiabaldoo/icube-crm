@@ -34,7 +34,11 @@ export function createPasswordVerifier({ maxPending = 8, timeoutMs = 10_000, wor
     const created = new Worker(workerUrl);
     worker = created;
     created.unref();
-    created.on('message', ({ id, matches, failed }) => settle(id, ({ resolve, reject }) => (failed ? reject(unavailable()) : resolve(matches))));
+    created.on('message', ({ id, matches, failed }) => settle(id, ({ resolve, reject }) => {
+      if (!failed) return resolve(matches);
+      console.error('Проверка пароля игры не выполнена: некорректный хэш');
+      return reject(unavailable());
+    }));
     created.on('error', (error) => { if (worker === created) reset(error?.message ?? 'ошибка потока'); });
     created.on('exit', (code) => { if (worker === created) reset(`поток завершился с кодом ${code}`); });
   }

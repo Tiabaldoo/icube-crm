@@ -60,6 +60,16 @@ test('падение потока даёт отказ и не роняет пр�
   assert.equal(subject.pendingCount(), 0);
 });
 
+test('сбой сравнения даёт отказ и попадает в журнал без хэша', async () => {
+  const subject = verifier();
+  const broken = `$2a$12$${'!'.repeat(53)}`;
+  const errors = silence();
+  await assert.rejects(check(subject, 'a', broken), (error) => error.code === 'GAME_LOGIN_UNAVAILABLE');
+  errors.restore();
+  assert.equal(errors.lines.length, 1);
+  assert.equal(errors.lines[0].includes(broken), false);
+});
+
 test('повреждённый хэш не считается совпадением', async () => {
   const subject = verifier();
   assert.equal(await check(subject, 'a', 'not-a-hash'), false);

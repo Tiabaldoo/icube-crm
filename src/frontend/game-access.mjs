@@ -8,6 +8,7 @@ const loading = new Set();
 let owner = null;
 let featureMissing = false;
 let featureSeen = false;
+let closeDialog = null;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const canManage = () => ['director', 'partner'].includes(legacy.state.role);
@@ -83,6 +84,7 @@ async function load(childId) {
 }
 
 function showCredentials(credentials, title) {
+  closeDialog?.();
   document.querySelector('#game-credentials-dialog')?.remove();
   const backdrop = document.createElement('div');
   backdrop.id = 'game-credentials-dialog'; backdrop.className = 'modal-backdrop';
@@ -97,7 +99,8 @@ function showCredentials(credentials, title) {
   backdrop.querySelector('[data-value="password"]').textContent = credentials.password;
   // Вход и выход не перезагружают страницу: пароль не должен остаться на экране следующего пользователя.
   const shownTo = legacy.state.authUser?.id ?? null;
-  const close = () => { clearInterval(watch); backdrop.remove(); };
+  const close = () => { clearInterval(watch); backdrop.remove(); closeDialog = null; };
+  closeDialog = close;
   const watch = setInterval(() => { if ((legacy.state.authUser?.id ?? null) !== shownTo) close(); }, 500);
   backdrop.addEventListener('click', (event) => {
     if (!event.target.closest('[data-close]')) return;

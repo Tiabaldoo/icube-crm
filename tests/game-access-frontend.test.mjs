@@ -157,9 +157,12 @@ test('успешный сброс показывает пароль, диало�
     await globalThis.window.icubeResetGameAccess(8);
     assert.equal(page.shown[0].values.password, 'secret-word');
     assert.doesNotMatch(page.render(), /secret-word/);
+    await globalThis.window.icubeResetGameAccess(8);
+    assert.equal(page.shown[0].removed, true);
+    assert.equal(page.shown[1].removed, false);
     page.state.authUser = null;
     t.mock.timers.tick(600);
-    assert.equal(page.shown[0].removed, true);
+    assert.equal(page.shown[1].removed, true);
   } finally { page.restore(); }
 });
 
