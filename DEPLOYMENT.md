@@ -204,3 +204,5 @@ systemctl list-timers | grep icube-crm-parent-notifications
 По умолчанию выключена. На production закрыта в коде (`APP_ENV=production`, база `icube_prod`), настройками это не обходится.
 
 На test `GAME_ENABLED` не включается, пока владелец не проверил реальный сервер и цепочку прокси по разделу 9 `GAME_PLAN.md`. Для включения нужны `GAME_ENABLED=true`, `GAME_INTERNAL_TOKEN` не короче 32 символов и свободный `GAME_INTERNAL_PORT` (по умолчанию 3001). Порт слушается только на `127.0.0.1` и не проксируется наружу. Откат: `GAME_ENABLED=false` и перезапуск CRM.
+
+При выключенной игре в журнале запросов будет один `GET /children/:id/game-access` с ответом 404 на загрузку страницы директора или партнёра. Это ожидаемо. `deleteChild` выполняет дополнительный `SELECT ... FOR UPDATE` и обезличивает игровую учётку, если она есть.
