@@ -11,6 +11,17 @@ import { createNotificationEvents } from './notification-events.mjs';
 import { createWebPushService } from './web-push.mjs';
 import { createMysqlPayments } from './payments.mjs';
 import { createPaymentReceiptService } from './payment-receipts.mjs';
+import { createGameAccess } from './game-access.mjs';
+import { createInternalGameApp, startInternalGameServer } from './game-internal.mjs';
+
+export function startGameIfEnabled({ config, gameAccess, logger = console }) {
+  if (!config.game?.enabled) {
+    if (config.game?.requested) logger.error('Игра не запущена: GAME_ENABLED не применён для этого окружения или настроек');
+    return null;
+  }
+  const app = createInternalGameApp({ token: config.game.internalToken, gameAccess });
+  return startInternalGameServer({ app, port: config.game.internalPort, logger });
+}
 
 export function createApp({ config, pool }) {
   const app = express();
@@ -28,8 +39,10 @@ export function createApp({ config, pool }) {
   const lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications, notificationEvents });
   const parentPortal = createParentPortal(pool, { contact: config.parent, materializeLessons: lessons.materialize, notificationEvents });
   const push = createWebPushService(pool, { config: config.push, notificationEvents });
+  const gameAccess = config.game?.enabled ? createGameAccess(pool) : null;
+  app.locals.gameAccess = gameAccess;
   app.use('/api/v1', createApiRouter(pool, {
-    notificationEvents, lessonPhotos, lessons, parentNotifications, parentPortal, payments, paymentReceipts, push,
+    notificationEvents, lessonPhotos, lessons, parentNotifications, parentPortal, payments, paymentReceipts, push, gameAccess,
   }));
   app.use((error, _request, response, _next) => {
     if (!error.status) console.error(error);
@@ -49,4 +62,5 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
   app.listen(config.port, '127.0.0.1', () => {
     console.log(`iCube API (${config.appEnv}) слушает 127.0.0.1:${config.port}`);
   });
+  startGameIfEnabled({ config, gameAccess: app.locals.gameAccess });
 }

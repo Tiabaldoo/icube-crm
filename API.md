@@ -53,6 +53,7 @@ Permission преподавателя не даёт доступ к любому
 | Настройки родителя | `GET/PATCH /parent/profile`, `GET/PATCH /parent/notification-settings`, `GET /parent/notifications`, `POST /parent/notifications/:id/read` |
 | Согласия родителя | `GET /parent/documents`, `POST /parent/documents/:id/accept` |
 | Родительский доступ | директорские и project-scoped партнёрские маршруты `/children/:id/parent-access`, `/parent-access/search`, link/unlink/reset/status |
+| Игровой доступ ребёнка | только при включённой игре: `GET/POST/DELETE /children/:id/game-access`, `POST .../reset-password`, `POST .../unlock`; партнёр управляет только ребёнком, все незаменённые записи которого относятся к его проекту. При выключенной игре маршрутов нет. Внутренний API — `127.0.0.1:3001`, описан в `GAME_PLAN.md` |
 
 `POST /teachers` и `PATCH /teachers/:id` принимают `projectSettings: [{ projectId, status, directionIds }]`, где `status` равен `active`, `inactive` или `none`. `none` удаляет проектную связь и её направления; партнёр может передать только собственный проект.
 

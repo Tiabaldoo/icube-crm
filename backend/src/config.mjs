@@ -36,6 +36,19 @@ function pushConfig(env) {
   };
 }
 
+// Игра разрешена только на test и development. Production закрыт в коде: снять это
+// может только отдельное решение владельца, настройками окружения это не обходится.
+function gameConfig(env, appEnv, database, port) {
+  const requested = String(env.GAME_ENABLED ?? '').toLowerCase() === 'true';
+  const token = env.GAME_INTERNAL_TOKEN ?? '';
+  const internalPort = Number(env.GAME_INTERNAL_PORT ?? 3001);
+  const environmentAllowed = (appEnv === 'test' || appEnv === 'development') && database !== 'icube_prod';
+  const tokenValid = token.length >= 32 && !/replace_me/i.test(token);
+  const portValid = Number.isInteger(internalPort) && internalPort > 0 && internalPort < 65536 && internalPort !== port;
+  const enabled = requested && environmentAllowed && tokenValid && portValid;
+  return { enabled, requested, internalToken: enabled ? token : null, internalPort };
+}
+
 export function loadConfig(env = process.env) {
   const appEnv = env.APP_ENV ?? 'development';
   const database = {
@@ -50,10 +63,12 @@ export function loadConfig(env = process.env) {
   if (appEnv === 'production' && database.password === 'replace_me') {
     throw new Error('Production DB_PASSWORD не может быть placeholder');
   }
+  const port = Number(env.PORT ?? 3000);
   return {
     appEnv,
-    port: Number(env.PORT ?? 3000),
+    port,
     trustProxy: Number(env.TRUST_PROXY ?? 1),
+    game: gameConfig(env, appEnv, database.database, port),
     photos: {
       storageDir: env.PHOTO_STORAGE_DIR,
       retentionDays: positiveNumber('PHOTO_RETENTION_DAYS', env.PHOTO_RETENTION_DAYS ?? 30),

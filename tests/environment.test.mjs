@@ -52,5 +52,5 @@ test('модель ролей содержит текущие и будущие 
   assert.ok(!permissions.parent.has('projects:read'));
   assert.ok(!permissions.child.has('projects:read'));
   assert.ok(permissions.parent.has('own-children:read'));
-  assert.ok(permissions.child.has('own-profile:read'));
+  assert.equal(permissions.child.size, 0);
 });

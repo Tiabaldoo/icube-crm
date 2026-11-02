@@ -10,7 +10,7 @@
     './src/frontend/offline-teacher-snapshot.mjs', './src/frontend/release-notes.mjs',
     './src/frontend/screen-history.mjs', './src/frontend/quick-status.mjs',
     './src/frontend/advanced-groups.mjs', './src/frontend/parent-portal.mjs',
-    './src/frontend/api-sync.mjs', './src/frontend/parent-access.mjs',
+    './src/frontend/api-sync.mjs', './src/frontend/parent-access.mjs', './src/frontend/game-access.mjs',
     './src/frontend/payment-receipts.mjs', './src/frontend/lesson-photos.mjs',
     './src/frontend/dashboard-ui.mjs', './src/frontend/enrollment-delete.mjs',
     './src/frontend/direction-price-settings.mjs', './src/frontend/context-help.mjs',
