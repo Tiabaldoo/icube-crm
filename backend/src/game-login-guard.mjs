@@ -5,6 +5,7 @@ export const GAME_LOGIN_LIMITS = Object.freeze({
   pairFailures: 5, loginFailures: 20, ipFailures: 50,
   windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
   knownPairMs: 30 * 24 * 60 * 60 * 1000, maxEntries: 50_000,
+  maxPairInFlight: 1, maxIpInFlight: 3,
 });
 
 function expandIpv6(value) {
@@ -115,6 +116,10 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
       : exhausted(pairs, flight.pairs, pair, limits.pairFailures) || (!isKnown(pair)
         && (exhausted(logins, flight.logins, login, limits.loginFailures) || (ipSpent && !isUnlocked(login))));
     if (limited) throw new ApiProblem(429, 'LOGIN_RATE_LIMITED', 'Слишком много попыток входа. Повторите позже');
+    // Один адрес не может занять общую очередь проверки паролей, даже с верным паролем.
+    if ((flight.ips.get(ip) ?? 0) >= limits.maxIpInFlight || (pair != null && (flight.pairs.get(pair) ?? 0) >= limits.maxPairInFlight)) {
+      throw new ApiProblem(429, 'GAME_LOGIN_BUSY', 'Сервер занят. Повторите вход через несколько секунд');
+    }
 
     hold(flight.ips, ip);
     if (login != null) { hold(flight.pairs, pair); hold(flight.logins, login); }

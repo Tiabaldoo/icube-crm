@@ -9,6 +9,7 @@ const unavailable = () => new ApiProblem(503, 'GAME_LOGIN_UNAVAILABLE', 'Вхо�
 export function createPasswordVerifier({ maxPending = 8, timeoutMs = 10_000, workerUrl = WORKER_URL } = {}) {
   let worker = null;
   let nextId = 0;
+  let slots = 0;
   const pending = new Map();
 
   function settle(id, finish) {
@@ -20,7 +21,8 @@ export function createPasswordVerifier({ maxPending = 8, timeoutMs = 10_000, wor
     finish(entry);
   }
 
-  function reset() {
+  function reset(reason) {
+    if (reason) console.error(`Проверка паролей игры сброшена: ${reason}`);
     const failed = worker;
     worker = null;
     failed?.terminate().catch(() => {});
@@ -33,21 +35,28 @@ export function createPasswordVerifier({ maxPending = 8, timeoutMs = 10_000, wor
     worker = created;
     created.unref();
     created.on('message', ({ id, matches, failed }) => settle(id, ({ resolve, reject }) => (failed ? reject(unavailable()) : resolve(matches))));
-    created.on('error', () => { if (worker === created) reset(); });
-    created.on('exit', () => { if (worker === created) reset(); });
+    created.on('error', (error) => { if (worker === created) reset(error?.message ?? 'ошибка потока'); });
+    created.on('exit', (code) => { if (worker === created) reset(`поток завершился с кодом ${code}`); });
   }
 
   function compare(password, hash) {
-    if (pending.size >= maxPending) throw new ApiProblem(429, 'GAME_LOGIN_BUSY', 'Сервер занят. Повторите вход через минуту');
     start();
     worker.ref();
     const id = ++nextId;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(reset, timeoutMs);
+      const timer = setTimeout(() => reset('превышено время ожидания'), timeoutMs);
       timer.unref();
       pending.set(id, { resolve, reject, timer });
       worker.postMessage({ id, password, hash });
     });
+  }
+
+  // Место занимается до запроса к базе: при переполнении вход не нагружает пул соединений CRM.
+  function reserve() {
+    if (slots >= maxPending) throw new ApiProblem(429, 'GAME_LOGIN_BUSY', 'Сервер занят. Повторите вход через несколько секунд');
+    slots += 1;
+    let held = true;
+    return { compare, release() { if (held) { held = false; slots -= 1; } } };
   }
 
   async function close() {
@@ -57,5 +66,5 @@ export function createPasswordVerifier({ maxPending = 8, timeoutMs = 10_000, wor
     await current?.terminate();
   }
 
-  return { compare, close, pendingCount: () => pending.size };
+  return { reserve, close, pendingCount: () => slots };
 }

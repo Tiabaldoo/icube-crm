@@ -17,16 +17,27 @@ async function loadModule({ role = 'director', respond, confirmed = false, user 
   const page = { respond };
   globalThis.fetch = async (url, options = {}) => { calls.push({ url: String(url), method: options.method ?? 'GET' }); return page.respond(url, options); };
   globalThis.window = {
-    icubeLegacy: { state, render() { renders += 1; } },
+    icubeLegacy: { state, render() { renders += 1; state.renderHook?.(); } },
     child: () => base, alert: (text) => alerts.push(text), confirm: () => true,
   };
-  globalThis.document = { querySelector: (selector) => (selector === '#game-credentials-dialog' && page.dialogOpen ? { remove() { dialog.removed += 1; } } : null) };
+  const shown = [];
+  globalThis.document = {
+    querySelector: (selector) => (selector === '#game-credentials-dialog' && page.dialogOpen ? { remove() { dialog.removed += 1; } } : null),
+    createElement: () => {
+      const element = { values: {}, removed: false, addEventListener() {}, remove() { this.removed = true; }, querySelector(selector) {
+        const name = selector.match(/data-value="(\w+)"/)?.[1];
+        return { set textContent(value) { if (name) element.values[name] = value; } };
+      } };
+      return element;
+    },
+    body: { append: (element) => shown.push(element) },
+  };
   Object.defineProperty(globalThis, 'localStorage', { configurable: true, writable: true, value: {
     getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value), removeItem: (key) => store.delete(key),
   } });
   await import(`../src/frontend/game-access.mjs?case=${Date.now()}-${Math.random()}`);
   const restore = () => { Object.assign(globalThis, original); };
-  return Object.assign(page, { state, calls, alerts, dialog, store, restore, render: () => globalThis.window.child(), renders: () => renders });
+  return Object.assign(page, { shown, state, calls, alerts, dialog, store, restore, render: () => globalThis.window.child(), renders: () => renders });
 }
 
 test('выключенный флаг: 404 без кода скрывает блок, запрос один, лишней перерисовки нет', async () => {
@@ -91,14 +102,77 @@ test('404 без кода сбрасывает прежнее подтвержд
   try { page.render(); await flush(); assert.equal(page.render(), base); assert.equal(page.store.size, 0); } finally { page.restore(); }
 });
 
-test('404 и 403 с кодом API приходят от игрового маршрута и показываются', async () => {
-  const missing = await loadModule({ respond: () => json(404, { error: { code: 'NOT_FOUND', message: 'Ребёнок не найден' } }) });
+test('403 проверки сессии и ответ 200 от прокси не подтверждают игру', async () => {
+  const responses = [() => json(403, { error: { code: 'FORBIDDEN', message: 'Партнёр не связан с одним активным проектом' } }),
+    () => json(200, null), () => json(200, {}), () => json(200, { data: { status: 'ok' } }), () => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('html'); } })];
+  for (const respond of responses) {
+    const page = await loadModule({ respond });
+    try {
+      assert.equal(page.render(), base); await flush();
+      assert.equal(page.render(), base); await flush();
+      assert.equal(page.renders(), 0); assert.equal(page.calls.length, 1); assert.equal(page.store.size, 0);
+    } finally { page.restore(); }
+  }
+});
+
+test('нет цикла запросов и перерисовок, когда перерисовка снова запрашивает карточку', async () => {
+  for (const respond of [() => json(200, null), htmlNotFound, offline, () => json(200, { data: access })]) {
+    const page = await loadModule({ respond });
+    try {
+      page.state.renderHook = () => globalThis.window.child();
+      page.render();
+      for (let i = 0; i < 5; i += 1) await flush();
+      assert.ok(page.calls.length <= 1, String(page.calls.length));
+    } finally { page.restore(); }
+  }
+});
+
+test('запрет localStorage не ломает модуль: подтверждение живёт в памяти', async () => {
+  const page = await loadModule({ respond: () => json(200, { data: access }) });
+  try {
+    globalThis.localStorage = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }, removeItem() { throw new Error('denied'); } };
+    page.render(); await flush();
+    page.respond = offline;
+    page.state.selectedChild = 9; page.render(); await flush();
+    assert.match(page.render(), /Нет связи с сервером/);
+  } finally { page.restore(); }
+});
+
+test('скрытая ошибка не остаётся навсегда: подтверждение игры повторяет загрузку', async () => {
+  const page = await loadModule({ respond: offline });
+  try {
+    page.render(); await flush();
+    page.respond = () => json(200, { data: access });
+    page.state.selectedChild = 9; page.render(); await flush();
+    page.state.selectedChild = 8; page.render(); await flush();
+    assert.match(page.render(), /Логин: misha\.k/);
+  } finally { page.restore(); }
+});
+
+test('успешный сброс показывает пароль, диалог закрывается при выходе, пароль не кешируется', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const page = await loadModule({ respond: (url, options) => json(200, { data: options.method === 'POST' ? { ...access, password: 'secret-word' } : access }) });
+  try {
+    page.render(); await flush();
+    await globalThis.window.icubeResetGameAccess(8);
+    assert.equal(page.shown[0].values.password, 'secret-word');
+    assert.doesNotMatch(page.render(), /secret-word/);
+    page.state.authUser = null;
+    t.mock.timers.tick(600);
+    assert.equal(page.shown[0].removed, true);
+  } finally { page.restore(); }
+});
+
+test('код GAME_ подтверждает игру, а прочие ошибки показываются только после подтверждения', async () => {
+  const proof = await loadModule({ respond: () => json(403, { error: { code: 'GAME_ACCESS_DIRECTOR_ONLY', message: 'Только директор' } }) });
+  try { proof.render(); await flush(); assert.match(proof.render(), /Только директор/); assert.equal(proof.store.size, 1); } finally { proof.restore(); }
+  const missing = await loadModule({ confirmed: true, respond: () => json(404, { error: { code: 'NOT_FOUND', message: 'Ребёнок не найден' } }) });
   try {
     missing.render(); await flush();
     assert.match(missing.render(), /Ребёнок не найден/);
     assert.match(missing.render(), /icubeRetryGameAccess\(8\)/);
   } finally { missing.restore(); }
-  const forbidden = await loadModule({ role: 'partner', respond: () => json(403, { error: { code: 'FORBIDDEN', message: 'Ребёнок другого проекта недоступен' } }) });
+  const forbidden = await loadModule({ role: 'partner', confirmed: true, respond: () => json(403, { error: { code: 'FORBIDDEN', message: 'Ребёнок другого проекта недоступен' } }) });
   try { forbidden.render(); await flush(); assert.match(forbidden.render(), /Ребёнок другого проекта недоступен/); } finally { forbidden.restore(); }
 });
 

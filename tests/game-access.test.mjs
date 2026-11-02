@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
+import bcrypt from 'bcryptjs';
 import { childPasswordWords } from '../backend/src/child-password-words.mjs';
 import { generatedChildPassword } from '../backend/src/game-access.mjs';
 import { createGameLoginGuard } from '../backend/src/game-login-guard.mjs';
+import { createPasswordVerifier } from '../backend/src/game-password-verifier.mjs';
 import { releaseChildGameAccount } from '../backend/src/game-account-release.mjs';
 import { addLegacyAccount, director, gameFixture, partner, startCrm } from './helpers/game-access-fixture.mjs';
 
@@ -138,6 +140,13 @@ test('удаление ребёнка: взрослый, связанный ис
   assert.deepEqual({ ...adult, roles: before.roles }, before);
   assert.deepEqual(adult.roles, ['parent']);
   assert.equal(JSON.parse(f.state.audit.at(-1).after).childOnly, false);
+});
+
+test('удаление ребёнка: учётка без ролей тоже обезличивается', async () => {
+  const f = gameFixture();
+  const user = addLegacyAccount(f, { childId: 8, createdAt: '2025-01-10 09:00:00.000000', roles: [] });
+  await releaseChildGameAccount(f.connection, 8);
+  assert.deepEqual([user.status, user.email, user.password_hash], ['blocked', null, '!']);
 });
 
 test('удаление ребёнка без игрового доступа ничего не пишет', async () => {
@@ -282,16 +291,41 @@ test('параллельные неверные попытки не обходя
   const f = gameFixture();
   await f.gameAccess.create(8, { login: 'misha.k' }, director);
   const results = await Promise.allSettled(Array.from({ length: 40 }, () => verify(f, 'misha.k', 'wrong')));
+  assert.equal(f.state.compares.length, 1);
+  assert.equal(results.filter((item) => item.reason?.code === 'GAME_LOGIN_BUSY').length, 39);
+  for (let round = 0; round < 3; round += 1) {
+    await Promise.allSettled(Array.from({ length: 40 }, () => verify(f, 'misha.k', 'wrong')));
+    await Promise.allSettled(Array.from({ length: 40 }, () => verify(f, 'misha.k', 'wrong')));
+  }
   assert.equal(f.state.compares.length, 5);
-  assert.equal(results.filter((item) => item.reason?.code === 'INVALID_CREDENTIALS').length, 5);
-  assert.equal(results.filter((item) => item.reason?.code === 'LOGIN_RATE_LIMITED').length, 35);
+  await rejectsWith(verify(f, 'misha.k', 'wrong'), 'LOGIN_RATE_LIMITED');
 });
 
-test('параллельные верные входы знакомого ребёнка не считаются неудачей', async () => {
+test('поток запросов с одного адреса отсекается до базы: не больше трёх одновременно', async () => {
+  const f = gameFixture();
+  f.state.statements.length = 0;
+  const results = await Promise.allSettled(Array.from({ length: 30 }, (_, index) => verify(f, `login${index}`, 'wrong')));
+  assert.equal(results.filter((item) => item.reason?.code === 'GAME_LOGIN_BUSY').length, 27);
+  assert.equal(f.state.statements.filter((sql) => sql.includes('FROM users u LEFT JOIN child_user_accounts a')).length, 3);
+});
+
+test('настоящий поток bcrypt работает через verifyChild и не теряет места', async () => {
+  const hash = bcrypt.hashSync('right-password', 4);
+  const verifier = createPasswordVerifier();
+  const f = gameFixture({ passwordVerifier: verifier });
+  try {
+    addLegacyAccount(f, { childId: 8, createdAt: '2025-01-10 09:00:00.000000' }).password_hash = hash;
+    assert.equal((await verify(f, 'old.user', 'right-password')).childId, '8');
+    await rejectsWith(verify(f, 'old.user', 'wrong', '203.0.113.6'), 'INVALID_CREDENTIALS');
+    await rejectsWith(verify(f, 'nobody', 'wrong', '203.0.113.7'), 'INVALID_CREDENTIALS');
+    assert.equal(verifier.pendingCount(), 0);
+  } finally { await verifier.close(); }
+});
+
+test('параллельные верные входы не считаются неудачей', async () => {
   const f = gameFixture();
   const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
-  const results = await Promise.all(Array.from({ length: 5 }, () => verify(f, 'misha.k', password)));
-  assert.equal(results.length, 5);
+  await Promise.allSettled(Array.from({ length: 20 }, () => verify(f, 'misha.k', password)));
   assert.equal((await verify(f, 'misha.k', password)).childId, '8');
 });
 
@@ -304,13 +338,14 @@ test('сбой базы при входе освобождает резерв и
   assert.equal((await verify(f, 'misha.k', password)).childId, '8');
 });
 
-test('занятый проверщик паролей даёт отказ без записи неудачи', async () => {
-  const busy = Object.assign(new Error('busy'), { status: 429, code: 'GAME_LOGIN_BUSY' });
-  let overloaded = true;
-  const f = gameFixture({ comparePassword: async (value, hash) => { if (overloaded) throw busy; return hash === `hash:${value}`; } });
+test('занятая очередь даёт отказ без записи неудачи и без запроса к базе', async () => {
+  const f = gameFixture();
   const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  f.faults.busy = true;
+  f.state.statements.length = 0;
   for (let i = 0; i < 10; i += 1) await rejectsWith(verify(f, 'misha.k', password), 'GAME_LOGIN_BUSY');
-  overloaded = false;
+  assert.deepEqual(f.state.statements, []);
+  f.faults.busy = false;
   assert.equal((await verify(f, 'misha.k', password)).childId, '8');
 });
 

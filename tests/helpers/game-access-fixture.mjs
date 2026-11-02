@@ -25,7 +25,7 @@ export function gameFixture({ guard = createGameLoginGuard(), ...options } = {})
     ],
     accounts: [], audit: [], sessions: [], writes: [], statements: [], compares: [], nextUserId: 100,
   };
-  const faults = { failOn: null, deadlocks: 0, failPool: false };
+  const faults = { failOn: null, deadlocks: 0, failPool: false, busy: false };
   const userById = (id) => state.users.find((user) => user.id === Number(id));
   const accountByChild = (id) => state.accounts.find((account) => account.child_id === Number(id));
   function query(sql, params = {}) {
@@ -135,11 +135,14 @@ export function gameFixture({ guard = createGameLoginGuard(), ...options } = {})
   const gameAccess = createGameAccess(pool, {
     guard, makePassword: () => `generated-password-${++password}`,
     createPasswordHash: async (value) => `hash:${value}`,
-    comparePassword: async (value, hash) => {
-      state.compares.push(hash);
-      await new Promise((resolve) => setImmediate(resolve));
-      return hash === `hash:${value}`;
-    },
+    passwordVerifier: { reserve: () => {
+      if (faults.busy) throw Object.assign(new Error('busy'), { status: 429, code: 'GAME_LOGIN_BUSY' });
+      return { release() {}, compare: async (value, hash) => {
+        state.compares.push(hash);
+        await new Promise((resolve) => setImmediate(resolve));
+        return hash === `hash:${value}`;
+      } };
+    } },
     ...options,
   });
   return { state, pool, connection, gameAccess, guard, faults };

@@ -11,7 +11,7 @@ export async function releaseChildGameAccount(connection, childId, actorUserId =
   const userId = account.user_id;
   const [roles] = await connection.query(`SELECT r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id
     WHERE ur.user_id=:userId ORDER BY r.code`, { userId });
-  const childOnly = roles.length === 1 && roles[0].code === 'child';
+  const childOnly = roles.every((role) => role.code === 'child');
   await connection.query(`DELETE ur FROM user_roles ur JOIN roles r ON r.id=ur.role_id
     WHERE ur.user_id=:userId AND r.code='child'`, { userId });
   if (childOnly) {

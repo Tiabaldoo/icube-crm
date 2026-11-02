@@ -7,15 +7,19 @@ const cache = new Map();
 const loading = new Set();
 let owner = null;
 let featureMissing = false;
+let featureSeen = false;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const canManage = () => ['director', 'partner'].includes(legacy.state.role);
 const refresh = (childId) => { if (legacy.state.page === 'child' && String(legacy.state.selectedChild) === String(childId)) legacy.render(); };
 
 function featureConfirmed() {
+  if (featureSeen) return true;
   try { return localStorage.getItem(AVAILABLE_KEY) === '1'; } catch { return false; }
 }
 function rememberFeature(available) {
+  featureSeen = available;
+  if (available) for (const [key, value] of cache) if (value.silent) cache.delete(key);
   try {
     if (available) localStorage.setItem(AVAILABLE_KEY, '1');
     else localStorage.removeItem(AVAILABLE_KEY);
@@ -37,9 +41,10 @@ function currentUser() {
 
 // Выключенный флаг — это 404 неизвестного маршрута, без кода ошибки API.
 const isFeatureMissing = (error) => error instanceof ApiError && error.status === 404 && !error.code;
-// Функцию подтверждает только ответ самих игровых маршрутов. 401 приходит и при выключенном флаге,
-// а 5xx и сбой сети могут идти от прокси.
-const provesFeature = (error) => error instanceof ApiError && error.status < 500 && error.status !== 401 && Boolean(error.code);
+// Функцию подтверждает только ответ самих игровых маршрутов: их данные или код GAME_*.
+// 401 и 403 проверки сессии приходят и при выключенном флаге, а 200 и 5xx может отдать прокси.
+const provesFeature = (error) => error instanceof ApiError && error.status < 500 && String(error.code ?? '').startsWith('GAME_');
+const isAccess = (data) => typeof data?.manageable === 'boolean';
 
 function message(error) {
   if (error instanceof ApiError) return error.status >= 500 ? `Ошибка сервера (${error.status}). Попробуйте позже` : error.message;
@@ -54,8 +59,9 @@ async function load(childId) {
   let visible = true;
   let result;
   try {
-    result = await api.request(`/children/${childId}/game-access`);
-    rememberFeature(true);
+    const data = await api.request(`/children/${childId}/game-access`);
+    if (isAccess(data)) { rememberFeature(true); result = data; }
+    else { result = { silent: true }; visible = false; }
   } catch (error) {
     if (isFeatureMissing(error)) {
       rememberFeature(false);
@@ -89,7 +95,15 @@ function showCredentials(credentials, title) {
   backdrop.querySelector('#game-credentials-title').textContent = title;
   backdrop.querySelector('[data-value="login"]').textContent = credentials.login;
   backdrop.querySelector('[data-value="password"]').textContent = credentials.password;
-  backdrop.addEventListener('click', (event) => { if (event.target.closest('[data-close]')) { backdrop.remove(); legacy.render(); } });
+  // Вход и выход не перезагружают страницу: пароль не должен остаться на экране следующего пользователя.
+  const shownTo = legacy.state.authUser?.id ?? null;
+  const close = () => { clearInterval(watch); backdrop.remove(); };
+  const watch = setInterval(() => { if ((legacy.state.authUser?.id ?? null) !== shownTo) close(); }, 500);
+  backdrop.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-close]')) return;
+    close();
+    if (legacy.state.authUser) legacy.render();
+  });
   document.body.append(backdrop);
 }
 

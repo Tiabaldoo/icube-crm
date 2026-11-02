@@ -41,13 +41,12 @@ export function generatedChildPassword(pick = randomInt) {
 
 export function createGameAccess(pool, {
   guard = createGameLoginGuard(),
-  comparePassword = null,
+  passwordVerifier = null,
   createPasswordHash = hashPassword,
   makePassword = generatedChildPassword,
   allowPrivateClientIp = false,
 } = {}) {
-  let verifier = null;
-  const compare = comparePassword ?? ((password, hash) => { verifier ??= createPasswordVerifier(); return verifier.compare(password, hash); });
+  let verifier = passwordVerifier;
 
   async function transaction(operation) {
     try { return await inTransaction(pool, operation); }
@@ -202,14 +201,17 @@ export function createGameAccess(pool, {
     const login = normalizeLogin(body?.login);
     const attempt = guard.begin(clientIp, login);
     let result = null;
+    let slot = null;
     try {
+      verifier ??= createPasswordVerifier();
+      slot = verifier.reserve();
       const password = typeof body?.password === 'string' ? body.password : '';
       const [rows] = login ? await pool.query(`SELECT u.id,u.password_hash,u.status,u.token_version,u.deleted_at,
           a.child_id,a.created_at,c.full_name,c.status child_status,c.deleted_at child_deleted_at
         FROM users u LEFT JOIN child_user_accounts a ON a.user_id=u.id LEFT JOIN children c ON c.id=a.child_id
         WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
       const user = rows[0] ?? null;
-      const passwordOk = await compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
+      const passwordOk = await slot.compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
       const allowed = passwordOk && password.length <= MAX_PASSWORD_LENGTH && user != null && user.status === 'active' && user.deleted_at == null
         && user.child_id != null && user.child_deleted_at == null && LOGIN_STATUSES.has(user.child_status)
         && isChildOnly(await rolesOf(pool, user.id));
@@ -222,7 +224,7 @@ export function createGameAccess(pool, {
     } catch (error) {
       attempt.release();
       throw error;
-    }
+    } finally { slot?.release(); }
     if (!result) {
       attempt.failure();
       throw invalidCredentials();

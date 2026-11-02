@@ -26,23 +26,34 @@ test('пара IP и логин блокируется после 5 неудач
   clock.time += GAME_LOGIN_LIMITS.blockMs; allowed('203.0.113.1', 'misha');
 });
 
-test('запросы в полёте занимают лимит: шестой параллельный сразу получает отказ', () => {
-  const { guard, blocked, allowed } = setup();
-  const attempts = Array.from({ length: 5 }, () => guard.begin('203.0.113.1', 'misha'));
+test('запросы в полёте занимают лимит пары: при запасе в одну попытку вторая получает отказ', () => {
+  const { guard, fail, blocked, allowed } = setup({ maxPairInFlight: 5, maxIpInFlight: 50 });
+  fail('203.0.113.1', 'misha', 4);
+  const attempt = guard.begin('203.0.113.1', 'misha');
   blocked('203.0.113.1', 'misha');
-  attempts[0].release();
+  attempt.release();
   allowed('203.0.113.1', 'misha');
-  for (const attempt of attempts.slice(1)) attempt.failure();
-  allowed('203.0.113.1', 'misha');
+});
+
+test('один адрес держит не больше трёх проверок, одна пара — одну, неудачей это не считается', () => {
+  const { guard, allowed } = setup();
+  const busy = (ip, login) => assert.throws(() => guard.begin(ip, login), (error) => error.status === 429 && error.code === 'GAME_LOGIN_BUSY');
+  const first = guard.begin('203.0.113.1', 'one');
+  busy('203.0.113.1', 'one');
+  const attempts = [first, guard.begin('203.0.113.1', 'two'), guard.begin('203.0.113.1', 'three')];
+  busy('203.0.113.1', 'four');
+  allowed('203.0.113.2', 'four');
+  for (const attempt of attempts) attempt.release();
+  allowed('203.0.113.1', 'one');
 });
 
 test('лимиты логина и адреса тоже учитывают запросы в полёте', () => {
   const { guard, blocked } = setup();
   for (let i = 0; i < 20; i += 1) guard.begin(`198.51.100.${i + 1}`, 'misha');
   blocked('198.51.100.200', 'misha');
-  const other = setup();
-  for (let i = 0; i < 50; i += 1) other.guard.begin('203.0.113.1', `login${i}`);
-  other.blocked('203.0.113.1', 'new.login');
+  const limited = setup({ maxIpInFlight: 100 });
+  for (let i = 0; i < 50; i += 1) limited.guard.begin('203.0.113.1', `login${i}`);
+  limited.blocked('203.0.113.1', 'new.login');
 });
 
 test('попытка завершается один раз: повторное завершение ничего не меняет', () => {
