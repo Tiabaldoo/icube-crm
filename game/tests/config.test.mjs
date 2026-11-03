@@ -49,3 +49,10 @@ test('переменные базы CRM игру не настраивают', (
   assert.equal(config.database.database, 'icube_game_test');
   assert.equal(config.database.host, '127.0.0.1');
 });
+
+test('обратный канал для CRM: по умолчанию 3101, совпадение с портом игры запрещено', () => {
+  assert.equal(loadGameConfig(baseEnv()).internalPort, 3101);
+  assert.equal(loadGameConfig(baseEnv({ GAME_INTERNAL_PORT: '3201' })).internalPort, 3201);
+  assert.throws(() => loadGameConfig(baseEnv({ GAME_INTERNAL_PORT: '3100' })), /GAME_INTERNAL_PORT/);
+  assert.throws(() => loadGameConfig(baseEnv({ GAME_INTERNAL_PORT: 'abc' })), /GAME_INTERNAL_PORT/);
+});

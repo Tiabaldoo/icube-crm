@@ -8,8 +8,8 @@ const pool = createGamePool(config.database);
 let failed = false;
 try {
   const [[row]] = await pool.query('SELECT DATABASE() AS name');
-  const [tables] = await pool.query("SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('game_profiles','game_sessions')");
-  const migrated = Number(tables[0].count) === 2;
+  const [tables] = await pool.query("SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('game_profiles','game_sessions','game_star_wallets','game_star_entries','game_staff_bonuses','game_staff_bonus_revokes','game_star_chest_opens')");
+  const migrated = Number(tables[0].count) === 7;
   console.log(`База игры: ${row.name}, таблицы ${migrated ? 'на месте' : 'не найдены — нужна npm run migrate'}`);
   if (!migrated) failed = true;
 } catch (error) {

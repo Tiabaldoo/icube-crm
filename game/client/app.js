@@ -1,4 +1,4 @@
-// Заглушка этапа 3: вход, ник и выход. Сама игра подключается на этапе 5.
+// Заглушка: вход, ник, звёзды с сундуком и выход. Сама игра подключается на этапе 5.
 const API = '/game/api';
 const BUSY_RETRIES = 6;
 
@@ -31,10 +31,40 @@ function showLogin(message = '') {
   $('login-name').focus();
 }
 
+function showStars({ balance, chest }) {
+  $('stars-balance').textContent = String(balance);
+  $('chest-stars').textContent = String(chest);
+  $('chest').hidden = chest <= 0;
+}
+
+// Звёзды считает сервер: страница только показывает итог.
+async function loadStars() {
+  try {
+    const result = await call('/stars');
+    if (result.status === 200) showStars(result.data);
+  } catch { /* покажем при следующем входе */ }
+}
+
 function showIsland(nickname) {
   $('nickname').textContent = nickname;
   $('island-message').textContent = '';
+  $('stars-balance').textContent = '…';
+  $('chest').hidden = true;
   show('island');
+  loadStars();
+}
+
+async function openChest() {
+  $('chest-open').disabled = true;
+  try {
+    const result = await call('/stars/chest/open', { method: 'POST', body: {} });
+    if (result.status === 200) showStars(result.data);
+    else $('island-message').textContent = result.error?.message ?? 'Не получилось открыть сундук';
+  } catch {
+    $('island-message').textContent = 'Нет связи. Проверь интернет';
+  } finally {
+    $('chest-open').disabled = false;
+  }
 }
 
 async function loadMe() {
@@ -91,6 +121,7 @@ async function logout() {
 
 $('login').addEventListener('submit', login);
 $('logout').addEventListener('click', logout);
+$('chest-open').addEventListener('click', openChest);
 // Страница из кэша «Назад» могла остаться от прежнего входа: проверяем сессию заново.
 window.addEventListener('pageshow', (event) => { if (event.persisted) loadMe(); });
 loadMe();

@@ -1,11 +1,11 @@
 // Клиент внутреннего API CRM (127.0.0.1:3001). Игра не знает ничего о базе CRM:
-// только два метода этапа 2 — verify-child и status.
+// методы этапа 2 (verify-child и status) и этапа 4 (посещения для звёзд, статусы пачки детей).
 //
 // Ответ: { ok: true, data } | { ok: false, status, code } (CRM ответила отказом)
 //        | { ok: false, unavailable: true, reason } (CRM не ответила или настроена не так).
 const TOKEN_HEADER = 'x-game-internal-token';
 
-export function createCrmClient({ baseUrl, token, fetchImpl = fetch, verifyTimeoutMs = 15_000, statusTimeoutMs = 3_000, logger = console }) {
+export function createCrmClient({ baseUrl, token, fetchImpl = fetch, verifyTimeoutMs = 15_000, statusTimeoutMs = 3_000, attendanceTimeoutMs = 10_000, logger = console }) {
   async function call(method, path, body, timeoutMs) {
     let response;
     try {
@@ -35,5 +35,8 @@ export function createCrmClient({ baseUrl, token, fetchImpl = fetch, verifyTimeo
     verifyChild: ({ login, password, clientIp, loginGrant = null }) => call('POST', '/internal/game/verify-child',
       { login, password, clientIp, ...(loginGrant ? { loginGrant } : {}) }, verifyTimeoutMs),
     status: (childId) => call('GET', `/internal/game/children/${encodeURIComponent(childId)}/status`, null, statusTimeoutMs),
+    // Этап 4: полный список засчитанных посещений ребёнка для сверки звёзд и статусы пачки детей.
+    qualifyingAttendance: (childId) => call('GET', `/internal/game/children/${encodeURIComponent(childId)}/qualifying-attendance`, null, attendanceTimeoutMs),
+    childrenStatus: (ids) => call('GET', `/internal/game/children?ids=${ids.map(encodeURIComponent).join(',')}`, null, attendanceTimeoutMs),
   };
 }

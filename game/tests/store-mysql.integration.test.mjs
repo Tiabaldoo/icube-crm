@@ -8,6 +8,7 @@ import { loadDatabaseConfig } from '../server/config.mjs';
 import { runGameMigrations } from '../server/migration-runner.mjs';
 import { createGamePool, createMysqlStore } from '../server/store-mysql.mjs';
 import { silentLogger } from './helpers.mjs';
+import { starsContract } from './stars-contract.mjs';
 import { storeContract } from './store-contract.mjs';
 
 const enabled = process.env.GAME_INTEGRATION === '1';
@@ -33,5 +34,7 @@ if (!enabled) {
   });
 
   // Большой случайный сдвиг: повторные прогоны на той же базе не пересекаются по child_id.
-  storeContract(test, () => createMysqlStore(pool), { prefix: Date.now() * 1000 + Math.floor(Math.random() * 1000) });
+  const prefix = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+  storeContract(test, () => createMysqlStore(pool), { prefix });
+  starsContract(test, () => createMysqlStore(pool), { prefix: prefix + 500_000 });
 }
