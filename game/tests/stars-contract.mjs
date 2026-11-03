@@ -9,8 +9,8 @@ export function starsContract(test, makeStore, { prefix = 0 } = {}) {
   const key = (value) => createHash('sha256').update(`${prefix}:${value}`).digest('hex');
   let next = 100;
 
-  async function setup({ firstAccessOn = '2026-11-01', attendances = [] } = {}) {
-    const store = await makeStore();
+  async function setup({ firstAccessOn = '2026-11-01', attendances = [], store: shared = null } = {}) {
+    const store = shared ?? await makeStore();
     const crm = fakeCrm();
     const childId = String(prefix + (next += 1));
     const child = crm.addChild(childId, `child${childId}`, 'pw', { firstAccessOn, attendances });
@@ -71,7 +71,7 @@ export function starsContract(test, makeStore, { prefix = 0 } = {}) {
     await s.stars.reconcile(s.childId);
     const { entries } = await s.check();
     assert.deepEqual(entries.filter((entry) => entry.attendanceId === '1').map((entry) => [entry.kind, entry.amount, entry.idempotencyKey]),
-      [['attendance', 3, 'att:1:1'], ['attendance_reversal', -3, 'att:1:2'], ['attendance', 3, 'att:1:3']]);
+      [['attendance', 3, `att:${s.childId}:1:1`], ['attendance_reversal', -3, `att:${s.childId}:1:2`], ['attendance', 3, `att:${s.childId}:1:3`]]);
     assert.equal((await s.read()).wallet.chest, 6);
   });
 
@@ -195,6 +195,25 @@ export function starsContract(test, makeStore, { prefix = 0 } = {}) {
     assert.equal(bonuses[0].revoked.byUserId, '6'); assert.equal(bonuses[0].revoked.reason, 'Ошибка: не тот ребёнок');
     const { entries } = await s.check();
     assert.deepEqual(entries.map((entry) => entry.kind), ['staff_bonus', 'purchase', 'staff_bonus_revoke']);
+  });
+
+  // Регрессия: в MySQL все дети живут в одной базе, а ключ записи уникален на всю таблицу.
+  // Номера посещений у разных детей могут совпадать (тесты, пересоздание базы CRM) — ключ должен включать ребёнка.
+  test('звёзды: одинаковые номера посещений у двух детей в одном хранилище не мешают друг другу', async () => {
+    const first = await setup({ attendances: [visit(1, '2026-11-03'), visit(4, '2026-11-04')] });
+    const second = await setup({ store: first.store, attendances: [visit(1, '2026-11-03'), visit(4, '2026-11-04')] });
+    assert.deepEqual(await first.stars.reconcile(first.childId), { status: 'ok', added: 2 });
+    assert.deepEqual(await second.stars.reconcile(second.childId), { status: 'ok', added: 2 });
+    // Отмена и восстановление у обоих — без столкновений ключей.
+    for (const s of [first, second]) { s.child.attendances = [visit(4, '2026-11-04')]; await s.stars.reconcile(s.childId); }
+    for (const s of [first, second]) { s.child.attendances = [visit(1, '2026-11-03'), visit(4, '2026-11-04')]; await s.stars.reconcile(s.childId); }
+    for (const s of [first, second]) {
+      const { entries } = await s.check();
+      assert.deepEqual(entries.filter((entry) => entry.attendanceId === '1').map((entry) => entry.amount), [3, -3, 3]);
+      assert.equal((await s.read()).wallet.chest, 6);
+      assert.equal(new Set(entries.map((entry) => entry.idempotencyKey)).size, entries.length);
+    }
+    assert.deepEqual(await first.stars.reconcile(first.childId), { status: 'ok', added: 0 }, 'повтор ничего не добавляет');
   });
 
   test('без игрового профиля звёзды не начисляются', async () => {

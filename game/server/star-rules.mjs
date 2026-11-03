@@ -66,7 +66,8 @@ const sumBy = (entries, kinds, key) => {
 };
 
 // План записей: разница «цель − факт» по каждому посещению и по бонусу ×2.
-// Ключи — по номеру записи для этого посещения или ребёнка: уникальный ключ в базе не даст
+// Ключи — с ребёнком и номером записи для этого посещения: ключ уникален на всю таблицу, а номера посещений
+// у разных детей могут совпадать (пересоздание базы CRM, тестовые данные). Уникальный ключ не даст
 // второй сверке, начатой с тем же журналом, записать то же самое ещё раз.
 export function planReconciliation({ childId, earningSince, attendances, entries, rules = STAR_RULES }) {
   const { base, followup } = starTargets({ earningSince, attendances, rules });
@@ -83,7 +84,7 @@ export function planReconciliation({ childId, earningSince, attendances, entries
     if (!diff) continue;
     const n = (counts.get(attendanceId) ?? 0) + 1;
     counts.set(attendanceId, n);
-    ops.push({ kind: diff > 0 ? 'attendance' : 'attendance_reversal', amount: diff, attendanceId, idempotencyKey: `att:${attendanceId}:${n}` });
+    ops.push({ kind: diff > 0 ? 'attendance' : 'attendance_reversal', amount: diff, attendanceId, idempotencyKey: `att:${childId}:${attendanceId}:${n}` });
   }
   // Сначала отзыв с прежнего посещения, потом начисление на новое: в сумме ×2 не больше одного раза.
   const followupIds = [...new Set([...followupFacts.keys(), ...(followup ? [followup] : [])])];

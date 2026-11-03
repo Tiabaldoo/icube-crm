@@ -40,13 +40,13 @@ test('порядок занятий одного дня — по времени,
 test('план: начисление, повтор пуст, исправление — отзыв с новым ключом', () => {
   const attendances = parse(visit(1, '2026-11-03'));
   const first = planReconciliation({ childId: '8', earningSince: '2026-11-01', attendances, entries: [] });
-  assert.deepEqual(first, [{ kind: 'attendance', amount: 3, attendanceId: '1', idempotencyKey: 'att:1:1' }]);
+  assert.deepEqual(first, [{ kind: 'attendance', amount: 3, attendanceId: '1', idempotencyKey: 'att:8:1:1' }]);
   const entries = first.map((op) => ({ ...op }));
   assert.deepEqual(planReconciliation({ childId: '8', earningSince: '2026-11-01', attendances, entries }), []);
   const removed = planReconciliation({ childId: '8', earningSince: '2026-11-01', attendances: [], entries });
-  assert.deepEqual(removed, [{ kind: 'attendance_reversal', amount: -3, attendanceId: '1', idempotencyKey: 'att:1:2' }]);
+  assert.deepEqual(removed, [{ kind: 'attendance_reversal', amount: -3, attendanceId: '1', idempotencyKey: 'att:8:1:2' }]);
   const back = planReconciliation({ childId: '8', earningSince: '2026-11-01', attendances, entries: [...entries, ...removed] });
-  assert.deepEqual(back, [{ kind: 'attendance', amount: 3, attendanceId: '1', idempotencyKey: 'att:1:3' }]);
+  assert.deepEqual(back, [{ kind: 'attendance', amount: 3, attendanceId: '1', idempotencyKey: 'att:8:1:3' }]);
 });
 
 test('план: ×2 переходит на следующее посещение — сначала отзыв, потом начисление', () => {
@@ -56,7 +56,7 @@ test('план: ×2 переходит на следующее посещени�
   const after = parse(visit(1, '2026-11-02', { trial: true }), visit(3, '2026-11-10'));
   const plan = planReconciliation({ childId: '8', earningSince: '2026-11-01', attendances: after, entries });
   assert.deepEqual(plan.map((op) => [op.kind, op.attendanceId, op.amount, op.idempotencyKey]), [
-    ['attendance_reversal', '2', -3, 'att:2:2'], ['trial_followup_reversal', '2', -3, 'trial_followup:8:2'], ['trial_followup_bonus', '3', 3, 'trial_followup:8:3'],
+    ['attendance_reversal', '2', -3, 'att:8:2:2'], ['trial_followup_reversal', '2', -3, 'trial_followup:8:2'], ['trial_followup_bonus', '3', 3, 'trial_followup:8:3'],
   ]);
 });
 
