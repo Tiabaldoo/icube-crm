@@ -47,7 +47,14 @@ function gameConfig(env, appEnv, database, port) {
   const portValid = Number.isInteger(internalPort) && internalPort > 0 && internalPort < 65536 && internalPort !== port;
   const enabled = requested && environmentAllowed && tokenValid && portValid;
   const allowPrivateClientIp = String(env.GAME_ALLOW_PRIVATE_CLIENT_IP ?? '').toLowerCase() === 'true';
-  return { enabled, requested, internalToken: enabled ? token : null, internalPort, allowPrivateClientIp };
+  // Ключ разрешений на вход знает только CRM, поэтому он не может совпадать с секретом, который есть у игры.
+  // Без ключа вход работает по правилам этапа 2.
+  const grantKey = env.GAME_LOGIN_GRANT_KEY ?? '';
+  const grantKeyValid = grantKey.length >= 32 && !/replace_me/i.test(grantKey) && grantKey !== token;
+  return {
+    enabled, requested, internalToken: enabled ? token : null, internalPort, allowPrivateClientIp,
+    loginGrantKey: enabled && grantKeyValid ? grantKey : null,
+  };
 }
 
 export function loadConfig(env = process.env) {

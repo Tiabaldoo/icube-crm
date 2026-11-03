@@ -1,0 +1,81 @@
+:root {
+  --sea: #3a9ad9;
+  --card: #ffffff;
+  --text: #1f2a37;
+  --muted: #5b6b7c;
+  --accent: #ff9f1c;
+  --accent-text: #1f2a37;
+  --danger: #c0392b;
+  --field: #f3f6fa;
+  --border: #c9d6e3;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--sea);
+  color: var(--text);
+  font: 18px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 16px;
+}
+
+.card {
+  width: 100%;
+  max-width: 420px;
+  padding: 28px 24px;
+  border-radius: 24px;
+  background: var(--card);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+}
+
+h1 { margin: 0 0 20px; font-size: 28px; text-align: center; }
+
+form { display: flex; flex-direction: column; gap: 8px; }
+
+label { font-weight: 600; }
+
+input {
+  width: 100%;
+  min-height: 52px;
+  padding: 10px 14px;
+  border: 2px solid var(--border);
+  border-radius: 14px;
+  background: var(--field);
+  color: var(--text);
+  font-size: 20px;
+}
+
+input:focus { outline: 3px solid var(--accent); outline-offset: 1px; }
+
+button {
+  min-height: 56px;
+  margin-top: 12px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled { opacity: 0.6; cursor: wait; }
+
+.logout { width: 100%; background: var(--danger); color: #fff; }
+
+.greeting { margin: 0; font-size: 24px; text-align: center; }
+
+.hint { color: var(--muted); text-align: center; }
+
+.message { min-height: 1.4em; margin: 8px 0 0; color: var(--danger); text-align: center; }
+
+[hidden] { display: none !important; }

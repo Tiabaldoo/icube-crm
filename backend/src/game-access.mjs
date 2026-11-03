@@ -3,6 +3,7 @@ import { hashPassword } from './auth-service.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { childPasswordWords } from './child-password-words.mjs';
 import { inTransaction } from './db.mjs';
+import { createLoginGrants } from './game-login-grant.mjs';
 import { createGameLoginGuard, normalizeClientIp } from './game-login-guard.mjs';
 import { createPasswordVerifier } from './game-password-verifier.mjs';
 import { partnerProjectId } from './project-scope.mjs';
@@ -45,8 +46,11 @@ export function createGameAccess(pool, {
   createPasswordHash = hashPassword,
   makePassword = generatedChildPassword,
   allowPrivateClientIp = false,
+  loginGrantKey = null,
+  now = () => Date.now(),
 } = {}) {
   let verifier = passwordVerifier;
+  const grants = loginGrantKey ? createLoginGrants({ key: loginGrantKey, now }) : null;
 
   async function transaction(operation) {
     try { return await inTransaction(pool, operation); }
@@ -192,6 +196,7 @@ export function createGameAccess(pool, {
     return access;
   }
 
+  // Имён детей игра не получает: в игре у ребёнка только ник, ФИО остаётся в CRM.
   async function verifyChild(body = {}) {
     const clientIp = normalizeClientIp(body?.clientIp, { allowPrivate: allowPrivateClientIp });
     if (!clientIp) {
@@ -199,7 +204,9 @@ export function createGameAccess(pool, {
       throw new ApiProblem(400, 'INVALID_CLIENT_IP', 'Некорректный адрес клиента');
     }
     const login = normalizeLogin(body?.login);
-    const attempt = guard.begin(clientIp, login);
+    // Подпись проверяется до базы: подлинное разрешение уводит попытку в свой счётчик (game-login-guard.mjs).
+    const grant = login && grants ? grants.read(body?.loginGrant, login) : null;
+    let attempt = guard.begin(clientIp, login, { grantId: grant?.grantId ?? null });
     let result = null;
     let slot = null;
     try {
@@ -207,18 +214,26 @@ export function createGameAccess(pool, {
       slot = verifier.reserve();
       const password = typeof body?.password === 'string' ? body.password : '';
       const [rows] = login ? await pool.query(`SELECT u.id,u.password_hash,u.status,u.token_version,u.deleted_at,
-          a.child_id,a.created_at,c.full_name,c.status child_status,c.deleted_at child_deleted_at
+          a.child_id,a.created_at,c.status child_status,c.deleted_at child_deleted_at
         FROM users u LEFT JOIN child_user_accounts a ON a.user_id=u.id LEFT JOIN children c ON c.id=a.child_id
         WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
       const user = rows[0] ?? null;
+      // Разрешение выдано другому пользователю или до сброса пароля и отключения доступа: льгот не даёт.
+      // До проверки пароля попытка заново проходит обычные пороги, как без разрешения.
+      if (grant != null && (user == null || String(user.id) !== grant.userId || Number(user.token_version) !== grant.tokenVersion)) {
+        attempt.release();
+        attempt = guard.begin(clientIp, login);
+      }
       const passwordOk = await slot.compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
       const allowed = passwordOk && password.length <= MAX_PASSWORD_LENGTH && user != null && user.status === 'active' && user.deleted_at == null
         && user.child_id != null && user.child_deleted_at == null && LOGIN_STATUSES.has(user.child_status)
         && isChildOnly(await rolesOf(pool, user.id));
       if (allowed) {
         result = {
-          childId: String(user.child_id), userId: String(user.id), displayName: user.full_name,
+          childId: String(user.child_id), userId: String(user.id),
           tokenVersion: Number(user.token_version), firstAccessOn: firstAccessOn(user.created_at),
+          // Новое разрешение — только после верного пароля, с новым id и текущей token_version.
+          ...(grants ? { loginGrant: grants.sign({ userId: user.id, login, tokenVersion: Number(user.token_version) }) } : {}),
         };
       }
     } catch (error) {
@@ -235,17 +250,17 @@ export function createGameAccess(pool, {
 
   async function status(rawChildId) {
     const childId = identifier(rawChildId, 'childId');
-    const [rows] = await pool.query(`SELECT c.status child_status,c.full_name,a.user_id,a.created_at,u.status,u.token_version,u.deleted_at
+    const [rows] = await pool.query(`SELECT c.status child_status,a.user_id,a.created_at,u.status,u.token_version,u.deleted_at
       FROM children c LEFT JOIN child_user_accounts a ON a.child_id=c.id LEFT JOIN users u ON u.id=a.user_id
       WHERE c.id=:childId AND c.deleted_at IS NULL LIMIT 1`, { childId });
     const row = rows[0];
-    if (!row) return { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null, displayName: null };
+    if (!row) return { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null };
     const hasAccount = row.user_id != null;
     const canLogin = hasAccount && row.status === 'active' && row.deleted_at == null && LOGIN_STATUSES.has(row.child_status)
       && isChildOnly(await rolesOf(pool, row.user_id));
     return {
       exists: true, canLogin, tokenVersion: hasAccount ? Number(row.token_version) : null, status: row.child_status,
-      firstAccessOn: hasAccount ? firstAccessOn(row.created_at) : null, displayName: row.full_name,
+      firstAccessOn: hasAccount ? firstAccessOn(row.created_at) : null,
     };
   }
 

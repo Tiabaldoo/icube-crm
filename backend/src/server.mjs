@@ -39,7 +39,7 @@ export function createApp({ config, pool }) {
   const lessons = createMysqlLessons(pool, { lessonPhotos, parentNotifications, notificationEvents });
   const parentPortal = createParentPortal(pool, { contact: config.parent, materializeLessons: lessons.materialize, notificationEvents });
   const push = createWebPushService(pool, { config: config.push, notificationEvents });
-  const gameAccess = config.game?.enabled ? createGameAccess(pool, { allowPrivateClientIp: config.game.allowPrivateClientIp }) : null;
+  const gameAccess = config.game?.enabled ? createGameAccess(pool, { allowPrivateClientIp: config.game.allowPrivateClientIp, loginGrantKey: config.game.loginGrantKey }) : null;
   app.locals.gameAccess = gameAccess;
   app.use('/api/v1', createApiRouter(pool, {
     notificationEvents, lessonPhotos, lessons, parentNotifications, parentPortal, payments, paymentReceipts, push, gameAccess,

@@ -1,0 +1,25 @@
+# Игровой сервер «Острова чудиков» на test. Отдельная папка и отдельный пользователь без доступа к CRM:
+#   /opt/icube-game-test — свой checkout репозитория, обновляется независимо от CRM.
+# Не включать, пока не пройден этап 0 (GAME_PLAN.md, раздел 9).
+[Unit]
+Description=iCube game server (test)
+After=network.target mysql.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/icube-game-test/game
+EnvironmentFile=/opt/icube-game-test/game/.env
+ExecStart=/usr/bin/node server/server.mjs
+Restart=on-failure
+RestartSec=5
+User=icube-game
+Group=icube-game
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/icube-game-test
+InaccessiblePaths=-/opt/icube-crm
+
+[Install]
+WantedBy=multi-user.target

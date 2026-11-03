@@ -59,7 +59,7 @@ test('неверный секрет с плохим телом даёт 404: т�
 test('verify-child и status отвечают по секрету', async () => {
   const verified = await call(verifyPath, { body: { login: 'misha.k', password, clientIp: '203.0.113.5' } });
   assert.equal(verified.status, 200);
-  assert.deepEqual((await verified.json()).data, { childId: '8', userId: '100', displayName: 'Миша Ковалёв', tokenVersion: 1, firstAccessOn: '2026-11-02' });
+  assert.deepEqual((await verified.json()).data, { childId: '8', userId: '100', tokenVersion: 1, firstAccessOn: '2026-11-02' });
   const status = await call(statusPath);
   assert.equal((await status.json()).data.canLogin, true);
 });

@@ -4,7 +4,7 @@
   "private": true,
   "description": "CRM iCube: frontend prototype, protected business rules and future MySQL API foundation",
   "scripts": {
-    "test": "node --test",
+    "test": "node --test \"tests/**/*.test.mjs\"",
     "check": "node scripts/check-syntax.mjs",
     "migrate": "node database/migrate.mjs",
     "create-director": "node scripts/create-director.mjs",

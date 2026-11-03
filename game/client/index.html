@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#3a9ad9" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Остров чудиков</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main class="card">
+      <h1>Остров чудиков</h1>
+
+      <p id="loading" class="hint">Загружаем…</p>
+
+      <form id="login" hidden autocomplete="off" novalidate>
+        <label for="login-name">Логин</label>
+        <input id="login-name" name="login" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="64" required />
+        <label for="login-password">Пароль</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" maxlength="128" required />
+        <button id="login-submit" type="submit">Войти</button>
+        <p id="login-message" class="message" role="status" aria-live="polite"></p>
+      </form>
+
+      <section id="island" hidden>
+        <p class="greeting">Привет, <strong id="nickname"></strong>!</p>
+        <p class="hint">Твой остров скоро появится здесь.</p>
+        <button id="logout" type="button" class="logout">Выйти</button>
+        <p id="island-message" class="message" role="status" aria-live="polite"></p>
+      </section>
+    </main>
+  </body>
+</html>

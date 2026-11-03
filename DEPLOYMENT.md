@@ -205,4 +205,26 @@ systemctl list-timers | grep icube-crm-parent-notifications
 
 На test `GAME_ENABLED` не включается, пока владелец не проверил реальный сервер и цепочку прокси по разделу 9 `GAME_PLAN.md`. Для включения нужны `GAME_ENABLED=true`, `GAME_INTERNAL_TOKEN` не короче 32 символов и свободный `GAME_INTERNAL_PORT` (по умолчанию 3001). Порт слушается только на `127.0.0.1` и не проксируется наружу. Откат: `GAME_ENABLED=false` и перезапуск CRM.
 
+`GAME_LOGIN_GRANT_KEY` (не короче 32 символов, не равен `GAME_INTERNAL_TOKEN`) включает разрешения на вход: ребёнка с ним не блокируют чужие ошибки за тем же адресом. Ключ хранится только в `.env` CRM и в `.env` игры не копируется. Без ключа вход работает по правилам этапа 2. Смена ключа отзывает все разрешения сразу, пароли и сессии при этом не меняются.
+
+### Игровой сервер на test (этап 3)
+
+Выполняет владелец после этапа 0, по шагам, с проверкой каждого. Claude Code эти команды не запускает.
+
+1. Отдельный пользователь и папка: `useradd --system --home /opt/icube-game-test icube-game`, свой checkout репозитория в `/opt/icube-game-test`, `cd game && npm ci --ignore-scripts --omit=dev`. У пользователя `icube-game` нет доступа к `/opt/icube-crm` и `.env` CRM.
+2. База и пользователь MySQL только для игры:
+   ```sql
+   CREATE DATABASE icube_game_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   CREATE USER 'icube_game_test_app'@'localhost' IDENTIFIED BY '<пароль>';
+   GRANT SELECT, INSERT, UPDATE, CREATE, ALTER, INDEX, REFERENCES ON icube_game_test.* TO 'icube_game_test_app'@'localhost';
+   ```
+   Прав на `icube_test` и `icube_prod` у него нет (`SHOW GRANTS`).
+3. `/opt/icube-game-test/game/.env` по образцу `game/.env.test.example`, права 600. `GAME_INTERNAL_TOKEN` совпадает с CRM, `GAME_LOGIN_GRANT_KEY` туда не входит.
+4. Миграции игры: `cd /opt/icube-game-test/game && set -a && . ./.env && set +a && npm run migrate`. Раннер откажется работать с любой базой, кроме `icube_game_test`.
+5. `deploy/icube-game-test.service` → `/etc/systemd/system/`, `systemctl daemon-reload && systemctl enable --now icube-game-test`, затем `npm run health`.
+6. Nginx: `location /game/` по образцу `deploy/nginx-game-test.example.conf`. `X-Real-IP` должен перезаписываться значением `$remote_addr` настоящего клиента: если перед Nginx стоит ещё прокси, сначала выяснить это на этапе 0.
+7. В CRM test: `GAME_ENABLED=true`, `GAME_INTERNAL_TOKEN`, `GAME_LOGIN_GRANT_KEY`, перезапуск CRM.
+
+Откат игры: `systemctl stop icube-game-test` и убрать `location /game/`. CRM от этого не меняется. Обновление игры — `git pull` в `/opt/icube-game-test` и `systemctl restart icube-game-test`; CRM при этом не перезапускается.
+
 При выключенной игре в журнале запросов будет один `GET /children/:id/game-access` с ответом 404 на загрузку страницы директора или партнёра. Это ожидаемо. `deleteChild` выполняет дополнительный `SELECT ... FOR UPDATE` и обезличивает игровую учётку, если она есть.

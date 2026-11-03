@@ -6,6 +6,7 @@ export const GAME_LOGIN_LIMITS = Object.freeze({
   windowMs: 15 * 60 * 1000, blockMs: 15 * 60 * 1000,
   knownPairMs: 30 * 24 * 60 * 60 * 1000, maxEntries: 50_000,
   maxPairInFlight: 1, maxIpInFlight: 3,
+  grantFailures: 5, maxGrantInFlight: 1,
 });
 
 function expandIpv6(value) {
@@ -62,7 +63,11 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
   const ips = new Map();
   const knownPairs = new Map();
   const unlocked = new Map();
-  const flight = { pairs: new Map(), logins: new Map(), ips: new Map() };
+  const grants = new Map();
+  const flight = { pairs: new Map(), logins: new Map(), ips: new Map(), grants: new Map() };
+  const grantKey = (login, grantId) => `${login}\n${grantId}`;
+  const rateLimited = () => new ApiProblem(429, 'LOGIN_RATE_LIMITED', 'Слишком много попыток входа. Повторите позже');
+  const busy = () => new ApiProblem(429, 'GAME_LOGIN_BUSY', 'Сервер занят. Повторите вход через несколько секунд');
   const pairKey = (ip, login) => `${ip}\n${login}`;
 
   function remember(map, key, value) {
@@ -108,17 +113,56 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
     return false;
   }
 
+  function rememberSuccess(ip, login) {
+    pairs.delete(pairKey(ip, login));
+    remember(knownPairs, pairKey(ip, login), now() + limits.knownPairMs);
+  }
+
+  // Попытка с подлинным разрешением на вход (game-login-grant.mjs) считается только в счётчике
+  // этого разрешения: ни ошибки за тем же адресом, ни перебор логина с других адресов её не закрывают.
+  // Общего счётчика разрешений одного логина нет — иначе укравший одно разрешение закрыл бы остальные.
+  // Устаревшее разрешение (сброс пароля, отключение) game-access.mjs переводит на обычный путь до проверки пароля.
+  // Предел одновременных проверок с адреса тот же: разрешения не дают занять общую очередь.
+  function beginGranted(ip, login, grantId) {
+    const key = grantKey(login, grantId);
+    if (exhausted(grants, flight.grants, key, limits.grantFailures)) throw rateLimited();
+    if ((flight.grants.get(key) ?? 0) >= limits.maxGrantInFlight || (flight.ips.get(ip) ?? 0) >= limits.maxIpInFlight) throw busy();
+    hold(flight.grants, key);
+    hold(flight.ips, ip);
+    let open = true;
+    const finish = () => {
+      if (!open) return false;
+      open = false;
+      drop(flight.grants, key);
+      drop(flight.ips, ip);
+      return true;
+    };
+    return {
+      release: finish,
+      failure() {
+        if (!finish()) return;
+        count(grants, key, limits.grantFailures);
+      },
+      success() {
+        if (!finish()) return;
+        grants.delete(key);
+        rememberSuccess(ip, login);
+      },
+    };
+  }
+
   // Знакомая пара проходит общие уровни: чужие попытки не могут закрыть вход ребёнку.
-  function begin(ip, login) {
+  function begin(ip, login, { grantId = null } = {}) {
+    if (grantId != null && login != null) return beginGranted(ip, login, grantId);
     const pair = login == null ? null : pairKey(ip, login);
     const ipSpent = exhausted(ips, flight.ips, ip, limits.ipFailures);
     const limited = login == null ? ipSpent
       : exhausted(pairs, flight.pairs, pair, limits.pairFailures) || (!isKnown(pair)
         && (exhausted(logins, flight.logins, login, limits.loginFailures) || (ipSpent && !isUnlocked(login))));
-    if (limited) throw new ApiProblem(429, 'LOGIN_RATE_LIMITED', 'Слишком много попыток входа. Повторите позже');
+    if (limited) throw rateLimited();
     // Один адрес не может занять общую очередь проверки паролей, даже с верным паролем.
     if ((flight.ips.get(ip) ?? 0) >= limits.maxIpInFlight || (pair != null && (flight.pairs.get(pair) ?? 0) >= limits.maxPairInFlight)) {
-      throw new ApiProblem(429, 'GAME_LOGIN_BUSY', 'Сервер занят. Повторите вход через несколько секунд');
+      throw busy();
     }
 
     hold(flight.ips, ip);
@@ -142,8 +186,7 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
       },
       success() {
         if (!finish() || login == null) return;
-        pairs.delete(pair);
-        remember(knownPairs, pair, now() + limits.knownPairMs);
+        rememberSuccess(ip, login);
       },
     };
   }
@@ -151,9 +194,10 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
   function unlock(login) {
     logins.delete(login);
     for (const key of pairs.keys()) if (key.endsWith(`\n${login}`)) pairs.delete(key);
+    for (const key of grants.keys()) if (key.startsWith(`${login}\n`)) grants.delete(key);
     remember(unlocked, login, now() + limits.blockMs);
   }
 
-  const size = () => ({ pairs: pairs.size, logins: logins.size, ips: ips.size, knownPairs: knownPairs.size });
+  const size = () => ({ pairs: pairs.size, logins: logins.size, ips: ips.size, knownPairs: knownPairs.size, grants: grants.size });
   return { begin, unlock, size };
 }

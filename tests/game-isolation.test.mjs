@@ -74,6 +74,12 @@ test('в database/migrations нет таблиц игры', () => {
   for (const file of migrationFiles) assert.deepEqual(findGameTables(read(file)), [], file);
 });
 
+test('миграции игры создают только таблицы game_*', () => {
+  for (const file of listFiles('game/migrations', new Set(['.sql']))) {
+    for (const table of crmTablesIn(read(file))) assert.match(table, /^game_/, `${file}: ${table}`);
+  }
+});
+
 test('миграции игры не обращаются к таблицам CRM', () => {
   for (const file of listFiles('game/migrations', new Set(['.sql']))) assert.deepEqual(findCrmTableRefs(stripSqlComments(read(file)), crmTables), [], file);
 });
@@ -95,4 +101,20 @@ test('структура game/ соответствует плану', () => {
   for (const item of ['README.md', 'server', 'client', 'migrations', 'tests']) assert.ok(existsSync(path.join(root, 'game', item)), item);
 });
 
-test.todo('раннер миграций игры падает на именах icube_test и icube_prod (этап 3)');
+test('раннер миграций игры падает на именах icube_test и icube_prod и читает только game/migrations', async () => {
+  const { assertGameDatabase } = await import('../game/server/config.mjs');
+  for (const name of ['icube_test', 'icube_prod']) {
+    for (const appEnv of ['test', 'development', 'production']) assert.throws(() => assertGameDatabase(appEnv, name), `${appEnv}/${name}`);
+  }
+  assert.throws(() => assertGameDatabase('production', 'icube_game_test'));
+  assert.match(read('game/server/migration-runner.mjs'), /path\.join\(path\.dirname\(fileURLToPath\(import\.meta\.url\)\), '\.\.', 'migrations'\)/);
+  assert.match(read('game/server/migrate.mjs'), /runGameMigrations/);
+  assert.doesNotMatch(read('database/migrate.mjs'), /game/);
+});
+
+test('npm test CRM не запускает тесты игры, проверка синтаксиса обходит game/', () => {
+  const pkg = JSON.parse(read('package.json'));
+  assert.equal(pkg.scripts.test, 'node --test "tests/**/*.test.mjs"');
+  assert.match(read('scripts/check-syntax.mjs'), /'game'/);
+  assert.ok(existsSync(path.join(root, 'game', 'package.json')));
+});

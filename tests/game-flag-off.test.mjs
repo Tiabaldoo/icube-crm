@@ -12,7 +12,7 @@ const environment = (overrides) => ({ ...database, APP_ENV: 'test', DB_NAME: 'ic
 const enabled = { GAME_ENABLED: 'true', GAME_INTERNAL_TOKEN: token };
 
 test('без настроек игра выключена', () => {
-  assert.deepEqual(loadConfig(environment({})).game, { enabled: false, requested: false, internalToken: null, internalPort: 3001, allowPrivateClientIp: false });
+  assert.deepEqual(loadConfig(environment({})).game, { enabled: false, requested: false, internalToken: null, internalPort: 3001, allowPrivateClientIp: false, loginGrantKey: null });
 });
 
 test('включается только на test и development с полной настройкой', () => {
