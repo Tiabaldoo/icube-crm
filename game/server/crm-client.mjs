@@ -32,7 +32,8 @@ export function createCrmClient({ baseUrl, token, fetchImpl = fetch, verifyTimeo
   }
 
   return {
-    verifyChild: ({ login, password, clientIp }) => call('POST', '/internal/game/verify-child', { login, password, clientIp }, verifyTimeoutMs),
+    verifyChild: ({ login, password, clientIp, loginGrant = null }) => call('POST', '/internal/game/verify-child',
+      { login, password, clientIp, ...(loginGrant ? { loginGrant } : {}) }, verifyTimeoutMs),
     status: (childId) => call('GET', `/internal/game/children/${encodeURIComponent(childId)}/status`, null, statusTimeoutMs),
   };
 }

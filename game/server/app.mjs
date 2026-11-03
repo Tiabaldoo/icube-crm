@@ -7,6 +7,12 @@ import { ensureProfile } from './profiles.mjs';
 import { GameUnavailable } from './sessions.mjs';
 
 export const SESSION_COOKIE = 'icube_game_session';
+// Разрешение на вход от CRM: не даёт доступа, только защищает вход ребёнка от чужих ошибок.
+// Браузер отправляет его только на адрес входа.
+export const LOGIN_GRANT_COOKIE = 'icube_game_login_grant';
+const LOGIN_GRANT_PATH = '/game/api/login';
+const LOGIN_GRANT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const LOGIN_GRANT_PATTERN = /^[A-Za-z0-9._-]{1,512}$/;
 export const CLIENT_DIRECTORY = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'client');
 const COOKIE_PATH = '/game';
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -105,9 +111,11 @@ export function createGameApp({ config, store, crm, sessions, loginQueue, logger
     const previous = tokenOf(request);
     if (previous) { await sessions.revoke(previous, 'relogin'); clearSession(response); }
 
+    const storedGrant = cookieValue(request.headers.cookie, LOGIN_GRANT_COOKIE);
+    const loginGrant = storedGrant && LOGIN_GRANT_PATTERN.test(storedGrant) ? storedGrant : null;
     let result;
     for (let attempt = 0; ; attempt += 1) {
-      try { result = await loginQueue.run(clientIp, () => crm.verifyChild({ login, password, clientIp })); } catch (error) {
+      try { result = await loginQueue.run(clientIp, () => crm.verifyChild({ login, password, clientIp, loginGrant })); } catch (error) {
         if (error instanceof LoginQueueFull) throw problems.busy();
         throw error;
       }
@@ -123,7 +131,7 @@ export function createGameApp({ config, store, crm, sessions, loginQueue, logger
       else logger.error(`Вход в игру: неожиданный ответ CRM ${result.status} ${result.code ?? ''}`.trim());
       throw problems.loginUnavailable();
     }
-    const { childId, tokenVersion, firstAccessOn } = result.data ?? {};
+    const { childId, tokenVersion, firstAccessOn, loginGrant: issuedGrant } = result.data ?? {};
     if (!/^[1-9]\d*$/.test(String(childId)) || !Number.isInteger(tokenVersion) || !/^\d{4}-\d{2}-\d{2}$/.test(String(firstAccessOn))) {
       logger.error('Вход в игру: CRM вернула неполный ответ');
       throw problems.loginUnavailable();
@@ -131,6 +139,9 @@ export function createGameApp({ config, store, crm, sessions, loginQueue, logger
     const profile = await ensureProfile(store, { childId: String(childId), firstAccessOn }, { logger });
     const { token, expiresAt } = await sessions.create({ childId: String(childId), tokenVersion });
     response.cookie(SESSION_COOKIE, token, cookieOptions(sessions.cookieMaxAgeMs(expiresAt)));
+    if (typeof issuedGrant === 'string' && LOGIN_GRANT_PATTERN.test(issuedGrant)) {
+      response.cookie(LOGIN_GRANT_COOKIE, issuedGrant, { httpOnly: true, secure: true, sameSite: 'strict', path: LOGIN_GRANT_PATH, maxAge: LOGIN_GRANT_MAX_AGE_MS });
+    }
     response.json({ data: { nickname: profile.nickname } });
   }));
 

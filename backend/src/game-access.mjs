@@ -3,6 +3,7 @@ import { hashPassword } from './auth-service.mjs';
 import { ApiProblem } from './catalog.mjs';
 import { childPasswordWords } from './child-password-words.mjs';
 import { inTransaction } from './db.mjs';
+import { createLoginGrants } from './game-login-grant.mjs';
 import { createGameLoginGuard, normalizeClientIp } from './game-login-guard.mjs';
 import { createPasswordVerifier } from './game-password-verifier.mjs';
 import { partnerProjectId } from './project-scope.mjs';
@@ -45,8 +46,11 @@ export function createGameAccess(pool, {
   createPasswordHash = hashPassword,
   makePassword = generatedChildPassword,
   allowPrivateClientIp = false,
+  loginGrantKey = null,
+  now = () => Date.now(),
 } = {}) {
   let verifier = passwordVerifier;
+  const grants = loginGrantKey ? createLoginGrants({ key: loginGrantKey, now }) : null;
 
   async function transaction(operation) {
     try { return await inTransaction(pool, operation); }
@@ -200,9 +204,12 @@ export function createGameAccess(pool, {
       throw new ApiProblem(400, 'INVALID_CLIENT_IP', 'Некорректный адрес клиента');
     }
     const login = normalizeLogin(body?.login);
-    const attempt = guard.begin(clientIp, login);
+    // Подпись проверяется до базы: подлинное разрешение уводит попытку в свой счётчик (game-login-guard.mjs).
+    const grant = login && grants ? grants.read(body?.loginGrant, login) : null;
+    const attempt = guard.begin(clientIp, login, { grantId: grant?.grantId ?? null });
     let result = null;
     let slot = null;
+    let staleGrant = false;
     try {
       verifier ??= createPasswordVerifier();
       slot = verifier.reserve();
@@ -212,6 +219,8 @@ export function createGameAccess(pool, {
         FROM users u LEFT JOIN child_user_accounts a ON a.user_id=u.id LEFT JOIN children c ON c.id=a.child_id
         WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
       const user = rows[0] ?? null;
+      // Разрешение выдано другому пользователю или до сброса пароля и отключения доступа: льгот не даёт.
+      staleGrant = grant != null && (user == null || String(user.id) !== grant.userId || Number(user.token_version) !== grant.tokenVersion);
       const passwordOk = await slot.compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
       const allowed = passwordOk && password.length <= MAX_PASSWORD_LENGTH && user != null && user.status === 'active' && user.deleted_at == null
         && user.child_id != null && user.child_deleted_at == null && LOGIN_STATUSES.has(user.child_status)
@@ -220,6 +229,8 @@ export function createGameAccess(pool, {
         result = {
           childId: String(user.child_id), userId: String(user.id),
           tokenVersion: Number(user.token_version), firstAccessOn: firstAccessOn(user.created_at),
+          // Новое разрешение — только после верного пароля, с новым id и текущей token_version.
+          ...(grants ? { loginGrant: grants.sign({ userId: user.id, login, tokenVersion: Number(user.token_version) }) } : {}),
         };
       }
     } catch (error) {
@@ -227,7 +238,7 @@ export function createGameAccess(pool, {
       throw error;
     } finally { slot?.release(); }
     if (!result) {
-      attempt.failure();
+      attempt.failure({ stale: staleGrant });
       throw invalidCredentials();
     }
     attempt.success();

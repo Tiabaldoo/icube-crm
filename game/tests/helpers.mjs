@@ -22,7 +22,7 @@ export const silentLogger = () => {
 export function fakeCrm() {
   const children = new Map();
   const calls = { verify: [], status: [] };
-  const state = { unavailable: false, busyLeft: 0 };
+  const state = { unavailable: false, busyLeft: 0, grants: 0 };
   const crm = {
     async verifyChild(body) {
       calls.verify.push(body);
@@ -30,7 +30,8 @@ export function fakeCrm() {
       if (state.busyLeft > 0) { state.busyLeft -= 1; return { ok: false, status: 429, code: 'GAME_LOGIN_BUSY' }; }
       const child = [...children.values()].find((item) => item.login === body.login);
       if (!child || child.password !== body.password || !child.canLogin) return { ok: false, status: 401, code: 'INVALID_CREDENTIALS' };
-      return { ok: true, data: { childId: child.childId, userId: `u${child.childId}`, tokenVersion: child.tokenVersion, firstAccessOn: child.firstAccessOn } };
+      state.grants += 1;
+      return { ok: true, data: { childId: child.childId, userId: `u${child.childId}`, tokenVersion: child.tokenVersion, firstAccessOn: child.firstAccessOn, loginGrant: `v1.grant${state.grants}.sig` } };
     },
     async status(childId) {
       calls.status.push(childId);

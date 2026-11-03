@@ -22,7 +22,7 @@ test('вход: cookie сессии httpOnly, Secure, SameSite=Strict, Path=/gam
   assert.match(line, /HttpOnly/); assert.match(line, /Secure/); assert.match(line, /SameSite=Strict/); assert.match(line, /Path=\/game(;|$)/);
   assert.match(line, new RegExp(`Max-Age=${SESSION_LIMITS.maxAgeMs / 1000}`));
   assert.equal(response.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(crm.calls.verify[0], { login: 'misha.k', password: 'kot-luna-reka-dom-47', clientIp: CHILD_IP });
+  assert.deepEqual(crm.calls.verify[0], { login: 'misha.k', password: 'kot-luna-reka-dom-47', clientIp: CHILD_IP, loginGrant: null });
   const me = await request(game, '/game/api/me', { cookie: sessionCookie(response.setCookie) });
   assert.deepEqual(me.json, { data: { nickname: response.json.data.nickname } });
 }));
@@ -158,3 +158,24 @@ test('пароль не попадает в журнал даже при сбо�
   assert.equal((await login(game)).status, 500);
   assert.doesNotMatch(game.logger.lines.join('\n'), /kot-luna-reka-dom-47/);
 }, { logger: silentLogger() }));
+
+test('разрешение на вход: cookie только для адреса входа, передаётся в CRM, в ответ не попадает', () => withGame(async ({ game, crm }) => {
+  const first = await login(game);
+  const line = first.setCookie.find((value) => value.startsWith('icube_game_login_grant='));
+  assert.match(line, /HttpOnly/); assert.match(line, /Secure/); assert.match(line, /SameSite=Strict/);
+  assert.match(line, /Path=\/game\/api\/login(;|$)/);
+  assert.match(line, /Max-Age=2592000/);
+  assert.doesNotMatch(first.text, /grant/);
+  const grant = line.split(';')[0];
+  const second = await login(game, undefined, { cookie: grant });
+  assert.equal(crm.calls.verify.at(-1).loginGrant, 'v1.grant1.sig');
+  assert.ok(second.setCookie.some((value) => value.startsWith('icube_game_login_grant=v1.grant2.sig')), 'после входа разрешение обновляется');
+  // Разрешение не открывает игру: без сессии /me — 401.
+  assert.equal((await request(game, '/game/api/me', { cookie: grant })).status, 401);
+  // Выход не трогает разрешение: это не доступ, а защита входа.
+  const out = await request(game, '/game/api/logout', { method: 'POST', body: {}, cookie: sessionCookie(second.setCookie) });
+  assert.ok(!out.setCookie.some((value) => value.startsWith('icube_game_login_grant=')));
+  // Мусор в cookie в CRM не уходит.
+  await login(game, undefined, { cookie: 'icube_game_login_grant=bad value<>' });
+  assert.equal(crm.calls.verify.at(-1).loginGrant, null);
+}));
