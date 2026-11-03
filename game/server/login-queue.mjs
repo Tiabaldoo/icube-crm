@@ -54,13 +54,14 @@ export function createLoginQueue(limits = LOGIN_QUEUE_LIMITS) {
     }
     return new Promise((resolve, reject) => {
       const entry = { ip, resolve, reject, timer: null };
+      // Таймер не отвязываем (unref): ожидающий вход обязан получить отказ по сроку,
+      // даже если больше ничего не держит процесс. Таймер снимается, как только место нашлось.
       entry.timer = setTimeout(() => {
         const index = waiting.indexOf(entry);
         if (index < 0) return;
         waiting.splice(index, 1); add(waitingByIp, ip, -1);
         reject(new LoginQueueFull('Очередь входа не дошла'));
       }, limits.waitTimeoutMs);
-      entry.timer.unref?.();
       waiting.push(entry); add(waitingByIp, ip, 1);
     });
   }

@@ -38,7 +38,8 @@ export function cookieValue(header, name) {
   return null;
 }
 
-const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); });
+// Пауза перед повтором входа держит процесс: иначе ответ ребёнку мог бы не прийти.
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 export function createGameApp({ config, store, crm, sessions, loginQueue, logger = console, clientDirectory = CLIENT_DIRECTORY,
   busyDelay = () => 300 + Math.floor(Math.random() * 700) }) {
