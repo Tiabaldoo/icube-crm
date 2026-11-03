@@ -12,7 +12,8 @@ const environment = (overrides) => ({ ...database, APP_ENV: 'test', DB_NAME: 'ic
 const enabled = { GAME_ENABLED: 'true', GAME_INTERNAL_TOKEN: token };
 
 test('без настроек игра выключена', () => {
-  assert.deepEqual(loadConfig(environment({})).game, { enabled: false, requested: false, internalToken: null, internalPort: 3001, allowPrivateClientIp: false, loginGrantKey: null });
+  assert.deepEqual(loadConfig(environment({})).game, { enabled: false, requested: false, internalToken: null, internalPort: 3001, allowPrivateClientIp: false, loginGrantKey: null,
+    serverUrl: null, bonusMaxStars: 10 });
 });
 
 test('включается только на test и development с полной настройкой', () => {
@@ -76,10 +77,13 @@ test('настоящее приложение CRM: маршрут игры ес�
   try {
     assert.equal((await disabled.call('/auth/me')).status, 200);
     assert.equal((await disabled.call('/children/8/game-access')).status, 404);
+    assert.equal((await disabled.call('/children/8/game-stars')).status, 404);
+    assert.equal(disabled.app.locals.gameAttendance, null);
   } finally { await disabled.close(); }
   const active = await realApp(enabled);
   try {
     assert.equal((await active.call('/children/8/game-access')).status, 200);
+    assert.notEqual(active.app.locals.gameAttendance, null);
   } finally { await active.close(); }
 });
 
@@ -110,10 +114,20 @@ test('при выключенном флаге маршруты игры отв�
   const cookie = login.headers.get('set-cookie').split(';')[0];
   const unknown = await request(crmOff.baseUrl, '/children/8/no-such-route', { cookie });
   assert.equal(unknown.status, 404);
-  for (const [path, method] of [['/children/8/game-access', 'GET'], ['/children/8/game-access', 'POST'], ['/children/8/game-access', 'DELETE'], ['/children/8/game-access/reset-password', 'POST'], ['/children/8/game-access/unlock', 'POST']]) {
+  for (const [path, method] of [['/children/8/game-access', 'GET'], ['/children/8/game-access', 'POST'], ['/children/8/game-access', 'DELETE'], ['/children/8/game-access/reset-password', 'POST'], ['/children/8/game-access/unlock', 'POST'],
+    ['/children/8/game-stars', 'GET'], ['/children/8/game-stars/bonuses', 'POST'], ['/children/8/game-stars/bonuses/1/revoke', 'POST']]) {
     const response = await request(crmOff.baseUrl, path, { method, cookie });
     assert.equal(response.status, 404, path);
     assert.equal((await response.text()).includes('"code"'), false);
   }
   assert.equal((await request(crmOff.baseUrl, '/children/8/game-access')).status, 401);
+});
+
+test('обратный канал игры: только 127.0.0.1, предел бонуса 1–10', () => {
+  assert.equal(loadConfig(environment(enabled)).game.serverUrl, 'http://127.0.0.1:3101');
+  for (const url of ['http://10.0.0.5:3101', 'https://127.0.0.1:3101', 'not a url']) {
+    assert.equal(loadConfig(environment({ ...enabled, GAME_SERVER_INTERNAL_URL: url })).game.serverUrl, null, url);
+  }
+  assert.equal(loadConfig(environment({ ...enabled, GAME_BONUS_MAX_STARS: '5' })).game.bonusMaxStars, 5);
+  for (const value of ['0', '11', 'abc', '2.5']) assert.equal(loadConfig(environment({ ...enabled, GAME_BONUS_MAX_STARS: value })).game.bonusMaxStars, 10, value);
 });

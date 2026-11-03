@@ -12,14 +12,17 @@ import { createWebPushService } from './web-push.mjs';
 import { createMysqlPayments } from './payments.mjs';
 import { createPaymentReceiptService } from './payment-receipts.mjs';
 import { createGameAccess } from './game-access.mjs';
+import { createGameAttendance } from './game-attendance.mjs';
 import { createInternalGameApp, startInternalGameServer } from './game-internal.mjs';
+import { createGameServerClient } from './game-server-client.mjs';
+import { createGameStars } from './game-stars.mjs';
 
-export function startGameIfEnabled({ config, gameAccess, logger = console }) {
+export function startGameIfEnabled({ config, gameAccess, gameAttendance = null, logger = console }) {
   if (!config.game?.enabled) {
     if (config.game?.requested) logger.error('Игра не запущена: GAME_ENABLED не применён для этого окружения или настроек');
     return null;
   }
-  const app = createInternalGameApp({ token: config.game.internalToken, gameAccess });
+  const app = createInternalGameApp({ token: config.game.internalToken, gameAccess, gameAttendance });
   return startInternalGameServer({ app, port: config.game.internalPort, logger });
 }
 
@@ -41,8 +44,13 @@ export function createApp({ config, pool }) {
   const push = createWebPushService(pool, { config: config.push, notificationEvents });
   const gameAccess = config.game?.enabled ? createGameAccess(pool, { allowPrivateClientIp: config.game.allowPrivateClientIp, loginGrantKey: config.game.loginGrantKey }) : null;
   app.locals.gameAccess = gameAccess;
+  app.locals.gameAttendance = gameAccess ? createGameAttendance(pool) : null;
+  if (gameAccess && !config.game.serverUrl) console.error('Бонусы игры выключены: GAME_SERVER_INTERNAL_URL должен указывать на 127.0.0.1');
+  const gameStars = gameAccess && config.game.serverUrl ? createGameStars(pool, {
+    client: createGameServerClient({ baseUrl: config.game.serverUrl, token: config.game.internalToken }), maxStars: config.game.bonusMaxStars,
+  }) : null;
   app.use('/api/v1', createApiRouter(pool, {
-    notificationEvents, lessonPhotos, lessons, parentNotifications, parentPortal, payments, paymentReceipts, push, gameAccess,
+    notificationEvents, lessonPhotos, lessons, parentNotifications, parentPortal, payments, paymentReceipts, push, gameAccess, gameStars,
   }));
   app.use((error, _request, response, _next) => {
     if (!error.status) console.error(error);
@@ -62,5 +70,5 @@ if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).
   app.listen(config.port, '127.0.0.1', () => {
     console.log(`iCube API (${config.appEnv}) слушает 127.0.0.1:${config.port}`);
   });
-  startGameIfEnabled({ config, gameAccess: app.locals.gameAccess });
+  startGameIfEnabled({ config, gameAccess: app.locals.gameAccess, gameAttendance: app.locals.gameAttendance });
 }

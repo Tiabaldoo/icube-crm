@@ -1,0 +1,154 @@
+import { ApiProblem } from './catalog.mjs';
+import { scopedIdempotencyKey } from './idempotency.mjs';
+import { partnerProjectId } from './project-scope.mjs';
+
+// Бонусные звёзды от сотрудников (GAME_PLAN.md, раздел 5, решения Т4, Т5, Т7).
+// CRM проверяет право и границы доступа, пишет audit_log и передаёт бонус игре; баланс и журнал
+// хранит и считает только игра. Сотрудник не может задать баланс: только выдать или отозвать бонус.
+const TEACHER_RECENT_DAYS = 60;
+const CONFIRM_ABOVE = 3;
+const MAX_REASON = 500;
+
+const identifier = (value, name) => {
+  const result = String(value ?? '').trim();
+  if (!/^[1-9]\d{0,19}$/.test(result)) throw new ApiProblem(400, 'VALIDATION_ERROR', `Некорректный ${name}`);
+  return result;
+};
+const hasRole = (context, role) => (context.roles ?? []).includes(role);
+const unavailable = () => new ApiProblem(503, 'GAME_UNAVAILABLE', 'Игра временно недоступна. Звёзды не изменены, повторите позже');
+
+function reasonOf(value) {
+  const reason = typeof value === 'string' ? value.trim() : '';
+  if (reason.length < 3 || reason.length > MAX_REASON) throw new ApiProblem(400, 'VALIDATION_ERROR', `Причина: от 3 до ${MAX_REASON} символов`);
+  return reason;
+}
+
+export function createGameStars(pool, { client, maxStars = 10, logger = console }) {
+  // Т5: директор — все дети; партнёр — дети своего проекта; преподаватель — дети групп, где он
+  // основной преподаватель, и дети занятий, которые он фактически вёл за последние 60 дней.
+  async function inScope(context, childId) {
+    if (hasRole(context, 'director')) return true;
+    if (hasRole(context, 'partner')) {
+      const projectId = partnerProjectId(context);
+      const [rows] = await pool.query(`SELECT 1 FROM child_enrollments WHERE child_id=:childId AND project_id=:projectId
+        AND superseded_at IS NULL LIMIT 1`, { childId, projectId });
+      if (rows.length) return true;
+    }
+    if (hasRole(context, 'teacher')) {
+      const teacherId = context.teacherId ? identifier(context.teacherId, 'teacherId') : await teacherOf(context);
+      if (!teacherId) return false;
+      const [rows] = await pool.query(`SELECT 1 FROM group_memberships gm
+          JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN study_groups g ON g.id=gm.group_id
+        WHERE e.child_id=:childId AND e.superseded_at IS NULL AND g.default_teacher_id=:teacherId AND g.deleted_at IS NULL
+          AND (gm.ended_on IS NULL OR gm.ended_on>=CURRENT_DATE())
+        UNION ALL
+        SELECT 1 FROM attendances a JOIN lessons l ON l.id=a.lesson_id
+        WHERE a.child_id=:childId AND l.actual_teacher_id=:teacherId AND l.deleted_at IS NULL
+          AND l.status IN ('in_progress','completed') AND l.starts_at>=NOW(6) - INTERVAL ${TEACHER_RECENT_DAYS} DAY
+        UNION ALL
+        SELECT 1 FROM lesson_roster_members r JOIN lessons l ON l.id=r.lesson_id
+        WHERE r.child_id=:childId AND l.actual_teacher_id=:teacherId AND l.deleted_at IS NULL
+          AND l.status IN ('in_progress','completed') AND l.starts_at>=NOW(6) - INTERVAL ${TEACHER_RECENT_DAYS} DAY
+        LIMIT 1`, { childId, teacherId });
+      if (rows.length) return true;
+    }
+    return false;
+  }
+
+  async function teacherOf(context) {
+    if (!context.userId) return null;
+    const [rows] = await pool.query('SELECT id FROM teachers WHERE user_id=:userId AND deleted_at IS NULL AND active=TRUE', { userId: context.userId });
+    return rows[0] ? String(rows[0].id) : null;
+  }
+
+  async function scopedChild(rawChildId, context) {
+    if (!['director', 'partner', 'teacher'].some((role) => hasRole(context, role))) throw new ApiProblem(403, 'FORBIDDEN', 'Звёзды игры недоступны');
+    const childId = identifier(rawChildId, 'childId');
+    const [children] = await pool.query('SELECT id FROM children WHERE id=:childId AND deleted_at IS NULL', { childId });
+    // Чужому сотруднику не сообщаем, существует ли ребёнок.
+    if (!children.length) throw new ApiProblem(hasRole(context, 'director') ? 404 : 403, hasRole(context, 'director') ? 'NOT_FOUND' : 'FORBIDDEN', 'Ребёнок недоступен');
+    if (!await inScope(context, childId)) throw new ApiProblem(403, 'FORBIDDEN', 'Ребёнок вне вашей зоны доступа');
+    return childId;
+  }
+
+  function fromGame(result) {
+    if (result.ok) return result.data;
+    if (result.unavailable) throw unavailable();
+    throw new ApiProblem(result.status, result.code, result.message ?? 'Игра отклонила операцию');
+  }
+
+  async function authorNames(ids) {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (!unique.length) return new Map();
+    const [rows] = await pool.query('SELECT id,display_name FROM users WHERE id IN (:ids)', { ids: unique });
+    return new Map(rows.map((row) => [String(row.id), row.display_name]));
+  }
+
+  // Ответ строится из данных игры: браузер ничего не подставляет, права на отзыв считает CRM.
+  async function present(data, context) {
+    const bonuses = data.bonuses ?? [];
+    const names = await authorNames(bonuses.flatMap((bonus) => [bonus.createdByUserId, bonus.revoked?.byUserId]));
+    const director = hasRole(context, 'director');
+    return {
+      wallet: data.wallet, entries: data.entries ?? [], maxStars, confirmAbove: CONFIRM_ABOVE,
+      bonuses: bonuses.map((bonus) => ({
+        ...bonus, createdByName: names.get(bonus.createdByUserId) ?? null,
+        revoked: bonus.revoked ? { ...bonus.revoked, byName: names.get(bonus.revoked.byUserId) ?? null } : null,
+        canRevoke: !bonus.revoked && (director || bonus.createdByUserId === String(context.userId)),
+      })),
+    };
+  }
+
+  async function summary(rawChildId, context = {}) {
+    const childId = await scopedChild(rawChildId, context);
+    const result = await client.stars(childId);
+    if (!result.ok && result.code === 'GAME_PROFILE_MISSING') return { profile: false, maxStars, confirmAbove: CONFIRM_ABOVE };
+    return { profile: true, ...await present(fromGame(result), context) };
+  }
+
+  // Бонус уже записан в игре вместе с автором, причиной и временем: сбой журнала CRM не должен
+  // выглядеть для сотрудника как невыданный бонус (повтор ничего бы не добавил).
+  async function audit(action, context, childId, data) {
+    try {
+      await pool.query(`INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data)
+        VALUES (:actorId,:action,'child',:childId,NULL,:after)`, { actorId: context.userId ?? null, action, childId, after: JSON.stringify(data) });
+    } catch (error) {
+      logger.error(`Не записан audit_log ${action} для ребёнка ${childId}: ${error?.code ?? error?.message}`);
+    }
+  }
+
+  // Итог после операции: если игра успела стать недоступной, сама операция всё равно выполнена.
+  async function after(result, childId, context) {
+    try { return { ...result, ...await summary(childId, context) }; } catch (error) {
+      if (error?.code !== 'GAME_UNAVAILABLE') throw error;
+      return { ...result, profile: true, stale: true };
+    }
+  }
+
+  async function grant(rawChildId, body = {}, context = {}) {
+    const childId = await scopedChild(rawChildId, context);
+    const amount = body?.amount;
+    if (!Number.isInteger(amount) || amount < 1 || amount > maxStars) throw new ApiProblem(400, 'VALIDATION_ERROR', `Количество звёзд: от 1 до ${maxStars}`);
+    const reason = reasonOf(body?.reason);
+    // Т7: больше трёх звёзд — только с явным подтверждением.
+    if (amount > CONFIRM_ABOVE && body?.confirmed !== true) throw new ApiProblem(409, 'GAME_BONUS_CONFIRMATION_REQUIRED', `Подтвердите бонус больше ${CONFIRM_ABOVE} звёзд`);
+    const requestKey = scopedIdempotencyKey({ key: context.idempotencyKey, actorUserId: context.userId, operation: 'game_bonus', entity: childId });
+    const data = fromGame(await client.grantBonus({ childId, amount, reason, actorUserId: String(context.userId), requestKey }));
+    // Повтор того же запроса бонус не создаёт, второй записи в журнал CRM тоже нет.
+    if (!data.replayed) await audit('game_stars.bonus', context, childId, { bonusId: data.bonus.id, amount, reason });
+    return after({ bonus: data.bonus, replayed: data.replayed }, childId, context);
+  }
+
+  async function revoke(rawChildId, rawBonusId, body = {}, context = {}) {
+    const childId = await scopedChild(rawChildId, context);
+    const bonusId = identifier(rawBonusId, 'bonusId');
+    const reason = reasonOf(body?.reason);
+    const data = fromGame(await client.revokeBonus(bonusId, {
+      childId, actorUserId: String(context.userId), actorIsDirector: hasRole(context, 'director'), reason,
+    }));
+    if (!data.replayed) await audit('game_stars.bonus_revoke', context, childId, { bonusId, amount: data.bonus.amount, reason });
+    return after({ bonus: data.bonus, replayed: data.replayed }, childId, context);
+  }
+
+  return { summary, grant, revoke };
+}

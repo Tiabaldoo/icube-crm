@@ -36,6 +36,13 @@ function pushConfig(env) {
   };
 }
 
+function gameServerUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) ? url.origin : null;
+  } catch { return null; }
+}
+
 // Игра разрешена только на test и development. Production закрыт в коде: снять это
 // может только отдельное решение владельца, настройками окружения это не обходится.
 function gameConfig(env, appEnv, database, port) {
@@ -51,9 +58,15 @@ function gameConfig(env, appEnv, database, port) {
   // Без ключа вход работает по правилам этапа 2.
   const grantKey = env.GAME_LOGIN_GRANT_KEY ?? '';
   const grantKeyValid = grantKey.length >= 32 && !/replace_me/i.test(grantKey) && grantKey !== token;
+  // Обратный канал игры для бонусов сотрудников (Т4): только loopback и только http.
+  const serverUrl = gameServerUrl(env.GAME_SERVER_INTERNAL_URL ?? 'http://127.0.0.1:3101');
+  // Т7: предел одной выдачи — от 1 до 10 звёзд, по умолчанию 10.
+  const maxStars = Number(env.GAME_BONUS_MAX_STARS ?? 10);
   return {
     enabled, requested, internalToken: enabled ? token : null, internalPort, allowPrivateClientIp,
     loginGrantKey: enabled && grantKeyValid ? grantKey : null,
+    serverUrl: enabled ? serverUrl : null,
+    bonusMaxStars: Number.isInteger(maxStars) && maxStars >= 1 && maxStars <= 10 ? maxStars : 10,
   };
 }
 

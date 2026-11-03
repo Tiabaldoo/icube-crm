@@ -67,6 +67,7 @@ export function createApiRouter(pool, {
   authService = createAuthService(pool),
   loginRateLimiter = createLoginRateLimiter(),
   gameAccess = null,
+  gameStars = null,
   testAuth = null,
 } = {}) {
   const router = Router();
@@ -239,6 +240,15 @@ export function createApiRouter(pool, {
     router.post('/children/:id/game-access/reset-password', requirePermission('children:write'), noStore, run((request) => gameAccess.resetPassword(request.params.id, request.auth)));
     router.post('/children/:id/game-access/unlock', requirePermission('children:write'), noStore, run((request) => gameAccess.unlock(request.params.id, request.auth)));
     router.delete('/children/:id/game-access', requirePermission('children:write'), noStore, run((request) => gameAccess.disable(request.params.id, request.auth)));
+    // Звёзды игры (этап 4): директор, партнёр и преподаватель в границах Т5. Баланс считает игра.
+    if (gameStars) {
+      router.get('/children/:id/game-stars', requirePermission('children:read'), noStore, run((request) => gameStars.summary(request.params.id, request.auth)));
+      router.post('/children/:id/game-stars/bonuses', requirePermission('children:read'), noStore, run((request) => gameStars.grant(request.params.id, request.body, {
+        ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+      }), 201));
+      router.post('/children/:id/game-stars/bonuses/:bonusId/revoke', requirePermission('children:read'), noStore,
+        run((request) => gameStars.revoke(request.params.id, request.params.bonusId, request.body, request.auth)));
+    }
   }
 
   const projectFilters = (request) => ({ ...request.query, ...(partnerProjectId(request.auth) ? { projectId: partnerProjectId(request.auth) } : {}) });
