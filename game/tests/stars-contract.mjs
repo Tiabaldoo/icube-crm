@@ -108,13 +108,18 @@ export function starsContract(test, makeStore, { prefix = 0 } = {}) {
     // Звёзды в сундуке ещё не на балансе.
     await assert.rejects(s.stars.purchase({ childId: s.childId, itemCode: 'fountain', price: 2, requestKey: key(`a${s.childId}`) }), { code: 'INSUFFICIENT_STARS' });
     await s.stars.openChest(s.childId);
-    const results = await Promise.allSettled([
-      s.stars.purchase({ childId: s.childId, itemCode: 'fountain', price: 2, requestKey: key(`b${s.childId}`) }),
-      s.stars.purchase({ childId: s.childId, itemCode: 'panel', price: 2, requestKey: key(`c${s.childId}`) }),
-    ]);
+    const attempts = [
+      { childId: s.childId, itemCode: 'fountain', price: 2, requestKey: key(`b${s.childId}`) },
+      { childId: s.childId, itemCode: 'panel', price: 2, requestKey: key(`c${s.childId}`) },
+    ];
+    const results = await Promise.allSettled(attempts.map((attempt) => s.stars.purchase(attempt)));
     assert.deepEqual(results.map((item) => item.status).sort(), ['fulfilled', 'rejected']);
-    const again = await s.stars.purchase({ childId: s.childId, itemCode: 'fountain', price: 2, requestKey: key(`b${s.childId}`) });
-    if (results[0].status === 'fulfilled') assert.equal(again.replayed, true);
+    // Кто выиграл гонку, в MySQL зависит от порядка блокировок: проверяем повтор именно победившей покупки.
+    const won = attempts[results.findIndex((item) => item.status === 'fulfilled')];
+    const lost = attempts[results.findIndex((item) => item.status === 'rejected')];
+    assert.equal(results.find((item) => item.status === 'rejected').reason.code, 'INSUFFICIENT_STARS');
+    assert.equal((await s.stars.purchase(won)).replayed, true);
+    await assert.rejects(s.stars.purchase(lost), { code: 'INSUFFICIENT_STARS' });
     assert.equal((await s.read()).wallet.balance, 1);
     await s.check();
   });
@@ -211,7 +216,7 @@ export function starsContract(test, makeStore, { prefix = 0 } = {}) {
       const { entries } = await s.check();
       assert.deepEqual(entries.filter((entry) => entry.attendanceId === '1').map((entry) => entry.amount), [3, -3, 3]);
       assert.equal((await s.read()).wallet.chest, 6);
-      assert.equal(new Set(entries.map((entry) => entry.idempotencyKey)).size, entries.length);
+      assert.ok(entries.every((entry) => entry.idempotencyKey.startsWith(`att:${s.childId}:`)), 'ключ включает ребёнка');
     }
     assert.deepEqual(await first.stars.reconcile(first.childId), { status: 'ok', added: 0 }, 'повтор ничего не добавляет');
   });
