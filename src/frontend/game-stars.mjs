@@ -12,6 +12,9 @@ const loading = new Set();
 const pending = new Map();
 let owner = null;
 let modalChild = null;
+let gameMissing = false;
+// Без сети звёзды всё равно не загрузить, а признак мог остаться в офлайн-снимке: кнопку не показываем.
+const teacherButtonAllowed = (child) => legacy.state.role === 'teacher' && child?.gameStars === true && !gameMissing && globalThis.navigator?.onLine !== false;
 const MODAL_MARKER = 'data-game-stars-modal';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
@@ -50,7 +53,18 @@ async function load(childId) {
   if (user == null || loading.has(key)) return;
   loading.add(key);
   let result;
-  try { result = await api.request(`/children/${childId}/game-stars`); } catch (error) { result = { error: message(error) }; }
+  try { result = await api.request(`/children/${childId}/game-stars`); } catch (error) {
+    // 404 без кода — игру выключили, а признак остался в старых данных (например, в офлайн-снимке
+    // преподавателя): кнопки скрываются до перезагрузки страницы, повторных запросов нет.
+    if (legacy.state.role === 'teacher' && error instanceof ApiError && error.status === 404 && !error.code) {
+      gameMissing = true;
+      loading.delete(key);
+      if (user !== currentUser()) return;
+      if (modalOpen(childId)) { legacy.state.modal = null; modalChild = null; legacy.render(); } else refresh(childId);
+      return;
+    }
+    result = { error: message(error) };
+  }
   loading.delete(key);
   if (user !== currentUser()) return;
   cache.set(String(childId), result);
@@ -109,7 +123,7 @@ if (typeof previousStudentCheck === 'function') {
   window.studentCheck = function (child, ...args) {
     const output = previousStudentCheck.call(this, child, ...args);
     currentUser();
-    if (legacy.state.role !== 'teacher' || child?.gameStars !== true || typeof output !== 'string') return output;
+    if (!teacherButtonAllowed(child) || typeof output !== 'string') return output;
     return withStarButton(output, child.id);
   };
 }
@@ -117,7 +131,7 @@ if (typeof previousStudentCheck === 'function') {
 window.icubeOpenGameStars = (childId) => {
   currentUser();
   const child = (legacy.state.children ?? []).find((item) => String(item.id) === String(childId));
-  if (legacy.state.role !== 'teacher' || child?.gameStars !== true) return;
+  if (!teacherButtonAllowed(child)) return;
   modalChild = String(childId);
   cache.delete(String(childId));
   legacy.state.modal = teacherModal(childId);

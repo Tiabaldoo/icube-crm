@@ -178,3 +178,29 @@ test('преподаватель: отказ сервера показывает
     assert.match(page.state.modal, /Ребёнок вне вашей зоны доступа/);
   } finally { page.restore(); }
 });
+
+test('устаревший признак (игру выключили, данные из офлайн-снимка): один ответ 404 скрывает кнопки, без повторов', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: htmlNotFound });
+  try {
+    window.icubeOpenGameStars(8);
+    await flush();
+    assert.equal(page.calls.length, 1);
+    assert.equal(page.state.modal, null);
+    assert.doesNotMatch(window.studentCheck(teacherChildren[0], {}, false), /game-stars-open/);
+    window.icubeOpenGameStars(12);
+    await flush();
+    assert.equal(page.calls.length, 1);
+  } finally { page.restore(); }
+});
+
+test('без сети кнопки нет: звёзды всё равно не загрузить', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: false } });
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: () => assert.fail('лишний запрос') });
+  try {
+    assert.doesNotMatch(window.studentCheck(teacherChildren[0], {}, false), /game-stars-open/);
+  } finally {
+    page.restore();
+    if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator;
+  }
+});

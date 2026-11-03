@@ -73,8 +73,12 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
     const allowed = new Set();
     // Сбой пометки не должен ломать список детей: без признака кнопки просто не будет.
     try {
+      // Преподаватель определяется один раз на список, а не в каждой пачке.
+      const teacherId = context.teacherId ? identifier(context.teacherId, 'teacherId') : await teacherOf(context);
+      if (!teacherId) return children;
+      const teacherContext = { ...context, teacherId };
       for (let index = 0; index < children.length; index += MARK_BATCH) {
-        for (const id of await allowedChildIds(context, children.slice(index, index + MARK_BATCH).map((child) => child.id))) allowed.add(id);
+        for (const id of await allowedChildIds(teacherContext, children.slice(index, index + MARK_BATCH).map((child) => child.id))) allowed.add(id);
       }
     } catch (error) {
       logger.error(`Признак звёзд в списке детей не добавлен: ${error?.code ?? error?.message}`);
