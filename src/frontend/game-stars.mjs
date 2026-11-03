@@ -3,8 +3,9 @@ import { ApiClient, ApiError } from '../data/api-client.mjs';
 // Звёзды игры (этап 4): итог, журнал, бонусы и их отзыв. Баланс считает только игра; страница показывает
 // ответ сервера и отправляет лишь «выдать» или «отозвать». Права проверяет сервер при каждом запросе.
 // Директор и партнёр — блок в карточке ребёнка, запросы только после ответа игровых маршрутов (game-access.mjs).
-// Преподаватель — кнопка ⭐ у ребёнка в экране занятия, только если в GET /children у ребёнка пришёл признак
-// gameStars (его CRM добавляет лишь при включённой игре). Без игры у преподавателя нет ни кнопки, ни запросов.
+// Преподаватель — пункт «⭐ Звёзды в игре» в меню «⋯» ученика в экране занятия, только если в GET /children
+// у ребёнка пришёл признак gameStars (CRM добавляет его лишь при включённой игре, праве преподавателя и
+// активном игровом доступе). Без игры у преподавателя нет ни пункта, ни запросов.
 const api = new ApiClient();
 const legacy = window.icubeLegacy;
 const cache = new Map();
@@ -91,13 +92,17 @@ function starsContent(childId) {
   const entries = (data.entries ?? []).slice(0, 10).map((entry) => `<div class="muted mini">${escapeHtml(when(entry.createdAt))} · ${escapeHtml(KINDS[entry.kind] ?? entry.kind)} · ${escapeHtml(signed(entry.amount))}</div>`).join('');
   const bonuses = (data.bonuses ?? []).slice(0, 20).map((bonus) => bonusRow(childId, bonus)).join('');
   const draft = pending.get(String(childId)) ?? {};
-  return (`<div class="kpi-line"><div><b>На балансе: ${escapeHtml(wallet.balance)} ⭐</b><div class="muted mini">В сундуке: ${escapeHtml(wallet.chest)}${debt}</div></div></div>
+  const head = `<div class="kpi-line"><div><b>На балансе: ${escapeHtml(wallet.balance)} ⭐</b><div class="muted mini">В сундуке: ${escapeHtml(wallet.chest)}${debt}</div></div></div>`;
+  const history = `${bonuses ? `<div style="margin-top:12px"><b>Бонусы</b>${bonuses}</div>` : ''}
+    ${entries ? `<div style="margin-top:12px"><b>Последние операции</b>${entries}</div>` : ''}`;
+  // Доступ отключён: звёзды сохранены и видны, выдавать и отзывать нельзя (сервер это тоже запрещает).
+  if (data.accessActive === false) return `${head}<div class="notice" style="margin-top:8px">Игровой доступ ребёнка не активен: звёзды сохранены, выдавать и отзывать бонусы нельзя.</div>${history}`;
+  return (`${head}
     <div class="field" style="margin-top:8px"><label>Бонус от сотрудника (1–${escapeHtml(data.maxStars)})</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="input" id="game-bonus-amount" type="number" min="1" max="${escapeHtml(data.maxStars)}" value="${escapeHtml(draft.amount ?? 1)}" style="max-width:90px">
       <input class="input" id="game-bonus-reason" maxlength="500" value="${escapeHtml(draft.reason ?? '')}" placeholder="За что" style="flex:1;min-width:160px">
       <button class="btn primary" ${draft.busy ? 'disabled' : ''} onclick="icubeGrantGameBonus(${childId})">Выдать</button></div></div>
-    ${bonuses ? `<div style="margin-top:12px"><b>Бонусы</b>${bonuses}</div>` : ''}
-    ${entries ? `<div style="margin-top:12px"><b>Последние операции</b>${entries}</div>` : ''}`);
+    ${history}`);
 }
 
 function starsBlock(childId) {
@@ -111,27 +116,53 @@ function teacherModal(childId) {
     <button class="btn" type="button" aria-label="Закрыть" onclick="closeModal()">×</button></div>${starsContent(childId)}</div>`;
 }
 
-// Кнопка — в строке отметок под именем: сетка карточки ученика (отметка, имя, фото, ⋯) не меняется.
-const starButton = (childId) => `<button type="button" class="lesson-student-flag game-stars-open" style="border:0;cursor:pointer;background:#fff8db;color:#8a6100;min-height:28px;padding:4px 10px;font-size:12px" aria-label="Звёзды в игре" title="Звёзды в игре" onclick="icubeOpenGameStars(${Number(childId)})">⭐ Звёзды</button>`;
-function withStarButton(output, childId) {
-  if (output.includes('<div class="lesson-student-flags">')) return output.replace('<div class="lesson-student-flags">', `<div class="lesson-student-flags">${starButton(childId)}`);
-  return output.replace(/<\/div>(<div class="lesson-student-(?:balance|attendance)-slot">)/, `<div class="lesson-student-flags">${starButton(childId)}</div></div>$1`);
-}
+// Пункт «⭐ Звёзды в игре» — в меню «⋯» ученика в экране занятия.
+// Где меню уже есть (тип посещения в завершённом занятии, действия с добавленным ребёнком), пункт
+// добавляется к нему, остальные пункты не меняются. Где меню нет, в пустую ячейку «⋯» встаёт такая же
+// кнопка с одним этим пунктом — только при включённой игре, активном доступе и праве преподавателя.
+const childById = (childId) => (legacy.state.children ?? []).find((item) => String(item.id) === String(childId));
+const starItem = (childId) => `<button class="btn game-stars-open" type="button" onclick="icubeOpenGameStars(${Number(childId)})">⭐ Звёзды в игре</button>`;
+const EMPTY_MORE_SLOT = '<div class="lesson-student-more-slot"></div>';
+const moreButton = (childId) => `<div class="lesson-student-more-slot"><button class="btn student-more trial-more" aria-label="Дополнительные действия" title="Дополнительные действия" onclick="icubeGameStarsMenu(${Number(childId)})">⋯</button></div>`;
 
 const previousStudentCheck = window.studentCheck;
 if (typeof previousStudentCheck === 'function') {
   window.studentCheck = function (child, ...args) {
     const output = previousStudentCheck.call(this, child, ...args);
     currentUser();
-    if (!teacherButtonAllowed(child) || typeof output !== 'string') return output;
-    return withStarButton(output, child.id);
+    if (!teacherButtonAllowed(child) || typeof output !== 'string' || !output.includes(EMPTY_MORE_SLOT)) return output;
+    return output.replace(EMPTY_MORE_SLOT, moreButton(child.id));
   };
 }
 
+// Существующее меню открылось — добавляем пункт первым в его ряд кнопок.
+function withStarMenuItem(name) {
+  const previous = window[name];
+  if (typeof previous !== 'function') return;
+  window[name] = function (childId, ...args) {
+    const result = previous.call(this, childId, ...args);
+    currentUser();
+    const menu = String(legacy.state.modal ?? '');
+    if (teacherButtonAllowed(childById(childId)) && !menu.includes('game-stars-open') && /<div class="modal-actions"[^>]*>/.test(menu)) {
+      legacy.state.modal = menu.replace(/(<div class="modal-actions"[^>]*>)/, (opening) => `${opening}${starItem(childId)}`);
+      legacy.render();
+    }
+    return result;
+  };
+}
+withStarMenuItem('visitTrialOptionsV121');
+withStarMenuItem('icubeExtraOptions');
+
+window.icubeGameStarsMenu = (childId) => {
+  currentUser();
+  if (!teacherButtonAllowed(childById(childId))) return;
+  legacy.state.modal = `<h3>Дополнительные действия</h3><div class="modal-actions" style="flex-wrap:wrap">${starItem(childId)}<button class="btn" onclick="closeModal()">Отмена</button></div>`;
+  legacy.render();
+};
+
 window.icubeOpenGameStars = (childId) => {
   currentUser();
-  const child = (legacy.state.children ?? []).find((item) => String(item.id) === String(childId));
-  if (!teacherButtonAllowed(child)) return;
+  if (!teacherButtonAllowed(childById(childId))) return;
   modalChild = String(childId);
   cache.delete(String(childId));
   legacy.state.modal = teacherModal(childId);

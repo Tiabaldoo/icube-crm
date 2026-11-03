@@ -449,3 +449,24 @@ test('кнопка разблокировки снимает блокировк�
   assert.equal((await verify(f, 'misha.k', password)).childId, '8');
   assert.equal(f.state.audit.at(-1).action, 'game_access.unlock');
 });
+
+test('активный игровой доступ для звёзд: нет учётки, активна, отключена, восстановлена, ребёнок закончил, взрослая учётка', async () => {
+  const f = gameFixture();
+  const active = async (...ids) => [...await f.gameAccess.activeChildIds(ids)].sort();
+  assert.deepEqual(await active(8, 9, 12), [], 'учёток ещё нет');
+  await f.gameAccess.create(8, { login: 'misha.k' }, director);
+  await f.gameAccess.create(9, { login: 'anya.p' }, director);
+  assert.deepEqual(await active(8, 9, 12), ['8', '9'], 'пауза — доступ активен');
+  await f.gameAccess.disable(8, director);
+  assert.deepEqual(await active(8, 9), ['9']);
+  assert.equal((await f.gameAccess.status(8)).canLogin, false, 'то же условие, что и вход в игру');
+  await f.gameAccess.resetPassword(8, director);
+  assert.deepEqual(await active(8, 9), ['8', '9']);
+  f.state.children.find((child) => child.id === 9).status = 'finished';
+  assert.deepEqual(await active(8, 9), ['8']);
+  addLegacyAccount(f, { childId: 12, createdAt: '2026-10-01 10:00:00.000000', roles: ['child', 'parent'] });
+  assert.deepEqual(await active(12), [], 'учётка с взрослой ролью не считается детской');
+  assert.deepEqual(await active(), []);
+  await assert.rejects(f.gameAccess.activeChildIds(['x']), { code: 'VALIDATION_ERROR' });
+  assert.equal(f.state.writes.filter((table) => table === 'child_user_accounts').length, 2, 'проверка ничего не пишет');
+});

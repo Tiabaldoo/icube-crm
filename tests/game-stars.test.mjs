@@ -23,6 +23,10 @@ const otherPartner = { userId: '4', roles: ['partner'], projectIds: ['2'] };
 const teacher = { userId: '40', roles: ['teacher'] };
 const strangerTeacher = { userId: '41', roles: ['teacher'] };
 const parent = { userId: '1', roles: ['parent'] };
+// Игровые учётки CRM: здесь — только какие дети имеют активный доступ. Само условие проверяет
+// game-access.mjs (activeChildIds), его тесты — ниже на фикстуре game-access.
+const activeAccounts = new Set(['8', '9', '12']);
+const accounts = { calls: 0, activeChildIds: async (ids) => { accounts.calls += 1; return new Set(ids.map(String).filter((id) => activeAccounts.has(id))); } };
 
 // Поддельная база CRM: только запросы звёзд и посещений. Неизвестный SQL — ошибка теста.
 function crmPool() {
@@ -84,7 +88,7 @@ before(async () => {
   reconciler = createReconciler({ store: gameStore, crm: crmClient, stars, logger: quiet });
   gameServer = startInternalGameServer({ app: createInternalGameApp({ token: TOKEN, stars, reconciler, logger: quiet }), port: 0, logger: quiet });
   await once(gameServer, 'listening');
-  gameStarsService = createGameStars(crm.pool, {
+  gameStarsService = createGameStars(crm.pool, { gameAccess: accounts,
     client: createGameServerClient({ baseUrl: `http://127.0.0.1:${gameServer.address().port}`, token: TOKEN, logger: quiet }), maxStars: 10, logger: quiet,
   });
   const app = express(); app.use(express.json());
@@ -179,7 +183,7 @@ test('сумма: 1–10, больше 3 — только с подтвержд�
   for (const [method, path] of [['PUT', '/children/8/game-stars'], ['PATCH', '/children/8/game-stars'], ['POST', '/children/8/game-stars'], ['POST', '/children/8/game-stars/balance']]) {
     assert.equal((await api(path, { method, body: { balance: 1000 } })).status, 404, `${method} ${path}`);
   }
-  const limited = createGameStars(crm.pool, { client: { grantBonus: async () => assert.fail('не должно дойти до игры') }, maxStars: 5 });
+  const limited = createGameStars(crm.pool, { gameAccess: accounts, client: { grantBonus: async () => assert.fail('не должно дойти до игры') }, maxStars: 5 });
   await assert.rejects(limited.grant('8', { amount: 6, reason: 'Много', confirmed: true }, { ...director, idempotencyKey: 'k' }), { code: 'VALIDATION_ERROR' });
 });
 
@@ -227,12 +231,12 @@ test('отзыв: автор или директор, с причиной; чу�
 
 test('ребёнок ещё не входил в игру — CRM показывает это, а бонус не выдаётся', async () => {
   const summary = await api('/children/12/game-stars');
-  assert.deepEqual(summary.json.data, { profile: false, maxStars: 10, confirmAbove: 3 });
+  assert.deepEqual(summary.json.data, { profile: false, accessActive: true, maxStars: 10, confirmAbove: 3 });
   assert.equal((await grant(12, { amount: 1, reason: 'Пока рано' }, { key: 'no-profile' })).json.error.code, 'GAME_PROFILE_MISSING');
 });
 
 test('игра недоступна: 503 «игра временно недоступна», audit_log не пишется, повтор после восстановления — один бонус', async () => {
-  const down = createGameStars(crm.pool, { client: createGameServerClient({ baseUrl: 'http://127.0.0.1:9', token: TOKEN, timeoutMs: 500, logger: quiet }), logger: quiet });
+  const down = createGameStars(crm.pool, { gameAccess: accounts, client: createGameServerClient({ baseUrl: 'http://127.0.0.1:9', token: TOKEN, timeoutMs: 500, logger: quiet }), logger: quiet });
   const auditBefore = crm.state.audit.length;
   await assert.rejects(down.grant('8', { amount: 1, reason: 'Пока игра лежит' }, { ...director, idempotencyKey: 'down-1' }), { status: 503, code: 'GAME_UNAVAILABLE' });
   await assert.rejects(down.summary('8', director), { code: 'GAME_UNAVAILABLE' });
@@ -252,7 +256,7 @@ test('ответ игры потерян после записи: повтор �
   const real = createGameServerClient({ baseUrl: `http://127.0.0.1:${gameServer.address().port}`, token: TOKEN, logger: quiet });
   let drop = true;
   const lossy = { ...real, grantBonus: async (body) => { const result = await real.grantBonus(body); if (drop) { drop = false; return { ok: false, unavailable: true }; } return result; } };
-  const service = createGameStars(crm.pool, { client: lossy, logger: quiet });
+  const service = createGameStars(crm.pool, { gameAccess: accounts, client: lossy, logger: quiet });
   const auditBefore = crm.state.audit.length;
   await assert.rejects(service.grant('8', { amount: 1, reason: 'Ответ потерялся' }, { ...director, idempotencyKey: 'lost-1' }), { code: 'GAME_UNAVAILABLE' });
   assert.equal(crm.state.audit.length, auditBefore);
@@ -317,7 +321,46 @@ test('GET /children: при выключенной игре ответ преж�
 });
 
 test('GET /children: сбой проверки прав не ломает список, признака просто нет', async () => {
-  const broken = createGameStars({ query: async () => { throw new Error('Сбой базы'); } }, { client: {}, logger: quiet });
+  const broken = createGameStars({ query: async () => { throw new Error("Сбой базы"); } }, { client: {}, gameAccess: accounts, logger: quiet });
   const list = [{ id: '8' }];
   assert.deepEqual(await broken.markChildren(list, { userId: '40', teacherId: '7', roles: ['teacher'] }), [{ id: '8' }]);
+});
+
+test('активный игровой доступ: без учётки или с отключённой — признака нет, выдача и отзыв запрещены сервером; звёзды сохраняются', async () => {
+  const given = await grant(8, { amount: 2, reason: 'До отключения' }, { as: teacher, key: 'before-disable' });
+  assert.equal(given.status, 201);
+  const chest = gameStore.starsSnapshot('8').wallet.chest;
+  const app = await childrenApp(gameStarsService);
+  try {
+    // Доступ отключён (или ещё не создан — для CRM это одно и то же: activeChildIds его не возвращает).
+    activeAccounts.delete('8');
+    assert.deepEqual((await app.get(teacher)).data.map((child) => child.gameStars ?? false), [false, false, false]);
+    const denied = await grant(8, { amount: 1, reason: 'После отключения' }, { as: teacher, key: 'after-disable' });
+    assert.equal(denied.status, 409); assert.equal(denied.json.error.code, 'GAME_ACCESS_INACTIVE');
+    assert.equal((await grant(8, { amount: 1, reason: 'Директор тоже' }, { as: director, key: 'director-disabled' })).json.error.code, 'GAME_ACCESS_INACTIVE');
+    const revoke = await api(`/children/8/game-stars/bonuses/${given.json.data.bonus.id}/revoke`, { as: teacher, method: 'POST', body: { reason: 'Отзыв без доступа' } });
+    assert.equal(revoke.json.error.code, 'GAME_ACCESS_INACTIVE');
+    assert.equal(gameStore.starsSnapshot('8').wallet.chest, chest, 'звёзды не тронуты');
+    // Директор видит звёзды отключённого ребёнка, но без выдачи и отзыва.
+    const view = (await api('/children/8/game-stars', { as: director })).json.data;
+    assert.equal(view.accessActive, false); assert.equal(view.wallet.chest, chest);
+    assert.ok(view.bonuses.every((bonus) => bonus.canRevoke === false));
+    // Доступ восстановлен — звёзды на месте, признак и выдача снова работают.
+    activeAccounts.add('8');
+    assert.equal((await app.get(teacher)).data[0].gameStars, true);
+    assert.equal((await api('/children/8/game-stars', { as: teacher })).json.data.wallet.chest, chest);
+    assert.equal((await grant(8, { amount: 1, reason: 'После восстановления' }, { as: teacher, key: 'after-restore' })).status, 201);
+  } finally { activeAccounts.add('8'); await app.close(); }
+});
+
+test('пометка списка: активность доступа проверяется только для детей, которых преподаватель вправе награждать', async () => {
+  const app = await childrenApp(gameStarsService);
+  try {
+    const seen = [];
+    const original = accounts.activeChildIds;
+    accounts.activeChildIds = async (ids) => { seen.push([...ids]); return original(ids); };
+    await app.get(teacher);
+    accounts.activeChildIds = original;
+    assert.deepEqual(seen, [['8']]);
+  } finally { await app.close(); }
 });

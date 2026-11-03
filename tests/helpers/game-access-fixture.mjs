@@ -94,6 +94,15 @@ export function gameFixture({ guard = createGameLoginGuard(), ...options } = {})
       return [[{ id: user.id, password_hash: user.password_hash, status: user.status, token_version: user.token_version, deleted_at: user.deleted_at ?? null,
         child_id: account?.child_id ?? null, created_at: account?.created_at ?? null, full_name: child?.full_name ?? null, child_status: child?.status ?? null, child_deleted_at: child?.deleted_at ?? null }]];
     }
+    if (sql.includes('FROM children c JOIN child_user_accounts a ON a.child_id=c.id JOIN users u')) {
+      return [state.accounts.filter((account) => params.ids.includes(String(account.child_id))).flatMap((account) => {
+        const child = state.children.find((item) => item.id === account.child_id && item.deleted_at == null); const user = userById(account.user_id);
+        return child && user ? [{ child_id: child.id, child_status: child.status, user_id: user.id, status: user.status, deleted_at: user.deleted_at ?? null }] : [];
+      })];
+    }
+    if (sql.startsWith('SELECT ur.user_id,r.code FROM user_roles ur')) {
+      return [params.userIds.flatMap((id) => (userById(id)?.roles ?? []).map((code) => ({ user_id: Number(id), code })))];
+    }
     if (sql.includes('FROM children c LEFT JOIN child_user_accounts a')) {
       const child = state.children.find((item) => item.id === Number(params.childId) && item.deleted_at == null);
       if (!child) return [[]];

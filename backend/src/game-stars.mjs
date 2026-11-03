@@ -25,7 +25,10 @@ function reasonOf(value) {
   return reason;
 }
 
-export function createGameStars(pool, { client, maxStars = 10, logger = console }) {
+// gameAccess — сервис игровых учёток (game-access.mjs): активность доступа проверяет он, своей проверки здесь нет.
+export function createGameStars(pool, { client, gameAccess, maxStars = 10, logger = console }) {
+  const activeChildIds = (ids) => gameAccess.activeChildIds(ids);
+
   // Т5: директор — все дети; партнёр — дети своего проекта; преподаватель — дети групп, где он
   // основной преподаватель, и дети занятий, которые он фактически вёл за последние 60 дней.
   // Одна проверка и для одной операции, и для пометки списка детей преподавателя: ids → множество доступных.
@@ -66,8 +69,8 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
   const inScope = async (context, childId) => (await allowedChildIds(context, [childId])).has(String(childId));
 
   // Только при включённой игре: преподаватель получает в GET /children признак gameStars у тех детей,
-  // которым он вправе выдавать звёзды. Это подсказка интерфейсу, а не разрешение: каждая операция
-  // заново проходит scopedChild. Директор и партнёр узнают об игре своим блоком, их список не меняется.
+  // которым он вправе выдавать звёзды и у которых игровой доступ активен. Это подсказка интерфейсу,
+  // а не разрешение: каждая операция заново проходит scopedChild и проверку активного доступа. Директор и партнёр узнают об игре своим блоком, их список не меняется.
   async function markChildren(children, context = {}) {
     if (!hasRole(context, 'teacher') || hasRole(context, 'director') || hasRole(context, 'partner') || !Array.isArray(children)) return children;
     const allowed = new Set();
@@ -78,7 +81,9 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
       if (!teacherId) return children;
       const teacherContext = { ...context, teacherId };
       for (let index = 0; index < children.length; index += MARK_BATCH) {
-        for (const id of await allowedChildIds(teacherContext, children.slice(index, index + MARK_BATCH).map((child) => child.id))) allowed.add(id);
+        const permitted = await allowedChildIds(teacherContext, children.slice(index, index + MARK_BATCH).map((child) => child.id));
+        if (!permitted.size) continue;
+        for (const id of await activeChildIds([...permitted])) allowed.add(id);
       }
     } catch (error) {
       logger.error(`Признак звёзд в списке детей не добавлен: ${error?.code ?? error?.message}`);
@@ -101,6 +106,12 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
     if (!children.length) throw new ApiProblem(hasRole(context, 'director') ? 404 : 403, hasRole(context, 'director') ? 'NOT_FOUND' : 'FORBIDDEN', 'Ребёнок недоступен');
     if (!await inScope(context, childId)) throw new ApiProblem(403, 'FORBIDDEN', 'Ребёнок вне вашей зоны доступа');
     return childId;
+  }
+
+  // Выдать и отозвать звёзды можно только ребёнку с активным игровым доступом (учётка создана и не отключена).
+  // Заработанные звёзды при отключении не трогаются: они в игре и снова видны после восстановления доступа.
+  async function assertActiveAccess(childId) {
+    if (!(await activeChildIds([childId])).has(childId)) throw new ApiProblem(409, 'GAME_ACCESS_INACTIVE', 'У ребёнка нет активного игрового доступа');
   }
 
   function fromGame(result) {
@@ -133,9 +144,13 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
 
   async function summary(rawChildId, context = {}) {
     const childId = await scopedChild(rawChildId, context);
+    const accessActive = (await activeChildIds([childId])).has(childId);
     const result = await client.stars(childId);
-    if (!result.ok && result.code === 'GAME_PROFILE_MISSING') return { profile: false, maxStars, confirmAbove: CONFIRM_ABOVE };
-    return { profile: true, ...await present(fromGame(result), context) };
+    if (!result.ok && result.code === 'GAME_PROFILE_MISSING') return { profile: false, accessActive, maxStars, confirmAbove: CONFIRM_ABOVE };
+    const view = await present(fromGame(result), context);
+    // Без активного доступа звёзды видны, но выдавать и отзывать нельзя.
+    if (!accessActive) view.bonuses = view.bonuses.map((bonus) => ({ ...bonus, canRevoke: false }));
+    return { profile: true, accessActive, ...view };
   }
 
   // Бонус уже записан в игре вместе с автором, причиной и временем: сбой журнала CRM не должен
@@ -163,6 +178,7 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
 
   async function grant(rawChildId, body = {}, context = {}) {
     const childId = await scopedChild(rawChildId, context);
+    await assertActiveAccess(childId);
     const amount = body?.amount;
     if (!Number.isInteger(amount) || amount < 1 || amount > maxStars) throw new ApiProblem(400, 'VALIDATION_ERROR', `Количество звёзд: от 1 до ${maxStars}`);
     const reason = reasonOf(body?.reason);
@@ -179,6 +195,7 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
     const childId = await scopedChild(rawChildId, context);
     const bonusId = identifier(rawBonusId, 'bonusId');
     const reason = reasonOf(body?.reason);
+    await assertActiveAccess(childId);
     const data = fromGame(await client.revokeBonus(bonusId, {
       childId, actorUserId: String(context.userId), actorIsDirector: hasRole(context, 'director'), reason,
     }));

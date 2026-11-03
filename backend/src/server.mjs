@@ -47,7 +47,7 @@ export function createApp({ config, pool }) {
   app.locals.gameAttendance = gameAccess ? createGameAttendance(pool) : null;
   if (gameAccess && !config.game.serverUrl) console.error('Бонусы игры выключены: GAME_SERVER_INTERNAL_URL должен указывать на 127.0.0.1');
   const gameStars = gameAccess && config.game.serverUrl ? createGameStars(pool, {
-    client: createGameServerClient({ baseUrl: config.game.serverUrl, token: config.game.internalToken }), maxStars: config.game.bonusMaxStars,
+    client: createGameServerClient({ baseUrl: config.game.serverUrl, token: config.game.internalToken }), gameAccess, maxStars: config.game.bonusMaxStars,
   }) : null;
   app.use('/api/v1', createApiRouter(pool, {
     notificationEvents, lessonPhotos, lessons, parentNotifications, parentPortal, payments, paymentReceipts, push, gameAccess, gameStars,
