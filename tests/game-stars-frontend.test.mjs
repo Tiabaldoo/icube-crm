@@ -29,7 +29,7 @@ async function loadModules({ role = 'director', respond, inputs = { amount: '2',
   globalThis.window = { icubeLegacy: { state, render() {} }, child: () => '<div>Карточка</div>', alert: (text) => alerts.push(text), confirm, prompt: () => 'Ошибка',
     studentCheck: (child) => stubRow(child),
     // Существующие меню «⋯», как в crm-ui.js и api-sync.mjs.
-    visitTrialOptionsV121: (childId) => { state.modal = '<h3>Тип посещения</h3><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="forceVisitTrialV121(' + childId + ',true,false)">Сделать ознакомительным</button></div>'; },
+    visitTrialOptionsV121: (childId) => { if (state.noLesson) return; state.modal = '<h3>Тип посещения</h3><div class="modal-actions"><button class="btn" onclick="closeModal()">Отмена</button><button class="btn primary" onclick="forceVisitTrialV121(' + childId + ',true,false)">Сделать ознакомительным</button></div>'; },
     icubeExtraOptions: (childId) => { state.modal = '<h3>Дополнительные действия</h3><div class="modal-actions" style="flex-wrap:wrap"><button class="btn danger" onclick="icubeApi.extraRemove(' + childId + ')">Удалить из занятия</button><button class="btn" onclick="closeModal()">Отмена</button></div>'; } };
   globalThis.document = {
     querySelector: (selector) => {
@@ -245,4 +245,44 @@ test('без сети пункта нет: звёзды всё равно не �
     page.restore();
     if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator;
   }
+});
+
+test('запуск из офлайн-снимка (сервер CRM ещё не ответил): признак из кеша не показывает пункт', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: () => assert.fail('лишний запрос') });
+  try {
+    page.state.offlineBootstrap = true;
+    assert.equal(window.studentCheck(teacherChildren[0], {}, false), stubRow(teacherChildren[0]));
+    window.visitTrialOptionsV121(12, false);
+    assert.doesNotMatch(page.state.modal, /game-stars-open/);
+    page.state.offlineBootstrap = false;
+    assert.match(window.studentCheck(teacherChildren[0], {}, false), /icubeGameStarsMenu/);
+  } finally { page.restore(); }
+});
+
+test('выдача получила 409 GAME_ACCESS_INACTIVE: окно перечитывает состояние и убирает форму', async () => {
+  let active = true;
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: (url, options) => {
+    if (options.method === 'POST') { active = false; return json(409, { error: { code: 'GAME_ACCESS_INACTIVE', message: 'У ребёнка нет активного игрового доступа' } }); }
+    return json(200, { data: { ...stars, accessActive: active } });
+  } });
+  try {
+    window.icubeOpenGameStars(8);
+    await flush();
+    assert.match(page.state.modal, /icubeGrantGameBonus/);
+    await window.icubeGrantGameBonus(8);
+    await flush();
+    assert.equal(page.alerts.at(-1), 'У ребёнка нет активного игрового доступа');
+    assert.doesNotMatch(page.state.modal, /icubeGrantGameBonus/);
+    assert.match(page.state.modal, /не активен/);
+  } finally { page.restore(); }
+});
+
+test('меню не открылось (нет занятия): уже открытое другое окно не получает пункт звёзд', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: () => assert.fail('лишний запрос') });
+  try {
+    const other = '<h3>Фото</h3><div class="modal-actions"><button class="btn">Закрыть</button></div>';
+    page.state.modal = other; page.state.noLesson = true;
+    window.visitTrialOptionsV121(12, false);
+    assert.equal(page.state.modal, other);
+  } finally { page.restore(); }
 });

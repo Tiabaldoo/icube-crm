@@ -14,8 +14,8 @@ const pending = new Map();
 let owner = null;
 let modalChild = null;
 let gameMissing = false;
-// Без сети звёзды всё равно не загрузить, а признак мог остаться в офлайн-снимке: кнопку не показываем.
-const teacherButtonAllowed = (child) => legacy.state.role === 'teacher' && child?.gameStars === true && !gameMissing && globalThis.navigator?.onLine !== false;
+// Без сети и при запуске из офлайн-снимка (сервер CRM ещё не ответил) признак мог устареть: пункт не показываем.
+const teacherButtonAllowed = (child) => legacy.state.role === 'teacher' && child?.gameStars === true && !gameMissing && !legacy.state.offlineBootstrap && globalThis.navigator?.onLine !== false;
 const MODAL_MARKER = 'data-game-stars-modal';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
@@ -140,10 +140,12 @@ function withStarMenuItem(name) {
   const previous = window[name];
   if (typeof previous !== 'function') return;
   window[name] = function (childId, ...args) {
+    const before = legacy.state.modal;
     const result = previous.call(this, childId, ...args);
     currentUser();
     const menu = String(legacy.state.modal ?? '');
-    if (teacherButtonAllowed(childById(childId)) && !menu.includes('game-stars-open') && /<div class="modal-actions"[^>]*>/.test(menu)) {
+    // Меню не открылось (нет занятия или строки) — чужое окно не трогаем.
+    if (legacy.state.modal !== before && teacherButtonAllowed(childById(childId)) && !menu.includes('game-stars-open') && /<div class="modal-actions"[^>]*>/.test(menu)) {
       legacy.state.modal = menu.replace(/(<div class="modal-actions"[^>]*>)/, (opening) => `${opening}${starItem(childId)}`);
       legacy.render();
     }
@@ -209,6 +211,8 @@ window.icubeGrantGameBonus = async (childId) => {
     // Ответ не пришёл — ключ сохраняем для повтора; отказ сервера — следующая выдача с новым ключом.
     pending.set(String(childId), error instanceof ApiError && error.status < 500 ? { amount, reason } : { signature, key, amount, reason, busy: false });
     window.alert(message(error));
+    // Доступ отключили, пока окно было открыто: перечитываем состояние, форма выдачи исчезнет.
+    if (error instanceof ApiError && error.code === 'GAME_ACCESS_INACTIVE') { cache.delete(String(childId)); await load(childId); return; }
     refresh(childId);
   }
 };
