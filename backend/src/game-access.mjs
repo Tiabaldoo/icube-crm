@@ -192,6 +192,7 @@ export function createGameAccess(pool, {
     return access;
   }
 
+  // Имён детей игра не получает: в игре у ребёнка только ник, ФИО остаётся в CRM.
   async function verifyChild(body = {}) {
     const clientIp = normalizeClientIp(body?.clientIp, { allowPrivate: allowPrivateClientIp });
     if (!clientIp) {
@@ -207,7 +208,7 @@ export function createGameAccess(pool, {
       slot = verifier.reserve();
       const password = typeof body?.password === 'string' ? body.password : '';
       const [rows] = login ? await pool.query(`SELECT u.id,u.password_hash,u.status,u.token_version,u.deleted_at,
-          a.child_id,a.created_at,c.full_name,c.status child_status,c.deleted_at child_deleted_at
+          a.child_id,a.created_at,c.status child_status,c.deleted_at child_deleted_at
         FROM users u LEFT JOIN child_user_accounts a ON a.user_id=u.id LEFT JOIN children c ON c.id=a.child_id
         WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
       const user = rows[0] ?? null;
@@ -217,7 +218,7 @@ export function createGameAccess(pool, {
         && isChildOnly(await rolesOf(pool, user.id));
       if (allowed) {
         result = {
-          childId: String(user.child_id), userId: String(user.id), displayName: user.full_name,
+          childId: String(user.child_id), userId: String(user.id),
           tokenVersion: Number(user.token_version), firstAccessOn: firstAccessOn(user.created_at),
         };
       }
@@ -235,17 +236,17 @@ export function createGameAccess(pool, {
 
   async function status(rawChildId) {
     const childId = identifier(rawChildId, 'childId');
-    const [rows] = await pool.query(`SELECT c.status child_status,c.full_name,a.user_id,a.created_at,u.status,u.token_version,u.deleted_at
+    const [rows] = await pool.query(`SELECT c.status child_status,a.user_id,a.created_at,u.status,u.token_version,u.deleted_at
       FROM children c LEFT JOIN child_user_accounts a ON a.child_id=c.id LEFT JOIN users u ON u.id=a.user_id
       WHERE c.id=:childId AND c.deleted_at IS NULL LIMIT 1`, { childId });
     const row = rows[0];
-    if (!row) return { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null, displayName: null };
+    if (!row) return { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null };
     const hasAccount = row.user_id != null;
     const canLogin = hasAccount && row.status === 'active' && row.deleted_at == null && LOGIN_STATUSES.has(row.child_status)
       && isChildOnly(await rolesOf(pool, row.user_id));
     return {
       exists: true, canLogin, tokenVersion: hasAccount ? Number(row.token_version) : null, status: row.child_status,
-      firstAccessOn: hasAccount ? firstAccessOn(row.created_at) : null, displayName: row.full_name,
+      firstAccessOn: hasAccount ? firstAccessOn(row.created_at) : null,
     };
   }
 

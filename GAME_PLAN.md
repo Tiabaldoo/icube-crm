@@ -75,7 +75,7 @@ game/
 
 1. Ребёнок открывает `/game/`, вводит логин и пароль.
 2. `POST /game/api/login` → игровой процесс → `POST 127.0.0.1:3001/internal/game/verify-child` (логин, пароль, IP ребёнка: для CRM адрес запроса всегда `127.0.0.1`, поэтому `clientIp` передаётся в теле; loopback-значение отвергается, см. «Защита от перебора»).
-3. CRM проверяет пароль своим кодом (bcrypt), что пользователь `active`, что у него **только** роль `child` (никаких других) и связь в `child_user_accounts`, что ребёнок в статусе `active` или `paused` (Т6). Ограничение попыток входа выполняется здесь же, на стороне CRM; тот же ответ «неверный логин или пароль» для всех отказов. Возвращает `{ childId, userId, displayName, tokenVersion, firstAccessOn }`. Сессию CRM не создаёт.
+3. CRM проверяет пароль своим кодом (bcrypt), что пользователь `active`, что у него **только** роль `child` (никаких других) и связь в `child_user_accounts`, что ребёнок в статусе `active` или `paused` (Т6). Ограничение попыток входа выполняется здесь же, на стороне CRM; тот же ответ «неверный логин или пароль» для всех отказов. Возвращает `{ childId, userId, tokenVersion, firstAccessOn }`: имён детей игра не получает, в игре у ребёнка только ник. Сессию CRM не создаёт.
 4. Игра создаёт свою сессию в `icube_game_test.game_sessions` (хранится только хэш токена) и ставит cookie `icube_game_session`.
 5. При запросах игра сверяет `tokenVersion` и статус ребёнка у CRM не чаще раза в минуту на сессию. Директор или партнёр сбросил пароль или отключил доступ → сессии игры гаснут.
 
@@ -134,7 +134,7 @@ game/
 | Метод | Назначение |
 | --- | --- |
 | `POST /internal/game/verify-child` (этап 2) | логин+пароль+IP ребёнка → ребёнок или отказ; здесь же ограничение попыток входа |
-| `GET /internal/game/children/:childId/status` (этап 2) | `{ exists, canLogin, tokenVersion, status, firstAccessOn, displayName }` |
+| `GET /internal/game/children/:childId/status` (этап 2) | `{ exists, canLogin, tokenVersion, status, firstAccessOn }` |
 | `GET /internal/game/children/:childId/qualifying-attendance` (этап 4) | полный список посещений ребёнка, нужных для правил раздела 13, **включая ознакомительные** (без них не проверить Т1 и Т2): `attendanceId, lessonId, startsAt, attendanceType, isTrial` |
 | `GET /internal/game/children?ids=` (этап 4) | статусы пачки детей для фоновой сверки (существует / `active` / `paused` / закрыт) |
 

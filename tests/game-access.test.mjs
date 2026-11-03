@@ -215,7 +215,7 @@ test('verify-child: успешный вход не создаёт сессию C
   const { password } = await f.gameAccess.create(8, { login: 'misha.k' }, director);
   f.state.writes.length = 0;
   const result = await verify(f, 'misha.k', password);
-  assert.deepEqual(result, { childId: '8', userId: '100', displayName: 'Миша Ковалёв', tokenVersion: 1, firstAccessOn: '2026-11-02' });
+  assert.deepEqual(result, { childId: '8', userId: '100', tokenVersion: 1, firstAccessOn: '2026-11-02' });
   assert.deepEqual(f.state.writes, []); assert.equal(f.state.sessions.length, 0);
 });
 
@@ -257,13 +257,13 @@ test('пауза разрешена, отключение и сброс паро
 
 test('status: нет доступа, закрытые статусы и удалённый ребёнок', async () => {
   const f = gameFixture();
-  assert.deepEqual(await f.gameAccess.status(12), { exists: true, canLogin: false, tokenVersion: null, status: 'active', firstAccessOn: null, displayName: 'Без записей' });
+  assert.deepEqual(await f.gameAccess.status(12), { exists: true, canLogin: false, tokenVersion: null, status: 'active', firstAccessOn: null });
   await f.gameAccess.create(8, { login: 'misha.k' }, director);
   f.state.children[0].status = 'archived';
   const closed = await f.gameAccess.status(8);
   assert.equal(closed.canLogin, false); assert.equal(closed.firstAccessOn, '2026-11-02');
   f.state.children[0].deleted_at = 'x';
-  assert.deepEqual(await f.gameAccess.status(8), { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null, displayName: null });
+  assert.deepEqual(await f.gameAccess.status(8), { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null });
   await rejectsWith(f.gameAccess.status('abc'), 'VALIDATION_ERROR');
 });
 
