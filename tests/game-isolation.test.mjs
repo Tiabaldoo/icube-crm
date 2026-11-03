@@ -74,6 +74,12 @@ test('в database/migrations нет таблиц игры', () => {
   for (const file of migrationFiles) assert.deepEqual(findGameTables(read(file)), [], file);
 });
 
+test('миграции игры создают только таблицы game_*', () => {
+  for (const file of listFiles('game/migrations', new Set(['.sql']))) {
+    for (const table of crmTablesIn(read(file))) assert.match(table, /^game_/, `${file}: ${table}`);
+  }
+});
+
 test('миграции игры не обращаются к таблицам CRM', () => {
   for (const file of listFiles('game/migrations', new Set(['.sql']))) assert.deepEqual(findCrmTableRefs(stripSqlComments(read(file)), crmTables), [], file);
 });

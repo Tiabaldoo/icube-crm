@@ -206,10 +206,9 @@ export function createGameAccess(pool, {
     const login = normalizeLogin(body?.login);
     // Подпись проверяется до базы: подлинное разрешение уводит попытку в свой счётчик (game-login-guard.mjs).
     const grant = login && grants ? grants.read(body?.loginGrant, login) : null;
-    const attempt = guard.begin(clientIp, login, { grantId: grant?.grantId ?? null });
+    let attempt = guard.begin(clientIp, login, { grantId: grant?.grantId ?? null });
     let result = null;
     let slot = null;
-    let staleGrant = false;
     try {
       verifier ??= createPasswordVerifier();
       slot = verifier.reserve();
@@ -220,7 +219,11 @@ export function createGameAccess(pool, {
         WHERE LOWER(u.email)=:email LIMIT 1`, { email: emailFor(login) }) : [[]];
       const user = rows[0] ?? null;
       // Разрешение выдано другому пользователю или до сброса пароля и отключения доступа: льгот не даёт.
-      staleGrant = grant != null && (user == null || String(user.id) !== grant.userId || Number(user.token_version) !== grant.tokenVersion);
+      // До проверки пароля попытка заново проходит обычные пороги, как без разрешения.
+      if (grant != null && (user == null || String(user.id) !== grant.userId || Number(user.token_version) !== grant.tokenVersion)) {
+        attempt.release();
+        attempt = guard.begin(clientIp, login);
+      }
       const passwordOk = await slot.compare(password, user?.password_hash ?? DUMMY_PASSWORD_HASH);
       const allowed = passwordOk && password.length <= MAX_PASSWORD_LENGTH && user != null && user.status === 'active' && user.deleted_at == null
         && user.child_id != null && user.child_deleted_at == null && LOGIN_STATUSES.has(user.child_status)
@@ -238,7 +241,7 @@ export function createGameAccess(pool, {
       throw error;
     } finally { slot?.release(); }
     if (!result) {
-      attempt.failure({ stale: staleGrant });
+      attempt.failure();
       throw invalidCredentials();
     }
     attempt.success();

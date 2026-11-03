@@ -47,3 +47,16 @@ test('переполнение очереди и долгое ожидание �
   await assert.rejects(queue.run('A', async () => { throw new Error('сбой'); }), /сбой/);
   assert.deepEqual(queue.size(), { active: 0, waiting: 0 });
 });
+
+test('IPv6 одной сети /64 делит один предел, как в CRM', async () => {
+  const { queueKey } = await import('../server/login-queue.mjs');
+  assert.equal(queueKey('2001:db8:1:2::1'), queueKey('2001:db8:1:2:aaaa:bbbb:cccc:dddd'));
+  assert.notEqual(queueKey('2001:db8:1:2::1'), queueKey('2001:db8:1:3::1'));
+  assert.equal(queueKey('203.0.113.7'), '203.0.113.7');
+  const queue = createLoginQueue({ maxActive: 8, maxActivePerIp: 3, maxWaiting: 100, maxWaitingPerIp: 30, waitTimeoutMs: 5000 });
+  const gate = deferred(); let running = 0; let peak = 0;
+  const jobs = [...Array(6)].map((_, index) => queue.run(`2001:db8:1:2::${index + 1}`, async () => { running += 1; peak = Math.max(peak, running); await gate.promise; running -= 1; }));
+  await tick();
+  assert.equal(peak, 3);
+  gate.resolve(); await Promise.all(jobs);
+});

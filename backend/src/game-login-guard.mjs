@@ -121,28 +121,27 @@ export function createGameLoginGuard({ now = () => Date.now(), limits = GAME_LOG
   // Попытка с подлинным разрешением на вход (game-login-grant.mjs) считается только в счётчике
   // этого разрешения: ни ошибки за тем же адресом, ни перебор логина с других адресов её не закрывают.
   // Общего счётчика разрешений одного логина нет — иначе укравший одно разрешение закрыл бы остальные.
+  // Устаревшее разрешение (сброс пароля, отключение) game-access.mjs переводит на обычный путь до проверки пароля.
+  // Предел одновременных проверок с адреса тот же: разрешения не дают занять общую очередь.
   function beginGranted(ip, login, grantId) {
     const key = grantKey(login, grantId);
     if (exhausted(grants, flight.grants, key, limits.grantFailures)) throw rateLimited();
-    if ((flight.grants.get(key) ?? 0) >= limits.maxGrantInFlight) throw busy();
+    if ((flight.grants.get(key) ?? 0) >= limits.maxGrantInFlight || (flight.ips.get(ip) ?? 0) >= limits.maxIpInFlight) throw busy();
     hold(flight.grants, key);
+    hold(flight.ips, ip);
     let open = true;
     const finish = () => {
       if (!open) return false;
       open = false;
       drop(flight.grants, key);
+      drop(flight.ips, ip);
       return true;
     };
     return {
       release: finish,
-      // stale — подпись верна, но разрешение устарело (сброс пароля): неудача идёт и в обычные счётчики.
-      failure({ stale = false } = {}) {
+      failure() {
         if (!finish()) return;
         count(grants, key, limits.grantFailures);
-        if (!stale) return;
-        count(ips, ip, limits.ipFailures);
-        count(pairs, pairKey(ip, login), limits.pairFailures);
-        count(logins, login, limits.loginFailures);
       },
       success() {
         if (!finish()) return;

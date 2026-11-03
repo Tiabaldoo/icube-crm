@@ -172,3 +172,23 @@ test('ключ: только при включённой игре, не коро
   assert.equal(loadConfig({ ...base, GAME_LOGIN_GRANT_KEY: KEY }).game.loginGrantKey, null);
   for (const key of ['short', token, `replace_me${KEY}`, '']) assert.equal(loadConfig({ ...on, GAME_LOGIN_GRANT_KEY: key }).game.loginGrantKey, null, key);
 });
+
+test('устаревшее разрешение при закрытом логине: 429 до проверки пароля (ревью)', async () => {
+  const s = setup();
+  const password = await withChild(s);
+  const { loginGrant } = await verify(s.f, 'misha.k', password, HOME);
+  const { password: fresh } = await s.f.gameAccess.resetPassword(8, director);
+  for (let i = 1; i <= 25; i += 1) await fail(s.f, 'misha.k', `192.0.2.${i}`, 1);
+  const compares = s.f.state.compares.length;
+  for (let i = 0; i < 5; i += 1) assert.equal(await outcome(verify(s.f, 'misha.k', fresh, '192.0.2.99', loginGrant)), 'LOGIN_RATE_LIMITED');
+  assert.equal(s.f.state.compares.length, compares, 'bcrypt не вызывался');
+});
+
+test('разрешения не обходят предел одновременных проверок с одного адреса', async () => {
+  const s = setup();
+  const password = await withChild(s);
+  const owned = [];
+  for (let i = 0; i < 6; i += 1) owned.push((await verify(s.f, 'misha.k', password, HOME)).loginGrant);
+  const results = await Promise.all(owned.map((grant) => outcome(verify(s.f, 'misha.k', 'wrong', CLUB, grant))));
+  assert.equal(results.filter((code) => code === 'GAME_LOGIN_BUSY').length, 3);
+});
