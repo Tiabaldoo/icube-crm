@@ -41,11 +41,14 @@ function crmPool() {
     state.statements.push(sql);
     const childId = Number(params.childId);
     if (sql.startsWith('SELECT id FROM children WHERE id=:childId AND deleted_at IS NULL')) return [state.children.filter((child) => child.id === childId).map(({ id }) => ({ id }))];
-    if (sql.includes('FROM child_enrollments WHERE child_id=:childId AND project_id=:projectId')) {
-      return [state.children.some((child) => child.id === childId && child.projects.includes(Number(params.projectId))) ? [{ 1: 1 }] : []];
+    if (sql.includes('FROM child_enrollments WHERE child_id IN (:ids) AND project_id=:projectId')) {
+      return [state.children.filter((child) => params.ids.includes(String(child.id)) && child.projects.includes(Number(params.projectId))).map((child) => ({ child_id: child.id }))];
     }
     if (sql.startsWith('SELECT id FROM teachers WHERE user_id=:userId')) return [state.teachers.filter((item) => item.user_id === Number(params.userId)).map(({ id }) => ({ id }))];
-    if (sql.includes('FROM group_memberships gm')) return [state.teacherChildren.has(`${params.teacherId}:${childId}`) ? [{ 1: 1 }] : []];
+    if (sql.includes('FROM group_memberships gm')) {
+      state.scopeQueries = (state.scopeQueries ?? 0) + 1;
+      return [params.ids.filter((id) => state.teacherChildren.has(`${params.teacherId}:${id}`)).map((id) => ({ child_id: Number(id) }))];
+    }
     if (sql.startsWith('SELECT id,display_name FROM users WHERE id IN')) return [state.users.filter((user) => params.ids.includes(String(user.id)))];
     if (sql.startsWith('SELECT id FROM audit_log')) {
       return [state.audit.filter((row) => row.action === params.action && row.childId === params.childId && String(row.after.bonusId) === params.bonusId).map(() => ({ id: 1 }))];
@@ -265,4 +268,56 @@ test('партнёр-преподаватель без единственног�
   assert.equal((await api('/children/8/game-stars', { as: both })).status, 200);
   assert.equal((await api('/children/9/game-stars', { as: both })).status, 403);
   assert.equal((await api('/children/8/game-stars', { as: { userId: '3', roles: ['partner'], projectIds: [] } })).status, 403);
+});
+
+// GET /children: признак gameStars для преподавателя — только при включённой игре и только «своим» детям.
+async function childrenApp(service) {
+  const listed = [{ id: '8', name: 'Миша' }, { id: '9', name: 'Аня' }, { id: '12', name: 'Петя' }];
+  const app = express(); app.use(express.json());
+  app.use('/api/v1', createApiRouter(crm.pool, {
+    authService: {}, payments: {}, gameAccess: service ? {} : null, gameStars: service,
+    catalog: { list: async (resource) => { assert.equal(resource, 'children'); return listed.map((child) => ({ ...child })); } },
+    testAuth: (request, _response, next) => { request.auth = actor; next(); },
+  }));
+  const server = await listen(app);
+  const get = async (as) => {
+    actor = as;
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/v1/children`);
+    return { status: response.status, text: await response.clone().text(), data: (await response.json()).data };
+  };
+  return { get, close: () => close(server) };
+}
+
+test('GET /children: при включённой игре признак gameStars только у детей, которым преподаватель вправе выдавать звёзды', async () => {
+  const app = await childrenApp(gameStarsService);
+  try {
+    const before = crm.state.scopeQueries ?? 0;
+    const forTeacher = await app.get(teacher);
+    assert.deepEqual(forTeacher.data.map((child) => [child.id, child.gameStars ?? false]), [['8', true], ['9', false], ['12', false]]);
+    assert.equal((crm.state.scopeQueries ?? 0) - before, 1, 'одна пакетная проверка на список');
+    for (const as of [strangerTeacher, { userId: '99', roles: ['teacher'] }, director, partner, { userId: '40', roles: ['partner', 'teacher'], projectIds: ['1'] }]) {
+      const result = await app.get(as);
+      assert.ok(result.data.every((child) => !('gameStars' in child)), JSON.stringify(as));
+    }
+    // Признак не разрешение: операция всё равно проверяет права заново.
+    crm.state.teacherChildren.delete('7:8');
+    assert.equal((await grant(8, { amount: 1, reason: 'Устаревший признак' }, { as: teacher, key: 'stale-mark' })).status, 403);
+    crm.state.teacherChildren.add('7:8');
+  } finally { await app.close(); }
+});
+
+test('GET /children: при выключенной игре ответ прежний — без полей и без запросов к базе', async () => {
+  const app = await childrenApp(null);
+  try {
+    const statements = crm.state.statements.length;
+    const result = await app.get(teacher);
+    assert.equal(result.text, JSON.stringify({ data: [{ id: '8', name: 'Миша' }, { id: '9', name: 'Аня' }, { id: '12', name: 'Петя' }] }));
+    assert.equal(crm.state.statements.length, statements);
+  } finally { await app.close(); }
+});
+
+test('GET /children: сбой проверки прав не ломает список, признака просто нет', async () => {
+  const broken = createGameStars({ query: async () => { throw new Error('Сбой базы'); } }, { client: {}, logger: quiet });
+  const list = [{ id: '8' }];
+  assert.deepEqual(await broken.markChildren(list, { userId: '40', teacherId: '7', roles: ['teacher'] }), [{ id: '8' }]);
 });

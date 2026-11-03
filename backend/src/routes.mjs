@@ -183,6 +183,11 @@ export function createApiRouter(pool, {
   }));
   router.get('/calendar-groups', requirePermission('lessons:read'), run((request) => catalog.calendarGroups(request.auth)));
 
+  // Только при включённой игре (gameStars создаётся под GAME_ENABLED): список детей тот же,
+  // у детей, которым преподаватель вправе выдавать звёзды, — признак gameStars. Без игры маршрут прежний.
+  if (gameStars) {
+    router.get('/children', requirePermission('children:read'), run(async (request) => gameStars.markChildren(await catalog.list('children', request.auth), request.auth)));
+  }
   for (const resource of ['projects', 'directions', 'sites', 'teachers', 'groups', 'children']) {
     const permission = `${resource}:read`;
     router.get(`/${resource}`, requirePermission(permission), run((request) => catalog.list(resource, request.auth)));

@@ -1,18 +1,26 @@
 import { ApiClient, ApiError } from '../data/api-client.mjs';
 
-// Звёзды игры в карточке ребёнка (этап 4): итог, журнал, бонусы и их отзыв.
-// Баланс считает только игра; страница показывает ответ сервера и отправляет лишь «выдать» или «отозвать».
-// Запросы — только после того, как блок игрового доступа (game-access.mjs) получил ответ игровых маршрутов.
+// Звёзды игры (этап 4): итог, журнал, бонусы и их отзыв. Баланс считает только игра; страница показывает
+// ответ сервера и отправляет лишь «выдать» или «отозвать». Права проверяет сервер при каждом запросе.
+// Директор и партнёр — блок в карточке ребёнка, запросы только после ответа игровых маршрутов (game-access.mjs).
+// Преподаватель — кнопка ⭐ у ребёнка в экране занятия, только если в GET /children у ребёнка пришёл признак
+// gameStars (его CRM добавляет лишь при включённой игре). Без игры у преподавателя нет ни кнопки, ни запросов.
 const api = new ApiClient();
 const legacy = window.icubeLegacy;
 const cache = new Map();
 const loading = new Set();
 const pending = new Map();
 let owner = null;
+let modalChild = null;
+const MODAL_MARKER = 'data-game-stars-modal';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (symbol) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[symbol]);
 const canView = () => ['director', 'partner'].includes(legacy.state.role);
-const refresh = (childId) => { if (legacy.state.page === 'child' && String(legacy.state.selectedChild) === String(childId)) legacy.render(); };
+const modalOpen = (childId) => modalChild === String(childId) && String(legacy.state.modal ?? '').includes(MODAL_MARKER);
+function refresh(childId) {
+  if (modalOpen(childId)) { legacy.state.modal = teacherModal(childId); legacy.render(); return; }
+  if (legacy.state.page === 'child' && String(legacy.state.selectedChild) === String(childId)) legacy.render();
+}
 const KINDS = {
   attendance: 'Занятие', attendance_reversal: 'Отмена занятия', trial_followup_bonus: 'Бонус ×2 после пробного',
   trial_followup_reversal: 'Отмена бонуса ×2', staff_bonus: 'Бонус сотрудника', staff_bonus_revoke: 'Отзыв бонуса', purchase: 'Покупка в игре',
@@ -23,7 +31,11 @@ const newKey = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math
 
 function currentUser() {
   const id = legacy.state.authUser?.id ?? null;
-  if (id !== owner) { owner = id; cache.clear(); loading.clear(); pending.clear(); }
+  if (id !== owner) {
+    owner = id; cache.clear(); loading.clear(); pending.clear();
+    if (modalChild != null && String(legacy.state.modal ?? '').includes(MODAL_MARKER)) legacy.state.modal = null;
+    modalChild = null;
+  }
   return id;
 }
 
@@ -54,18 +66,18 @@ function bonusRow(childId, bonus) {
     <div class="muted mini">${escapeHtml(bonus.createdByName ?? `пользователь ${bonus.createdByUserId}`)}, ${escapeHtml(when(bonus.createdAt))}</div>${state}</div>${action}</div>`;
 }
 
-function starsBlock(childId) {
+// Содержимое одно для карточки и для окна преподавателя.
+function starsContent(childId) {
   const data = cache.get(String(childId));
-  if (!data) { queueMicrotask(() => load(childId)); return ''; }
-  const card = (body) => `<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Звёзды в игре</h2></div>${body}</div>`;
-  if (data.error) return card(`<div class="notice">${escapeHtml(data.error)}</div><button class="btn" style="margin-top:8px" onclick="icubeRetryGameStars(${childId})">Повторить</button>`);
-  if (!data.profile) return card('<div class="muted">Ребёнок ещё не входил в игру: звёзды появятся после первого входа.</div>');
+  if (!data) { queueMicrotask(() => load(childId)); return '<div class="muted">Загружаем звёзды…</div>'; }
+  if (data.error) return (`<div class="notice">${escapeHtml(data.error)}</div><button class="btn" style="margin-top:8px" onclick="icubeRetryGameStars(${childId})">Повторить</button>`);
+  if (!data.profile) return ('<div class="muted">Ребёнок ещё не входил в игру: звёзды появятся после первого входа.</div>');
   const wallet = data.wallet ?? { balance: 0, chest: 0, debt: 0 };
   const debt = wallet.debt > 0 ? ` · отменено после траты: ${escapeHtml(wallet.debt)} (погасится следующими звёздами)` : '';
   const entries = (data.entries ?? []).slice(0, 10).map((entry) => `<div class="muted mini">${escapeHtml(when(entry.createdAt))} · ${escapeHtml(KINDS[entry.kind] ?? entry.kind)} · ${escapeHtml(signed(entry.amount))}</div>`).join('');
   const bonuses = (data.bonuses ?? []).slice(0, 20).map((bonus) => bonusRow(childId, bonus)).join('');
   const draft = pending.get(String(childId)) ?? {};
-  return card(`<div class="kpi-line"><div><b>На балансе: ${escapeHtml(wallet.balance)} ⭐</b><div class="muted mini">В сундуке: ${escapeHtml(wallet.chest)}${debt}</div></div></div>
+  return (`<div class="kpi-line"><div><b>На балансе: ${escapeHtml(wallet.balance)} ⭐</b><div class="muted mini">В сундуке: ${escapeHtml(wallet.chest)}${debt}</div></div></div>
     <div class="field" style="margin-top:8px"><label>Бонус от сотрудника (1–${escapeHtml(data.maxStars)})</label>
       <div style="display:flex;gap:8px;flex-wrap:wrap"><input class="input" id="game-bonus-amount" type="number" min="1" max="${escapeHtml(data.maxStars)}" value="${escapeHtml(draft.amount ?? 1)}" style="max-width:90px">
       <input class="input" id="game-bonus-reason" maxlength="500" value="${escapeHtml(draft.reason ?? '')}" placeholder="За что" style="flex:1;min-width:160px">
@@ -73,6 +85,44 @@ function starsBlock(childId) {
     ${bonuses ? `<div style="margin-top:12px"><b>Бонусы</b>${bonuses}</div>` : ''}
     ${entries ? `<div style="margin-top:12px"><b>Последние операции</b>${entries}</div>` : ''}`);
 }
+
+function starsBlock(childId) {
+  if (!cache.get(String(childId))) { queueMicrotask(() => load(childId)); return ''; }
+  return `<div class="card pad" style="margin-top:16px"><div class="section-title"><h2>Звёзды в игре</h2></div>${starsContent(childId)}</div>`;
+}
+
+function teacherModal(childId) {
+  const child = (legacy.state.children ?? []).find((item) => String(item.id) === String(childId));
+  return `<div ${MODAL_MARKER}="${escapeHtml(childId)}"><div class="section-title"><h3>⭐ ${escapeHtml(child?.name ?? 'Звёзды в игре')}</h3>
+    <button class="btn" type="button" aria-label="Закрыть" onclick="closeModal()">×</button></div>${starsContent(childId)}</div>`;
+}
+
+// Кнопка — в строке отметок под именем: сетка карточки ученика (отметка, имя, фото, ⋯) не меняется.
+const starButton = (childId) => `<button type="button" class="lesson-student-flag game-stars-open" style="border:0;cursor:pointer;background:#fff8db;color:#8a6100;min-height:28px;padding:4px 10px;font-size:12px" aria-label="Звёзды в игре" title="Звёзды в игре" onclick="icubeOpenGameStars(${Number(childId)})">⭐ Звёзды</button>`;
+function withStarButton(output, childId) {
+  if (output.includes('<div class="lesson-student-flags">')) return output.replace('<div class="lesson-student-flags">', `<div class="lesson-student-flags">${starButton(childId)}`);
+  return output.replace(/<\/div>(<div class="lesson-student-(?:balance|attendance)-slot">)/, `<div class="lesson-student-flags">${starButton(childId)}</div></div>$1`);
+}
+
+const previousStudentCheck = window.studentCheck;
+if (typeof previousStudentCheck === 'function') {
+  window.studentCheck = function (child, ...args) {
+    const output = previousStudentCheck.call(this, child, ...args);
+    currentUser();
+    if (legacy.state.role !== 'teacher' || child?.gameStars !== true || typeof output !== 'string') return output;
+    return withStarButton(output, child.id);
+  };
+}
+
+window.icubeOpenGameStars = (childId) => {
+  currentUser();
+  const child = (legacy.state.children ?? []).find((item) => String(item.id) === String(childId));
+  if (legacy.state.role !== 'teacher' || child?.gameStars !== true) return;
+  modalChild = String(childId);
+  cache.delete(String(childId));
+  legacy.state.modal = teacherModal(childId);
+  legacy.render();
+};
 
 const previousChild = window.child;
 if (typeof previousChild === 'function') {

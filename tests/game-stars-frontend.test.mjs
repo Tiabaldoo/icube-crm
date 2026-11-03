@@ -13,13 +13,19 @@ const stars = {
 };
 
 // Оба модуля карточки, как на странице: сначала доступ, потом звёзды.
-async function loadModules({ role = 'director', respond, inputs = { amount: '2', reason: 'Лучший проект' }, confirm = () => true }) {
-  const state = { role, page: 'child', childTab: 'overview', selectedChild: 8, authUser: { id: '2' } };
+// Строка ученика в экране занятия — как её собирает crm-ui.js (studentCheck).
+const studentRow = (child, flags = '') => '<div class="student-check lesson-student-card"><div class="lesson-student-name-cell"><div class="lesson-student-name">'
+  + child.name + '</div>' + (flags ? '<div class="lesson-student-flags">' + flags + '</div>' : '') + '</div><div class="lesson-student-attendance-slot"><input type="checkbox"></div>'
+  + '<div class="lesson-photo-control-slot"></div><div class="lesson-student-more-slot"></div></div>';
+
+async function loadModules({ role = 'director', respond, inputs = { amount: '2', reason: 'Лучший проект' }, confirm = () => true, children = [] }) {
+  const state = { role, page: role === 'teacher' ? 'teacherLesson' : 'child', childTab: 'overview', selectedChild: 8, authUser: { id: '2' }, children, modal: null };
   const original = { window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch, localStorage: globalThis.localStorage };
   const calls = []; const alerts = [];
   const page = { respond };
   globalThis.fetch = async (url, options = {}) => { calls.push({ url: String(url), method: options.method ?? 'GET', headers: options.headers ?? {}, body: options.body ? JSON.parse(options.body) : undefined }); return page.respond(String(url), options); };
-  globalThis.window = { icubeLegacy: { state, render() {} }, child: () => '<div>Карточка</div>', alert: (text) => alerts.push(text), confirm, prompt: () => 'Ошибка' };
+  globalThis.window = { icubeLegacy: { state, render() {} }, child: () => '<div>Карточка</div>', alert: (text) => alerts.push(text), confirm, prompt: () => 'Ошибка',
+    studentCheck: (child) => studentRow(child, child.birthday ? '<span class="lesson-student-flag birthday">🎂</span>' : '') };
   globalThis.document = {
     querySelector: (selector) => {
       if (selector === '#game-bonus-amount') return { value: inputs.amount };
@@ -108,4 +114,67 @@ test('модуль звёзд входит в оболочку PWA и подкл
   const index = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(shell, /\.\/src\/frontend\/game-stars\.mjs/);
   assert.ok(index.indexOf('game-access.mjs') < index.indexOf('game-stars.mjs'));
+});
+
+const teacherChildren = [{ id: 8, name: 'Миша', gameStars: true }, { id: 9, name: 'Аня' }, { id: 12, name: 'Петя', gameStars: true, birthday: true }];
+
+test('преподаватель без признака gameStars (игра выключена): ни кнопки, ни запросов', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren.map(({ gameStars, ...child }) => child), respond: () => assert.fail('лишний запрос') });
+  try {
+    for (const child of page.state.children) assert.equal(window.studentCheck(child, {}, false), studentRow(child, child.birthday ? '<span class="lesson-student-flag birthday">🎂</span>' : ''));
+    window.icubeOpenGameStars(8);
+    await flush();
+    assert.equal(page.calls.length, 0); assert.equal(page.state.modal, null);
+  } finally { page.restore(); }
+});
+
+test('преподаватель: кнопка ⭐ только у детей с признаком, в строке отметок, сетка строки не меняется', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: () => assert.fail('лишний запрос') });
+  try {
+    const marked = window.studentCheck(teacherChildren[0], {}, false);
+    assert.match(marked, /<div class="lesson-student-flags"><button type="button" class="lesson-student-flag game-stars-open"[^>]*onclick="icubeOpenGameStars\(8\)"/);
+    assert.equal(marked.match(/lesson-student-name-cell/g).length, 1);
+    assert.equal(marked.replace(/<div class="lesson-student-flags"><button[^]*?<\/button><\/div>/, ''), studentRow(teacherChildren[0]));
+    const withFlags = window.studentCheck(teacherChildren[2], {}, true);
+    assert.equal(withFlags.match(/lesson-student-flags/g).length, 1, 'кнопка добавляется в существующую строку отметок');
+    assert.doesNotMatch(window.studentCheck(teacherChildren[1], {}, false), /game-stars-open/);
+    assert.equal(page.calls.length, 0, 'до нажатия запросов нет');
+  } finally { page.restore(); }
+});
+
+test('у директора и партнёра в экране занятия кнопки нет, даже если признак есть', async () => {
+  for (const role of ['director', 'partner']) {
+    const page = await loadModules({ role, children: teacherChildren, respond: htmlNotFound });
+    try { assert.doesNotMatch(window.studentCheck(teacherChildren[0], {}, false), /game-stars-open/, role); } finally { page.restore(); }
+  }
+});
+
+test('преподаватель: нажатие открывает окно звёзд, выдача и отзыв идут через тот же API', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: (url) => json(url.includes('/bonuses') ? 201 : 200, { data: { ...stars, bonus: { id: '6' } } }) });
+  try {
+    window.icubeOpenGameStars(8);
+    assert.match(page.state.modal, /data-game-stars-modal="8"/); assert.match(page.state.modal, /Загружаем/);
+    await flush();
+    assert.deepEqual(page.calls.map((call) => call.url), ['/api/v1/children/8/game-stars']);
+    assert.match(page.state.modal, /На балансе: 4 ⭐/); assert.match(page.state.modal, /⭐ Миша/);
+    await window.icubeGrantGameBonus(8);
+    const post = page.calls.find((call) => call.method === 'POST');
+    assert.equal(post.url, '/api/v1/children/8/game-stars/bonuses'); assert.ok(post.headers['Idempotency-Key']);
+    await window.icubeRevokeGameBonus(8, '5');
+    assert.equal(page.calls.at(-1).url, '/api/v1/children/8/game-stars/bonuses/5/revoke');
+    assert.match(page.state.modal, /data-game-stars-modal="8"/);
+    // Окно закрыли — ответы больше его не открывают.
+    page.state.modal = null;
+    await window.icubeRetryGameStars(8);
+    assert.equal(page.state.modal, null);
+  } finally { page.restore(); }
+});
+
+test('преподаватель: отказ сервера показывается в окне, признак не обходит проверку прав', async () => {
+  const page = await loadModules({ role: 'teacher', children: teacherChildren, respond: () => json(403, { error: { code: 'FORBIDDEN', message: 'Ребёнок вне вашей зоны доступа' } }) });
+  try {
+    window.icubeOpenGameStars(8);
+    await flush();
+    assert.match(page.state.modal, /Ребёнок вне вашей зоны доступа/);
+  } finally { page.restore(); }
 });

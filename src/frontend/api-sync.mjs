@@ -130,7 +130,9 @@ function mapChild(child) {
   return { id: Number(child.id), name: child.name, birth: child.birthDate ?? '', school: child.school ?? '', grade: child.grade ?? '',
     parent: child.guardian?.name ?? '', phone: child.guardian?.phone ?? '', status: childStatusFromApi[child.status] ?? child.status,
     createdAt: child.createdAt ?? null, note: child.note ?? '', needsDirectorReview: child.needsDirectorReview,
-    enrollments: child.enrollments.map(mapEnrollment), enrollmentHistory: (child.enrollmentHistory ?? []).map(mapEnrollment) };
+    enrollments: child.enrollments.map(mapEnrollment), enrollmentHistory: (child.enrollmentHistory ?? []).map(mapEnrollment),
+    // Признак приходит только при включённой игре и только преподавателю (game-stars.mjs); это не разрешение.
+    ...(child.gameStars === true ? { gameStars: true } : {}) };
 }
 
 function calendarOccurrenceKey(groupId, date, startTime) {

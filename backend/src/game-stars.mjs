@@ -7,6 +7,7 @@ import { partnerProjectId } from './project-scope.mjs';
 // хранит и считает только игра. Сотрудник не может задать баланс: только выдать или отозвать бонус.
 const TEACHER_RECENT_DAYS = 60;
 const CONFIRM_ABOVE = 3;
+const MARK_BATCH = 500;
 const MAX_REASON = 500;
 
 const identifier = (value, name) => {
@@ -27,35 +28,59 @@ function reasonOf(value) {
 export function createGameStars(pool, { client, maxStars = 10, logger = console }) {
   // Т5: директор — все дети; партнёр — дети своего проекта; преподаватель — дети групп, где он
   // основной преподаватель, и дети занятий, которые он фактически вёл за последние 60 дней.
-  async function inScope(context, childId) {
-    if (hasRole(context, 'director')) return true;
+  // Одна проверка и для одной операции, и для пометки списка детей преподавателя: ids → множество доступных.
+  async function allowedChildIds(context, childIds) {
+    const ids = [...new Set(childIds.map(String))];
+    if (!ids.length) return new Set();
+    if (hasRole(context, 'director')) return new Set(ids);
+    const allowed = new Set();
     if (hasRole(context, 'partner')) {
       // Партнёр без единственного проекта не получает его границ, но как преподаватель проверяется ниже.
       let projectId = null;
       try { projectId = partnerProjectId(context); } catch (error) { if (!hasRole(context, 'teacher')) throw error; }
-      const [rows] = projectId ? await pool.query(`SELECT 1 FROM child_enrollments WHERE child_id=:childId AND project_id=:projectId
-        AND superseded_at IS NULL LIMIT 1`, { childId, projectId }) : [[]];
-      if (rows.length) return true;
+      const [rows] = projectId ? await pool.query(`SELECT DISTINCT child_id FROM child_enrollments WHERE child_id IN (:ids) AND project_id=:projectId
+        AND superseded_at IS NULL`, { ids, projectId }) : [[]];
+      for (const row of rows) allowed.add(String(row.child_id));
     }
     if (hasRole(context, 'teacher')) {
       const teacherId = context.teacherId ? identifier(context.teacherId, 'teacherId') : await teacherOf(context);
-      if (!teacherId) return false;
-      const [rows] = await pool.query(`SELECT 1 FROM group_memberships gm
-          JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN study_groups g ON g.id=gm.group_id
-        WHERE e.child_id=:childId AND e.superseded_at IS NULL AND g.default_teacher_id=:teacherId AND g.deleted_at IS NULL
-          AND (gm.ended_on IS NULL OR gm.ended_on>=CURRENT_DATE())
-        UNION ALL
-        SELECT 1 FROM attendances a JOIN lessons l ON l.id=a.lesson_id
-        WHERE a.child_id=:childId AND l.actual_teacher_id=:teacherId AND l.deleted_at IS NULL
-          AND l.status IN ('in_progress','completed') AND l.starts_at>=NOW(6) - INTERVAL ${TEACHER_RECENT_DAYS} DAY
-        UNION ALL
-        SELECT 1 FROM lesson_roster_members r JOIN lessons l ON l.id=r.lesson_id
-        WHERE r.child_id=:childId AND l.actual_teacher_id=:teacherId AND l.deleted_at IS NULL
-          AND l.status IN ('in_progress','completed') AND l.starts_at>=NOW(6) - INTERVAL ${TEACHER_RECENT_DAYS} DAY
-        LIMIT 1`, { childId, teacherId });
-      if (rows.length) return true;
+      if (teacherId) {
+        const [rows] = await pool.query(`SELECT e.child_id FROM group_memberships gm
+            JOIN child_enrollments e ON e.id=gm.enrollment_id JOIN study_groups g ON g.id=gm.group_id
+          WHERE e.child_id IN (:ids) AND e.superseded_at IS NULL AND g.default_teacher_id=:teacherId AND g.deleted_at IS NULL
+            AND (gm.ended_on IS NULL OR gm.ended_on>=CURRENT_DATE())
+          UNION
+          SELECT a.child_id FROM attendances a JOIN lessons l ON l.id=a.lesson_id
+          WHERE a.child_id IN (:ids) AND l.actual_teacher_id=:teacherId AND l.deleted_at IS NULL
+            AND l.status IN ('in_progress','completed') AND l.starts_at>=NOW(6) - INTERVAL ${TEACHER_RECENT_DAYS} DAY
+          UNION
+          SELECT r.child_id FROM lesson_roster_members r JOIN lessons l ON l.id=r.lesson_id
+          WHERE r.child_id IN (:ids) AND l.actual_teacher_id=:teacherId AND l.deleted_at IS NULL
+            AND l.status IN ('in_progress','completed') AND l.starts_at>=NOW(6) - INTERVAL ${TEACHER_RECENT_DAYS} DAY`, { ids, teacherId });
+        for (const row of rows) allowed.add(String(row.child_id));
+      }
     }
-    return false;
+    return allowed;
+  }
+
+  const inScope = async (context, childId) => (await allowedChildIds(context, [childId])).has(String(childId));
+
+  // Только при включённой игре: преподаватель получает в GET /children признак gameStars у тех детей,
+  // которым он вправе выдавать звёзды. Это подсказка интерфейсу, а не разрешение: каждая операция
+  // заново проходит scopedChild. Директор и партнёр узнают об игре своим блоком, их список не меняется.
+  async function markChildren(children, context = {}) {
+    if (!hasRole(context, 'teacher') || hasRole(context, 'director') || hasRole(context, 'partner') || !Array.isArray(children)) return children;
+    const allowed = new Set();
+    // Сбой пометки не должен ломать список детей: без признака кнопки просто не будет.
+    try {
+      for (let index = 0; index < children.length; index += MARK_BATCH) {
+        for (const id of await allowedChildIds(context, children.slice(index, index + MARK_BATCH).map((child) => child.id))) allowed.add(id);
+      }
+    } catch (error) {
+      logger.error(`Признак звёзд в списке детей не добавлен: ${error?.code ?? error?.message}`);
+      return children;
+    }
+    return children.map((child) => (allowed.has(String(child.id)) ? { ...child, gameStars: true } : child));
   }
 
   async function teacherOf(context) {
@@ -159,5 +184,5 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
     return after({ bonus: data.bonus, replayed: data.replayed }, childId, context);
   }
 
-  return { summary, grant, revoke };
+  return { summary, grant, revoke, markChildren };
 }
