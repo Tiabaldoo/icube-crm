@@ -79,3 +79,5 @@ button:disabled { opacity: 0.6; cursor: wait; }
 .message { min-height: 1.4em; margin: 8px 0 0; color: var(--danger); text-align: center; }
 
 [hidden] { display: none !important; }
+
+.stars { margin: 12px 0 0; font-size: 20px; text-align: center; }

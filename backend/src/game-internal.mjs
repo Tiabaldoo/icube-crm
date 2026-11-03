@@ -9,7 +9,7 @@ const notFound = (response) => response.status(404).json({ error: { code: 'NOT_F
 
 export const isLoopbackAddress = (address) => LOOPBACK_ADDRESSES.has(address);
 
-export function createInternalGameApp({ token, gameAccess, isAllowedPeer = isLoopbackAddress }) {
+export function createInternalGameApp({ token, gameAccess, gameAttendance = null, isAllowedPeer = isLoopbackAddress }) {
   const expected = digest(token);
   const app = express();
   app.disable('x-powered-by');
@@ -25,6 +25,11 @@ export function createInternalGameApp({ token, gameAccess, isAllowedPeer = isLoo
   };
   app.post('/internal/game/verify-child', run((request) => gameAccess.verifyChild(request.body)));
   app.get('/internal/game/children/:childId/status', run((request) => gameAccess.status(request.params.childId)));
+  // Этап 4: посещения для сверки звёзд и статусы пачки детей. Только чтение.
+  if (gameAttendance) {
+    app.get('/internal/game/children/:childId/qualifying-attendance', run((request) => gameAttendance.qualifyingAttendance(request.params.childId)));
+    app.get('/internal/game/children', run((request) => gameAttendance.childrenStatus(request.query.ids)));
+  }
   app.use((_request, response) => notFound(response));
   // Текст ошибки разбора тела цитирует запрос, а в нём может быть пароль.
   app.use((error, _request, response, _next) => {

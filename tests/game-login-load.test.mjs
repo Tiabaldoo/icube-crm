@@ -36,7 +36,9 @@ before(async () => {
   const client = createCrmClient({ baseUrl: `http://127.0.0.1:${crm.address().port}`, token: TOKEN, logger: quiet });
   const store = createMemoryStore();
   const sessions = createSessions({ store, crm: client, logger: quiet });
-  game = await listen(createGameApp({ config: { publicOrigin: ORIGIN, devClientIp: null }, store, crm: client, sessions, loginQueue: createLoginQueue(), logger: quiet }));
+  game = await listen(createGameApp({ config: { publicOrigin: ORIGIN, devClientIp: null }, store, crm: client, sessions, loginQueue: createLoginQueue(),
+    // Звёзды здесь не проверяются: нагрузочный тест только про вход.
+    stars: null, reconciler: { reconcileChild: async () => ({ status: 'skipped', added: 0 }) }, logger: quiet }));
 });
 after(async () => { await close(game); await close(crm); await verifier.close(); });
 

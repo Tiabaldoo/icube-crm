@@ -67,6 +67,7 @@ export function createApiRouter(pool, {
   authService = createAuthService(pool),
   loginRateLimiter = createLoginRateLimiter(),
   gameAccess = null,
+  gameStars = null,
   testAuth = null,
 } = {}) {
   const router = Router();
@@ -182,6 +183,11 @@ export function createApiRouter(pool, {
   }));
   router.get('/calendar-groups', requirePermission('lessons:read'), run((request) => catalog.calendarGroups(request.auth)));
 
+  // Только при включённой игре (gameStars создаётся под GAME_ENABLED): список детей тот же,
+  // у детей, которым преподаватель вправе выдавать звёзды, — признак gameStars. Без игры маршрут прежний.
+  if (gameStars) {
+    router.get('/children', requirePermission('children:read'), run(async (request) => gameStars.markChildren(await catalog.list('children', request.auth), request.auth)));
+  }
   for (const resource of ['projects', 'directions', 'sites', 'teachers', 'groups', 'children']) {
     const permission = `${resource}:read`;
     router.get(`/${resource}`, requirePermission(permission), run((request) => catalog.list(resource, request.auth)));
@@ -239,6 +245,15 @@ export function createApiRouter(pool, {
     router.post('/children/:id/game-access/reset-password', requirePermission('children:write'), noStore, run((request) => gameAccess.resetPassword(request.params.id, request.auth)));
     router.post('/children/:id/game-access/unlock', requirePermission('children:write'), noStore, run((request) => gameAccess.unlock(request.params.id, request.auth)));
     router.delete('/children/:id/game-access', requirePermission('children:write'), noStore, run((request) => gameAccess.disable(request.params.id, request.auth)));
+    // Звёзды игры (этап 4): директор, партнёр и преподаватель в границах Т5. Баланс считает игра.
+    if (gameStars) {
+      router.get('/children/:id/game-stars', requirePermission('children:read'), noStore, run((request) => gameStars.summary(request.params.id, request.auth)));
+      router.post('/children/:id/game-stars/bonuses', requirePermission('children:read'), noStore, run((request) => gameStars.grant(request.params.id, request.body, {
+        ...request.auth, idempotencyKey: requireIdempotencyKey(request.get('Idempotency-Key')),
+      }), 201));
+      router.post('/children/:id/game-stars/bonuses/:bonusId/revoke', requirePermission('children:read'), noStore,
+        run((request) => gameStars.revoke(request.params.id, request.params.bonusId, request.body, request.auth)));
+    }
   }
 
   const projectFilters = (request) => ({ ...request.query, ...(partnerProjectId(request.auth) ? { projectId: partnerProjectId(request.auth) } : {}) });

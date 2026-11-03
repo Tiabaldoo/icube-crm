@@ -225,6 +225,8 @@ systemctl list-timers | grep icube-crm-parent-notifications
 6. Nginx: `location /game/` по образцу `deploy/nginx-game-test.example.conf`. `X-Real-IP` должен перезаписываться значением `$remote_addr` настоящего клиента: если перед Nginx стоит ещё прокси, сначала выяснить это на этапе 0.
 7. В CRM test: `GAME_ENABLED=true`, `GAME_INTERNAL_TOKEN`, `GAME_LOGIN_GRANT_KEY`, перезапуск CRM.
 
+Этап 4 (звёзды): после обновления игры — `npm run migrate` в `/opt/icube-game-test/game` (миграция `002_game_stars.sql`, только `icube_game_test`), затем `systemctl restart icube-game-test` и `npm run health` (ожидается 7 таблиц). Игра дополнительно слушает обратный канал `127.0.0.1:3101` (`GAME_INTERNAL_PORT` в `.env` игры) для бонусов сотрудников: порт должен быть свободен и не проксироваться наружу. В `.env` CRM test — `GAME_SERVER_INTERNAL_URL=http://127.0.0.1:3101` (по умолчанию) и при желании `GAME_BONUS_MAX_STARS` (1–10). Миграций CRM в этапе 4 нет. Фоновая сверка звёзд идёт раз в 12 минут и при входе ребёнка; если CRM недоступна, звёзды не меняются. Игровой процесс должен быть один: не запускайте второй экземпляр `icube-game-test`.
+
 Откат игры: `systemctl stop icube-game-test` и убрать `location /game/`. CRM от этого не меняется. Обновление игры — `git pull` в `/opt/icube-game-test` и `systemctl restart icube-game-test`; CRM при этом не перезапускается.
 
 При выключенной игре в журнале запросов будет один `GET /children/:id/game-access` с ответом 404 на загрузку страницы директора или партнёра. Это ожидаемо. `deleteChild` выполняет дополнительный `SELECT ... FOR UPDATE` и обезличивает игровую учётку, если она есть.

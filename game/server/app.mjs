@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import { LoginQueueFull } from './login-queue.mjs';
 import { ensureProfile } from './profiles.mjs';
 import { GameUnavailable } from './sessions.mjs';
+import { StarProblem } from './star-errors.mjs';
 
 export const SESSION_COOKIE = 'icube_game_session';
 // Разрешение на вход от CRM: не даёт доступа, только защищает вход ребёнка от чужих ошибок.
@@ -41,7 +42,7 @@ export function cookieValue(header, name) {
 // Пауза перед повтором входа держит процесс: иначе ответ ребёнку мог бы не прийти.
 const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
-export function createGameApp({ config, store, crm, sessions, loginQueue, logger = console, clientDirectory = CLIENT_DIRECTORY,
+export function createGameApp({ config, store, crm, sessions, loginQueue, stars, reconciler, logger = console, clientDirectory = CLIENT_DIRECTORY,
   busyDelay = () => 300 + Math.floor(Math.random() * 700) }) {
   const app = express();
   app.disable('x-powered-by');
@@ -143,6 +144,8 @@ export function createGameApp({ config, store, crm, sessions, loginQueue, logger
     if (typeof issuedGrant === 'string' && LOGIN_GRANT_PATTERN.test(issuedGrant)) {
       response.cookie(LOGIN_GRANT_COOKIE, issuedGrant, { httpOnly: true, secure: true, sameSite: 'strict', path: LOGIN_GRANT_PATH, maxAge: LOGIN_GRANT_MAX_AGE_MS });
     }
+    // Звёзды за занятия сверяются при входе; ответ ребёнку CRM не ждёт.
+    reconciler.reconcileChild(String(childId)).catch(() => {});
     response.json({ data: { nickname: profile.nickname } });
   }));
 
@@ -163,6 +166,21 @@ export function createGameApp({ config, store, crm, sessions, loginQueue, logger
     response.json({ data: { nickname: profile.nickname } });
   }));
 
+  // Звёзды считает только сервер: клиент видит итог и может лишь открыть сундук.
+  const childStars = (wallet) => ({ balance: wallet.balance, chest: wallet.chest });
+  api.get('/stars', run(async (request, response) => {
+    const session = await requireSession(request);
+    await reconciler.reconcileChild(session.childId);
+    const { wallet } = await stars.summary(session.childId);
+    response.json({ data: childStars(wallet) });
+  }));
+
+  api.post('/stars/chest/open', sameOrigin, run(async (request, response) => {
+    const session = await requireSession(request);
+    const { opened, wallet } = await stars.openChest(session.childId);
+    response.json({ data: { opened, ...childStars(wallet) } });
+  }));
+
   api.use((_request, _response, next) => next(new Problem(404, 'NOT_FOUND', 'Не найдено')));
 
   app.use('/game/api', api);
@@ -170,7 +188,7 @@ export function createGameApp({ config, store, crm, sessions, loginQueue, logger
   app.use((_request, response) => response.status(404).json({ error: { code: 'NOT_FOUND', message: 'Не найдено' } }));
   // Текст ошибки разбора тела цитирует запрос, а в нём может быть пароль.
   app.use((error, _request, response, _next) => {
-    if (error instanceof Problem) return response.status(error.status).json({ error: { code: error.code, message: error.message } });
+    if (error instanceof Problem || error instanceof StarProblem) return response.status(error.status).json({ error: { code: error.code, message: error.message } });
     if (error?.status >= 400 && error.status < 500) return response.status(error.status).json({ error: { code: 'INVALID_REQUEST', message: 'Некорректный запрос' } });
     logger.error(`Ошибка игрового сервера: ${error?.code ?? error?.message ?? error}`);
     return response.status(500).json({ error: { code: 'INTERNAL_ERROR', message: 'Что-то пошло не так. Попробуй позже' } });

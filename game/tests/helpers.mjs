@@ -1,6 +1,8 @@
 import { createGameApp } from '../server/app.mjs';
 import { createLoginQueue } from '../server/login-queue.mjs';
+import { createReconciler } from '../server/reconciler.mjs';
 import { createSessions } from '../server/sessions.mjs';
+import { createStars } from '../server/stars.mjs';
 import { createMemoryStore } from '../server/store-memory.mjs';
 
 export const ORIGIN = 'https://game.example.test';
@@ -21,8 +23,8 @@ export const silentLogger = () => {
 // Поддельный внутренний API CRM: дети, пароли и статусы задаются в тесте.
 export function fakeCrm() {
   const children = new Map();
-  const calls = { verify: [], status: [] };
-  const state = { unavailable: false, busyLeft: 0, grants: 0 };
+  const calls = { verify: [], status: [], attendance: [], batch: [] };
+  const state = { unavailable: false, busyLeft: 0, grants: 0, attendanceUnavailable: false };
   const crm = {
     async verifyChild(body) {
       calls.verify.push(body);
@@ -40,14 +42,36 @@ export function fakeCrm() {
       if (!child || child.deleted) return { ok: true, data: { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null } };
       return { ok: true, data: { exists: true, canLogin: child.canLogin, tokenVersion: child.tokenVersion, status: 'active', firstAccessOn: child.firstAccessOn } };
     },
+    // Засчитанные посещения ребёнка: child.attendances — как их отдаёт CRM.
+    async qualifyingAttendance(childId) {
+      calls.attendance.push(String(childId));
+      if (state.unavailable || state.attendanceUnavailable) return { ok: false, unavailable: true, reason: 'network' };
+      const child = children.get(String(childId));
+      if (!child || child.deleted) return { ok: true, data: { exists: false, attendances: [] } };
+      return { ok: true, data: { exists: true, attendances: child.attendances.map((item) => ({ ...item })) } };
+    },
+    async childrenStatus(ids) {
+      calls.batch.push(ids);
+      if (state.unavailable) return { ok: false, unavailable: true, reason: 'network' };
+      return { ok: true, data: { children: ids.map((id) => {
+        const child = children.get(String(id));
+        return child && !child.deleted ? { childId: String(id), exists: true, status: 'active' } : { childId: String(id), exists: false, status: null };
+      }) } };
+    },
   };
   const addChild = (childId, login, password, extra = {}) => {
-    const child = { childId: String(childId), login, password, tokenVersion: 1, canLogin: true, firstAccessOn: '2026-11-02', deleted: false, ...extra };
+    const child = { childId: String(childId), login, password, tokenVersion: 1, canLogin: true, firstAccessOn: '2026-11-02', deleted: false, attendances: [], ...extra };
     children.set(String(childId), child);
     return child;
   };
   return { crm, calls, state, addChild, children };
 }
+
+// Посещение в формате ответа CRM. Дата занятия — по Сахалину (+11:00).
+export const visit = (attendanceId, lessonDate, { trial = false, intro = false, hour = 10 } = {}) => ({
+  attendanceId: String(attendanceId), lessonId: String(1000 + Number(attendanceId)), lessonDate,
+  startsAt: `${lessonDate}T${String(hour).padStart(2, '0')}:00:00+11:00`, attendanceType: 'main', isTrial: trial, isIntroLesson: intro,
+});
 
 export function clock(start = Date.UTC(2026, 10, 3, 1, 0, 0)) {
   let value = start;
@@ -56,10 +80,12 @@ export function clock(start = Date.UTC(2026, 10, 3, 1, 0, 0)) {
 
 export async function startGame({ crm, store = createMemoryStore(), time = clock(), config = {}, logger = silentLogger(), queue = createLoginQueue(), busyDelay = () => 1 } = {}) {
   const sessions = createSessions({ store, crm, now: time.now, logger });
-  const app = createGameApp({ config: { publicOrigin: ORIGIN, devClientIp: null, ...config }, store, crm, sessions, loginQueue: queue, logger, busyDelay });
+  const stars = createStars({ store, crm, now: time.now, logger });
+  const reconciler = createReconciler({ store, crm, stars, now: time.now, logger });
+  const app = createGameApp({ config: { publicOrigin: ORIGIN, devClientIp: null, ...config }, store, crm, sessions, loginQueue: queue, stars, reconciler, logger, busyDelay });
   const server = await new Promise((resolve, reject) => { const value = app.listen(0, '127.0.0.1', (error) => (error ? reject(error) : resolve(value))); });
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
-  return { server, baseUrl, store, sessions, time, logger, close: () => new Promise((resolve) => server.close(resolve)) };
+  return { server, baseUrl, store, sessions, stars, reconciler, time, logger, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
 export async function request(game, path, { method = 'GET', body, cookie, origin = ORIGIN, ip = CHILD_IP, contentType = 'application/json', headers = {} } = {}) {

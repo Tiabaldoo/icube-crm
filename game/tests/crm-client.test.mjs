@@ -18,6 +18,8 @@ before(async () => {
     return response.status(401).json({ error: { code: 'INVALID_CREDENTIALS' } });
   });
   app.get('/internal/game/children/:id/status', (request, response) => response.json({ data: { exists: true, id: request.params.id } }));
+  app.get('/internal/game/children/:id/qualifying-attendance', (request, response) => response.json({ data: { exists: true, attendances: [], id: request.params.id } }));
+  app.get('/internal/game/children', (request, response) => response.json({ data: { ids: request.query.ids } }));
   app.use((_request, response) => response.status(404).json({ error: { code: 'NOT_FOUND' } }));
   server = await new Promise((resolve) => { const value = app.listen(0, '127.0.0.1', () => resolve(value)); });
   baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -52,4 +54,12 @@ test('id ребёнка экранируется в пути', async () => {
   const result = await client().status('8/../../x');
   assert.equal(result.ok, true);
   assert.equal(result.data.id, '8/../../x');
+});
+
+test('этап 4: посещения ребёнка и статусы пачки — те же секрет и разбор ответа', async () => {
+  const attendance = await client().qualifyingAttendance('8');
+  assert.deepEqual(attendance, { ok: true, data: { exists: true, attendances: [], id: '8' } });
+  assert.equal(seen.at(-1).token, TOKEN);
+  assert.deepEqual(await client().childrenStatus(['3', '8']), { ok: true, data: { ids: '3,8' } });
+  assert.equal((await createCrmClient({ baseUrl: 'http://127.0.0.1:9', token: TOKEN, logger: silentLogger() }).qualifyingAttendance('8')).unavailable, true);
 });

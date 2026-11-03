@@ -63,10 +63,15 @@ export function loadGameConfig(env = process.env) {
   // Только для локальной разработки: без Nginx адрес ребёнка взять неоткуда, а loopback CRM отвергает.
   const devClientIp = env.GAME_DEV_CLIENT_IP ? String(env.GAME_DEV_CLIENT_IP).trim() : null;
   if (devClientIp && (appEnv !== 'development' || !isIP(devClientIp))) throw new Error('GAME_DEV_CLIENT_IP допустим только при APP_ENV=development');
+  const gamePort = port(env, 'GAME_PORT', 3100);
+  // Обратный канал для CRM (бонусы сотрудников, Т4): отдельный порт, только 127.0.0.1.
+  const internalPort = port(env, 'GAME_INTERNAL_PORT', 3101);
+  if (internalPort === gamePort) throw new Error('GAME_INTERNAL_PORT должен отличаться от GAME_PORT');
   return {
     appEnv,
     database,
-    port: port(env, 'GAME_PORT', 3100),
+    port: gamePort,
+    internalPort,
     crmInternalUrl: crmUrl(env.GAME_CRM_INTERNAL_URL ?? 'http://127.0.0.1:3001'),
     internalToken,
     publicOrigin: publicOrigin(required(env, 'GAME_PUBLIC_ORIGIN'), appEnv),

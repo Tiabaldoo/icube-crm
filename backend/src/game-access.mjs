@@ -27,6 +27,8 @@ const normalizeLogin = (value) => {
 const emailFor = (login) => `${login}${CHILD_LOGIN_SUFFIX}`;
 const loginFrom = (email) => String(email ?? '').endsWith(CHILD_LOGIN_SUFFIX) ? email.slice(0, -CHILD_LOGIN_SUFFIX.length) : email;
 const isChildOnly = (roles) => roles.length === 1 && roles[0] === 'child';
+// Игровой доступ ребёнка действует: строка users (status, deleted_at), статус ребёнка и роли его учётки.
+const accountActive = (row, roles) => row.status === 'active' && row.deleted_at == null && LOGIN_STATUSES.has(row.child_status) && isChildOnly(roles);
 
 // created_at читается в поясе соединения (+11:00), поэтому его дата и есть день по Сахалину.
 function firstAccessOn(createdAt) {
@@ -256,13 +258,30 @@ export function createGameAccess(pool, {
     const row = rows[0];
     if (!row) return { exists: false, canLogin: false, tokenVersion: null, status: null, firstAccessOn: null };
     const hasAccount = row.user_id != null;
-    const canLogin = hasAccount && row.status === 'active' && row.deleted_at == null && LOGIN_STATUSES.has(row.child_status)
-      && isChildOnly(await rolesOf(pool, row.user_id));
+    const canLogin = hasAccount && accountActive(row, await rolesOf(pool, row.user_id));
     return {
       exists: true, canLogin, tokenVersion: hasAccount ? Number(row.token_version) : null, status: row.child_status,
       firstAccessOn: hasAccount ? firstAccessOn(row.created_at) : null,
     };
   }
 
-  return { get, create, resetPassword, disable, unlock, verifyChild, status };
+  // Активный игровой доступ — то же условие, что canLogin в status(): учётка есть и не отключена,
+  // это детская учётка, ребёнок active или paused. Для звёзд сотрудников (game-stars.mjs): пачка детей
+  // за два запроса, всегда из базы CRM, без кешей.
+  async function activeChildIds(rawIds) {
+    const ids = [...new Set(rawIds.map((value) => identifier(value, 'childId')))];
+    if (!ids.length) return new Set();
+    const [rows] = await pool.query(`SELECT c.id child_id,c.status child_status,a.user_id,u.status,u.deleted_at
+      FROM children c JOIN child_user_accounts a ON a.child_id=c.id JOIN users u ON u.id=a.user_id
+      WHERE c.id IN (:ids) AND c.deleted_at IS NULL`, { ids });
+    const candidates = rows.filter((row) => accountActive(row, ['child']));
+    if (!candidates.length) return new Set();
+    const [roleRows] = await pool.query(`SELECT ur.user_id,r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+      WHERE ur.user_id IN (:userIds)`, { userIds: candidates.map((row) => String(row.user_id)) });
+    const roles = new Map();
+    for (const row of roleRows) roles.set(String(row.user_id), [...(roles.get(String(row.user_id)) ?? []), row.code]);
+    return new Set(candidates.filter((row) => accountActive(row, roles.get(String(row.user_id)) ?? [])).map((row) => String(row.child_id)));
+  }
+
+  return { get, create, resetPassword, disable, unlock, verifyChild, status, activeChildIds };
 }

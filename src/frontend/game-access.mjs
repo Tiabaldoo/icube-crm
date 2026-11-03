@@ -158,6 +158,12 @@ async function act(childId, operation, title) {
   }
 }
 
+// Блок звёзд (game-stars.mjs) показывается и делает запросы, только когда ответ игровых маршрутов
+// уже подтвердил, что игра включена: при выключенном флаге лишних запросов нет.
+window.icubeGameAccessLoaded = (childId) => {
+  currentUser();
+  return !featureMissing && isAccess(cache.get(String(childId)));
+};
 window.icubeRetryGameAccess = (childId) => { cache.delete(String(childId)); return load(childId); };
 window.icubeCreateGameAccess = (childId) => {
   const login = document.querySelector('#game-access-login')?.value ?? '';
