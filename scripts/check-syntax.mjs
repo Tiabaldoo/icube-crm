@@ -2,7 +2,7 @@ import { readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
-const roots = ['src', 'backend', 'database', 'scripts', 'tests'];
+const roots = ['src', 'backend', 'database', 'scripts', 'tests', 'game'];
 const extensions = new Set(['.js', '.mjs', '.cjs']);
 
 async function collectFiles(directory) {
@@ -10,7 +10,7 @@ async function collectFiles(directory) {
   const files = [];
   for (const entry of entries) {
     const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await collectFiles(entryPath));
+    if (entry.isDirectory()) { if (entry.name !== 'node_modules') files.push(...await collectFiles(entryPath)); }
     else if (extensions.has(path.extname(entry.name))) files.push(entryPath);
   }
   return files;
