@@ -47,6 +47,9 @@ function crmPool() {
     if (sql.startsWith('SELECT id FROM teachers WHERE user_id=:userId')) return [state.teachers.filter((item) => item.user_id === Number(params.userId)).map(({ id }) => ({ id }))];
     if (sql.includes('FROM group_memberships gm')) return [state.teacherChildren.has(`${params.teacherId}:${childId}`) ? [{ 1: 1 }] : []];
     if (sql.startsWith('SELECT id,display_name FROM users WHERE id IN')) return [state.users.filter((user) => params.ids.includes(String(user.id)))];
+    if (sql.startsWith('SELECT id FROM audit_log')) {
+      return [state.audit.filter((row) => row.action === params.action && row.childId === params.childId && String(row.after.bonusId) === params.bonusId).map(() => ({ id: 1 }))];
+    }
     if (sql.startsWith('INSERT INTO audit_log')) { state.audit.push({ ...params, action: params.action, after: JSON.parse(params.after) }); return [{}]; }
     if (sql.includes('FROM attendances a JOIN lessons l')) {
       return [(state.attendances[childId] ?? []).map((row) => ({ ...row, lesson_date: row.starts_at.slice(0, 10) }))];
@@ -240,4 +243,26 @@ test('игра недоступна: 503 «игра временно недос�
 test('неверный секрет обратного канала — «недоступна», а не отказ сотруднику', async () => {
   const wrong = createGameServerClient({ baseUrl: `http://127.0.0.1:${gameServer.address().port}`, token: 'x'.repeat(40), logger: quiet });
   assert.deepEqual(await wrong.stars('8'), { ok: false, unavailable: true });
+});
+
+test('ответ игры потерян после записи: повтор дописывает единственную запись audit_log', async () => {
+  const real = createGameServerClient({ baseUrl: `http://127.0.0.1:${gameServer.address().port}`, token: TOKEN, logger: quiet });
+  let drop = true;
+  const lossy = { ...real, grantBonus: async (body) => { const result = await real.grantBonus(body); if (drop) { drop = false; return { ok: false, unavailable: true }; } return result; } };
+  const service = createGameStars(crm.pool, { client: lossy, logger: quiet });
+  const auditBefore = crm.state.audit.length;
+  await assert.rejects(service.grant('8', { amount: 1, reason: 'Ответ потерялся' }, { ...director, idempotencyKey: 'lost-1' }), { code: 'GAME_UNAVAILABLE' });
+  assert.equal(crm.state.audit.length, auditBefore);
+  const retry = await service.grant('8', { amount: 1, reason: 'Ответ потерялся' }, { ...director, idempotencyKey: 'lost-1' });
+  assert.equal(retry.replayed, true);
+  assert.equal(crm.state.audit.length, auditBefore + 1);
+  await service.grant('8', { amount: 1, reason: 'Ответ потерялся' }, { ...director, idempotencyKey: 'lost-1' });
+  assert.equal(crm.state.audit.length, auditBefore + 1);
+});
+
+test('партнёр-преподаватель без единственного проекта проверяется как преподаватель', async () => {
+  const both = { userId: '40', roles: ['partner', 'teacher'], projectIds: [] };
+  assert.equal((await api('/children/8/game-stars', { as: both })).status, 200);
+  assert.equal((await api('/children/9/game-stars', { as: both })).status, 403);
+  assert.equal((await api('/children/8/game-stars', { as: { userId: '3', roles: ['partner'], projectIds: [] } })).status, 403);
 });

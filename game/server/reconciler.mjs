@@ -9,15 +9,21 @@ export function createReconciler({ store, crm, stars, now = () => Date.now(), li
   let running = null;
 
   // Для входа и экрана звёзд: сбой CRM не мешает показать то, что уже записано в журнале.
+  // Сверка, начатая при входе, ещё идёт: экран звёзд ждёт её, а не читает журнал до неё.
+  const inFlight = new Map();
   async function reconcileChild(childId) {
     const time = now();
-    if (time - (lastRun.get(childId) ?? -Infinity) < limits.perChildMs) return { status: 'throttled', added: 0 };
+    if (time - (lastRun.get(childId) ?? -Infinity) < limits.perChildMs) {
+      return inFlight.has(childId) ? inFlight.get(childId) : { status: 'throttled', added: 0 };
+    }
     lastRun.set(childId, time);
-    try { return await stars.reconcile(childId); } catch (error) {
+    const run = stars.reconcile(childId).catch((error) => {
       lastRun.delete(childId);
       logger.error(`Сверка звёзд для ребёнка ${childId} не удалась: ${error?.code ?? error?.message}`);
       return { status: 'failed', added: 0 };
-    }
+    }).finally(() => { if (inFlight.get(childId) === run) inFlight.delete(childId); });
+    inFlight.set(childId, run);
+    return run;
   }
 
   async function sweep() {

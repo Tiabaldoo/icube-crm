@@ -12,7 +12,7 @@ const notFound = (response) => response.status(404).json({ error: { code: 'NOT_F
 
 export const isLoopbackAddress = (address) => LOOPBACK_ADDRESSES.has(address);
 
-export function createInternalGameApp({ token, stars, reconciler, isAllowedPeer = isLoopbackAddress, logger = console }) {
+export function createInternalGameApp({ token, stars, reconciler, isAllowedPeer = isLoopbackAddress, logger = console, reconcileWaitMs = 2_000 }) {
   const expected = digest(token);
   const app = express();
   app.disable('x-powered-by');
@@ -30,9 +30,15 @@ export function createInternalGameApp({ token, stars, reconciler, isAllowedPeer 
 
   app.post('/internal/bonuses', run((request) => stars.grantBonus(request.body ?? {})));
   app.post('/internal/bonuses/:bonusId/revoke', run((request) => stars.revokeBonus({ ...(request.body ?? {}), bonusId: request.params.bonusId })));
-  // Сотрудник смотрит звёзды ребёнка: перед ответом — свежая сверка, если CRM доступна.
+  // Сотрудник смотрит звёзды ребёнка: перед ответом — свежая сверка, но не дольше reconcileWaitMs,
+  // чтобы медленный ответ CRM не превратился для CRM в «игра недоступна». Сверка доделается фоном.
   app.get('/internal/children/:childId/stars', run(async (request) => {
-    await reconciler.reconcileChild(String(request.params.childId));
+    let timer;
+    await Promise.race([
+      reconciler.reconcileChild(String(request.params.childId)),
+      new Promise((resolve) => { timer = setTimeout(resolve, reconcileWaitMs); }),
+    ]);
+    clearTimeout(timer);
     return stars.summary(request.params.childId, { includeBonuses: true });
   }));
   app.use((_request, response) => notFound(response));

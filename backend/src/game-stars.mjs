@@ -15,7 +15,8 @@ const identifier = (value, name) => {
   return result;
 };
 const hasRole = (context, role) => (context.roles ?? []).includes(role);
-const unavailable = () => new ApiProblem(503, 'GAME_UNAVAILABLE', 'Игра временно недоступна. Звёзды не изменены, повторите позже');
+// Игра могла успеть записать операцию до обрыва: повтор с тем же ключом её не задвоит.
+const unavailable = () => new ApiProblem(503, 'GAME_UNAVAILABLE', 'Игра временно недоступна или не ответила вовремя. Повторите позже — бонус не задвоится');
 
 function reasonOf(value) {
   const reason = typeof value === 'string' ? value.trim() : '';
@@ -29,9 +30,11 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
   async function inScope(context, childId) {
     if (hasRole(context, 'director')) return true;
     if (hasRole(context, 'partner')) {
-      const projectId = partnerProjectId(context);
-      const [rows] = await pool.query(`SELECT 1 FROM child_enrollments WHERE child_id=:childId AND project_id=:projectId
-        AND superseded_at IS NULL LIMIT 1`, { childId, projectId });
+      // Партнёр без единственного проекта не получает его границ, но как преподаватель проверяется ниже.
+      let projectId = null;
+      try { projectId = partnerProjectId(context); } catch (error) { if (!hasRole(context, 'teacher')) throw error; }
+      const [rows] = projectId ? await pool.query(`SELECT 1 FROM child_enrollments WHERE child_id=:childId AND project_id=:projectId
+        AND superseded_at IS NULL LIMIT 1`, { childId, projectId }) : [[]];
       if (rows.length) return true;
     }
     if (hasRole(context, 'teacher')) {
@@ -108,10 +111,14 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
 
   // Бонус уже записан в игре вместе с автором, причиной и временем: сбой журнала CRM не должен
   // выглядеть для сотрудника как невыданный бонус (повтор ничего бы не добавил).
-  async function audit(action, context, childId, data) {
+  // Запись одна на бонус и действие: повтор после обрыва связи дописывает её, если первой не было.
+  async function audit(action, actorId, childId, data) {
     try {
+      const [existing] = await pool.query(`SELECT id FROM audit_log WHERE entity_type='child' AND entity_id=:childId AND action=:action
+        AND JSON_UNQUOTE(JSON_EXTRACT(after_data,'$.bonusId'))=:bonusId LIMIT 1`, { childId, action, bonusId: String(data.bonusId) });
+      if (existing.length) return;
       await pool.query(`INSERT INTO audit_log (actor_user_id,action,entity_type,entity_id,before_data,after_data)
-        VALUES (:actorId,:action,'child',:childId,NULL,:after)`, { actorId: context.userId ?? null, action, childId, after: JSON.stringify(data) });
+        VALUES (:actorId,:action,'child',:childId,NULL,:after)`, { actorId: actorId ?? null, action, childId, after: JSON.stringify(data) });
     } catch (error) {
       logger.error(`Не записан audit_log ${action} для ребёнка ${childId}: ${error?.code ?? error?.message}`);
     }
@@ -135,7 +142,7 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
     const requestKey = scopedIdempotencyKey({ key: context.idempotencyKey, actorUserId: context.userId, operation: 'game_bonus', entity: childId });
     const data = fromGame(await client.grantBonus({ childId, amount, reason, actorUserId: String(context.userId), requestKey }));
     // Повтор того же запроса бонус не создаёт, второй записи в журнал CRM тоже нет.
-    if (!data.replayed) await audit('game_stars.bonus', context, childId, { bonusId: data.bonus.id, amount, reason });
+    await audit('game_stars.bonus', data.bonus.createdByUserId, childId, { bonusId: data.bonus.id, amount: data.bonus.amount, reason: data.bonus.reason });
     return after({ bonus: data.bonus, replayed: data.replayed }, childId, context);
   }
 
@@ -146,7 +153,9 @@ export function createGameStars(pool, { client, maxStars = 10, logger = console 
     const data = fromGame(await client.revokeBonus(bonusId, {
       childId, actorUserId: String(context.userId), actorIsDirector: hasRole(context, 'director'), reason,
     }));
-    if (!data.replayed) await audit('game_stars.bonus_revoke', context, childId, { bonusId, amount: data.bonus.amount, reason });
+    // Автор и причина — из записи игры: повтор другим сотрудником не подменяет того, кто отозвал.
+    await audit('game_stars.bonus_revoke', data.bonus.revoked?.byUserId ?? context.userId, childId,
+      { bonusId, amount: data.bonus.amount, reason: data.bonus.revoked?.reason ?? reason });
     return after({ bonus: data.bonus, replayed: data.replayed }, childId, context);
   }
 

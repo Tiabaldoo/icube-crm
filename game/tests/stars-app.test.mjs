@@ -134,3 +134,25 @@ test('фоновая сверка: проходит все профили, уд�
   assert.match(logger.lines.join('\n'), /остановлена/);
   assert.equal(store.starsSnapshot('3').wallet.chest, 3);
 });
+
+test('звёзды сразу после входа ждут уже начатую сверку, а не показывают старый итог', () => withGame(async ({ game }) => {
+  const cookie = await loginCookie(game);
+  const stars = await request(game, '/game/api/stars', { cookie });
+  assert.deepEqual(stars.json, { data: { balance: 0, chest: 6 } });
+}));
+
+test('обратный канал: медленная CRM не превращает ответ сотруднику в «игра недоступна»', async () => {
+  const store = createMemoryStore();
+  await store.insertProfile({ childId: '8', nickname: 'КосмоКот83', firstAccessOn: '2026-11-01' });
+  const logger = silentLogger();
+  const stars = createStars({ store, crm: fakeCrm().crm, logger });
+  const reconciler = { reconcileChild: () => new Promise(() => {}) };
+  const server = startInternalGameServer({ app: createInternalGameApp({ token: TOKEN, stars, reconciler, logger, reconcileWaitMs: 50 }), port: 0, logger });
+  await once(server, 'listening');
+  try {
+    const started = Date.now();
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/internal/children/8/stars`, { headers: { 'x-game-internal-token': TOKEN } });
+    assert.equal(response.status, 200);
+    assert.ok(Date.now() - started < 1000);
+  } finally { await new Promise((resolve) => server.close(resolve)); }
+});
