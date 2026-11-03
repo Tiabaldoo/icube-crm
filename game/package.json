@@ -1,0 +1,22 @@
+{
+  "name": "icube-game",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Остров чудиков: игровой сервер и страница игры для детей iCubeRobots",
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.mjs",
+    "migrate": "node server/migrate.mjs",
+    "health": "node server/health-cli.mjs",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "test:integration": "node --test \"tests/**/*.integration.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "mysql2": "^3.14.4"
+  }
+}
